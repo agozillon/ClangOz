@@ -32,6 +32,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <cstring>
+#include <future>
+#include <functional>
+#include <thread>
+#include <iostream>
 #include "Interp/Context.h"
 #include "Interp/Frame.h"
 #include "Interp/State.h"
@@ -504,7 +509,32 @@ namespace {
     /// Arguments - Parameter bindings for this function call, indexed by
     /// parameters' function scope indices.
     APValue *Arguments;
+    
+    // ThreadId -> APValue *Arguments
+    typedef std::pair<std::thread::id, unsigned> ThreadArgKeyTy;
+    typedef std::map<ThreadArgKeyTy, 
+                     /*llvm::SmallVector<*/APValue/*, 4>*/> ThreadArgMapTy;
+    ThreadArgMapTy ThreadArgumentsMap;
 
+    APValue* getArguments(unsigned Index) {
+      // TODO: This is a naive implementation that's going to check the
+      // ThreadArgumentsMap first, then if nothing is found it'll check the 
+      // Arguments array, this isn't ideal as it impacts all code paths, ideally
+      // there will be a new ThreadedContext boolean that is set by a RAII 
+      // Scope when we're about to do some constexpr eval in a threaded context 
+      // and then the Scope will release it apon destruction
+      // OR....
+      // Just check theres something actually in the map before looking
+      ThreadArgKeyTy KV(std::this_thread::get_id(), Index);
+      
+      auto val = ThreadArgumentsMap.find(KV);
+      if (val != ThreadArgumentsMap.end()) {
+        return &val->second; 
+      }
+        
+      return &Arguments[Index];
+    }
+    
     /// Source location information about the default argument or default
     /// initializer expression we're evaluating, if any.
     CurrentSourceLocExprScope CurSourceLocExprScope;
@@ -1824,7 +1854,7 @@ void CallStackFrame::describe(raw_ostream &Out) {
       Out << ", ";
 
     const ParmVarDecl *Param = *I;
-    const APValue &Arg = Arguments[ArgIndex];
+    const APValue &Arg = *getArguments(ArgIndex);
     Arg.printPretty(Out, Info.Ctx, Param->getType());
 
     if (ArgIndex == 0 && IsMemberCall)
@@ -2833,7 +2863,7 @@ static bool evaluateVarDeclInit(EvalInfo &Info, const Expr *E,
       Info.FFDiag(E, diag::note_invalid_subexpr_in_const_expr);
       return false;
     }
-    Result = &Frame->Arguments[PVD->getFunctionScopeIndex()];
+    Result = Frame->getArguments(PVD->getFunctionScopeIndex());
     return true;
   }
 
@@ -4459,6 +4489,290 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
   llvm_unreachable("Invalid EvalStmtResult!");
 }
 
+namespace {
+  class LoopDependentsGatherer
+    : public ConstStmtVisitor<LoopDependentsGatherer, bool> {
+
+  EvalInfo &Info;
+  llvm::SmallVector<std::thread::id, 4> &ThreadIds;
+  int LoopExtent;
+  int ThreadSize;
+
+  // TODO/SELFNOTE: Perhaps the right way to do this is generate an RAII that 
+  // will keep the old stack frame and create a new one with thread id and 
+  // delete it once its completed and fallen out of scope
+  public:
+    LoopDependentsGatherer(EvalInfo &Info, 
+                           llvm::SmallVector<std::thread::id, 4> &ThreadIds) :
+                              Info(Info), ThreadIds(ThreadIds) {}
+
+    // Realistically, this should take into consideration the condition and the
+    // step/increment, although the increment doesn't always exist
+
+    // TODO/NOTE: I can think of two ways of getting arbitrary step size to 
+    // calculate arbitrary iteration space:
+    // 1) would be to gather the operator/increment data for each variable that 
+    //   participates in the evaluation of the condition with a pass which will 
+    //   get quite complex quickly and likely be quite costly (unary operators 
+    //   would be the easy simple case, but binary operators where other variables
+    //   can be involved gets more complex).
+    // 2) Would be to force the evaluation of the statements involved in the 
+    //   condition and check the difference in value from first step to last 
+    //   step
+    bool LoopExtentFromCondition(const BinaryOperator* Cond) {
+      // For now I will do the simple version where we just assume that the 
+      // LHS and RHS are pointers or some numeric type and then work it out
+      // trivially
+      // 
+      // However, the ideal solution is probably to come up with an RAII to 
+      // make the evaluation not stick (some of the commented out block at the
+      // bottom with a custom RAII variation).
+      //
+      // Similarly an RAII for holding the additional thread data may also be 
+      // useful for keeping track and cleaning it up
+      if (Cond->getLHS() && Cond->getRHS()) {
+        LValue LHSValue, RHSValue;
+      
+        QualType LHSTy = Cond->getLHS()->getType();
+        QualType RHSTy = Cond->getRHS()->getType();
+        
+        if (LHSTy->isPointerType() && RHSTy->isPointerType()) {
+          auto LHSPtrSz = Info.Ctx.getTypeSizeInChars(LHSTy);
+          auto RHSPtrSz = Info.Ctx.getTypeSizeInChars(RHSTy);
+
+          bool LHSOK = EvaluatePointer(Cond->getLHS(), LHSValue, Info);
+          if (!LHSOK && !Info.noteFailure())
+            return false;
+          
+          if (!EvaluatePointer(Cond->getRHS(), RHSValue, Info) || !LHSOK)
+            return false;
+
+          // Only doing this for types of the same size at the moment, the 
+          // calculation will probably be different for differnet types although
+          // I'm not too sure in which case mismatched iterators would be used
+          if (LHSPtrSz.getQuantity() == RHSPtrSz.getQuantity()) {
+              const CharUnits &LHSOffset = LHSValue.getLValueOffset();
+              const CharUnits &RHSOffset = RHSValue.getLValueOffset();
+              
+
+              // TODO/FIXME: This also doesn't work for non-doubles, because 
+              // it's working things out using the pointers size, not the actual
+              // types size, which means the LoopExtent is calculated wrong for
+              // things like int's which are 4 bytes rather than 8 bytes
+              LoopExtent = (RHSOffset.getQuantity() -
+                            LHSOffset.getQuantity()) / LHSPtrSz.getQuantity();
+              // TODO: Case when things are not easily divisable
+              ThreadSize = LoopExtent / 2;//std::thread::hardware_concurrency();
+          }
+        }
+      }
+
+      // Not sure if im a fan of doing this in this function, or if I'm a fan of
+      // how i've currently implemented the resizing in general
+      if (auto Decl = Cond->getRHS()->getReferencedDeclOfCallee()) {
+        if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(Decl)) {
+          auto TySz = 
+            Info.Ctx.getTypeSizeInChars(PVD->getOriginalType()).getQuantity();
+          
+          for (int i = 0; i < ThreadIds.size(); ++i) {
+            
+          
+            auto Arg = 
+              APValue(Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
+          
+            Arg.getLValueOffset() = 
+              CharUnits::fromQuantity(TySz * ThreadSize * (i + 1));
+            Info.CurrentCall->
+              ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
+                                 PVD->getFunctionScopeIndex())] = Arg;
+            
+          }
+          
+        } 
+      }
+
+      return true;
+    }
+    
+    bool VisitForStmt(const ForStmt *FS) {
+      // This and the subsequent calls related to gathering information may be 
+      // better off being detached from the LoopDependentsGatherer, the general
+      // premise is that it's going to gather the size extents for now and 
+      // perhaps another set of calls later for working out the step... for now 
+      // the assumption is the step will be a basic ++ for a basic proof of 
+      // concept
+      if (FS->getCond()) {
+        // not the right way to do this I think, as the condiiton isn't always 
+        // going to be a binary operator
+        if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(FS->getCond())) {
+          LoopExtentFromCondition(BO);
+        }
+      }
+      
+      // Realistically we should probably check for variables that change state 
+      // in the body, condition and initializer, but in the non-general case 
+      // where we know the Loop shape (e.g. a standard function like Transform) 
+      // we can make an assumption for the moment..
+      //
+      // At that point the issue becomes tracking the operators against the 
+      // Decl Expressions, e.g. why am I capturing this? Is it because its a 
+      // less than or an increment, or a decrement? etc.
+      //
+      // At the moment can just assume everything is an increment by 1 because 
+      // the way the functions in the algorithm header we're interested in work.
+      // At least in transform's case for now..
+      if (FS->getInc())
+        Visit(FS->getInc());
+        
+      return true;
+    }
+   
+    bool VisitBinaryOperator(const BinaryOperator *BO) {
+      if (BO->getLHS())
+        Visit(BO->getLHS());
+        
+      if (BO->getRHS())
+        Visit(BO->getRHS());
+      
+      return true; 
+    }
+    
+    bool VisitUnaryOperator(const UnaryOperator *UO) {
+    
+      if (UO->getSubExpr())
+        Visit(UO->getSubExpr());
+        
+      return true; 
+    }
+
+    // TODO: Is it ParamVar or is it a Temporary created inside the scope of 
+    // the CallStackFrame?
+    bool VisitDeclRefExpr(const DeclRefExpr *DRE) {
+      if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(DRE->getFoundDecl())) {
+        if (Arg.isLValue()) {
+          auto TySz = 
+            Info.Ctx.getTypeSizeInChars(PVD->getOriginalType()).getQuantity();
+          for (int i = 0; i < ThreadIds.size(); ++i) {
+            auto Arg = 
+              APValue(Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
+            
+            std::vector<APValue::LValuePathEntry> NewLValPath;
+            
+            // The first element is an arbitrary looking value, but it appears 
+            // to be important, or at least it's avoiding an assertion
+            for (int j = 0; j < Arg.getLValuePath().size(); ++j) {
+              NewLValPath.push_back((j == 0) ? Arg.getLValuePath()[j] : 
+                             Arg.getLValuePath()[j].ArrayIndex(ThreadSize * i));
+            }
+            
+            // Only altering a few values, but unfortunately LValue Path has no
+            // set function and the get returns a const array.
+            Arg.setLValue(Arg.getLValueBase(), 
+                          CharUnits::fromQuantity(TySz * ThreadSize * i), 
+                          NewLValPath, Arg.isLValueOnePastTheEnd(), 
+                          Arg.isNullPointer()); 
+          
+            Info.CurrentCall->
+              ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
+                                 PVD->getFunctionScopeIndex())] = Arg;
+          }
+        }
+
+        return true;
+      }
+      
+      // sort of assuming anything that falls to here is going to be a temporary
+      // or global... a ParmVarDecl is a VarDecl, but a VarDecl is not a 
+      // ParmVarDecl
+      if (const VarDecl *VD = dyn_cast<VarDecl>(DRE->getFoundDecl())) {
+      }
+      
+      return true;
+    }
+    // Doesn't actually enter
+    bool VisitParmVarDecl(const ParmVarDecl *PVD) {
+      return true;
+    }
+    
+    bool VisitCastExpr(const CastExpr *E) { 
+      if (E->getSubExpr())
+        Visit(E->getSubExpr());
+      return true;
+    }
+  };
+}
+
+/// Threading Helpers
+namespace {
+  // A barebones thread wrapper for now. The onus is on the user not to commit 
+  // seppuku by passing weird functions (or non-functions) and arguments to this 
+  // for the moment and to actually wait on the results/make sure there isn't 
+  // a thread floating in space on program exit
+  // 
+  // The general point in this class was to allow the ability to get an id from 
+  // the thread before actually launching the event..
+  //
+  // TODO/FIXME: A way to do this with less overhead maybe just to self-assign an
+  // id for each thread inside clang, rather than care about the thread id
+  //
+  // Or design a pool thread for it that has a fixed size array of anything 
+  // un-copyable and un-moveable in a 1:1 ratio with the threads the pool owns
+  class ThreadWrapper {
+      // if you want to have any kind of container for the thread_wrapper class 
+      // then mutex/condition_variable have to be wrapped in a unique_ptr, a pool
+      // of threads with seperate cv, mutex and booleans per thread would 
+      // probably make this a non-issue
+      std::unique_ptr<std::condition_variable> cv;
+      std::unique_ptr<std::mutex> mutex;
+      std::unique_ptr<std::atomic_bool> ready;
+      std::thread thread;
+
+     public: 
+      template <typename Func, typename ...Args>
+      ThreadWrapper(Func f, Args... args) : 
+        cv(std::make_unique<std::condition_variable>()),
+        mutex(std::make_unique<std::mutex>()), 
+        ready(std::make_unique<std::atomic_bool>()) {
+          // not a big fan of the way the condition_variable and mutex are 
+          // captured in the lambda, but unique_ptr's are not implicitly captured
+          // and std::move'ng them as you would normally do is going to remove the
+          // ability to access them outside of the lambda for synchronization...
+          thread = std::thread(std::thread([=, cv = cv.get(), mutex = mutex.get(),
+                                            ready = ready.get()]() {
+              std::unique_lock<std::mutex> ul(*mutex);
+              cv->wait(ul, [=](){ return *ready == true; });
+              f(args...);
+          }));
+      }
+      
+      ThreadWrapper(ThreadWrapper&&) = default;
+      
+      std::thread::id GetThreadId() {
+        return thread.get_id();
+      }
+      
+      void Start() {
+        {
+          std::lock_guard<std::mutex> lg(*mutex); 
+          *ready = true;
+        }
+        cv->notify_all();
+      }
+      
+      void Wait() {
+        thread.join();
+      }
+      
+      void StartAndWait() {
+        {
+          std::lock_guard<std::mutex> lg(*mutex); 
+          *ready = true;
+        }
+        cv->notify_all();
+        thread.join();
+      }
+  };
+}
 // Evaluate a statement.
 static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
                                    const Stmt *S, const SwitchCase *Case) {
@@ -4721,6 +5035,94 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         return ESR;
       }
     }
+    if (Info.CurrentCall->Callee && 
+        Info.CurrentCall->Callee->getNameAsString() == "transform") {
+      // I also need to know the context it's in, not just that its named transform
+      // e.g. I need to know its defined in the standard library and not some user code
+      llvm::SmallVector<ThreadWrapper, 4> Threads;
+      llvm::SmallVector<std::thread::id, 4> ThreadIds;
+      llvm::SmallVector<std::promise<EvalStmtResult>, 4> EvalPromises;
+      llvm::SmallVector<std::future<EvalStmtResult>, 4> EvalFutures;
+      
+      // TODO: Maybe a shared_future is more useful than a vector of them..
+      for (int i = 0; i < 2/*std::thread::hardware_concurrency()*/; ++i) {
+        EvalPromises.push_back(std::promise<EvalStmtResult>());
+        EvalFutures.push_back(EvalPromises[i].get_future());
+      }
+            
+      auto ForThreadFunction = [=](EvalInfo &Info, BlockScopeRAII &ForScope, 
+                                   const ForStmt *FS, StmtResult &Result,
+                                   std::promise<EvalStmtResult> &p) {
+
+          while (true) {
+            BlockScopeRAII IterScope(Info);
+            bool Continue = true;
+      
+            if (FS->getCond() && !EvaluateCond(Info, FS->getConditionVariable(),
+                                               FS->getCond(), Continue)) {
+              p.set_value(ESR_Failed);
+              return;
+            }
+            
+            if (!Continue)
+              break;
+            
+            EvalStmtResult ESR = EvaluateLoopBody(Result, Info, FS->getBody());
+            if (ESR != ESR_Continue) {
+              if (ESR != ESR_Failed && 
+                  (!IterScope.destroy() || !ForScope.destroy())) {
+                p.set_value(ESR_Failed);
+                return;
+              }
+              
+              p.set_value(ESR);
+              return;
+            }
+            
+            if (FS->getInc()) {
+              FullExpressionRAII IncScope(Info);
+              if (!EvaluateIgnoredValue(Info, FS->getInc()) || 
+                  !IncScope.destroy()) {
+                p.set_value(ESR_Failed);
+                return;
+              }
+            }
+
+            if (!IterScope.destroy()) {
+              p.set_value(ESR_Failed);
+              return;
+            }
+          }
+
+          p.set_value(ESR_Succeeded);
+      };
+
+      for (int i = 0; i < 2/*std::thread::hardware_concurrency()*/; ++i) {
+        Threads.push_back(ThreadWrapper(ForThreadFunction, std::ref(Info), 
+                                        std::ref(ForScope), FS, 
+                                        std::ref(Result),
+                                        std::ref(EvalPromises[i])));
+      }
+      for (auto &&thread : Threads) {
+        ThreadIds.push_back(thread.GetThreadId());
+      }
+      LoopDependentsGatherer(Info, ThreadIds).Visit(FS);
+      // sequential threads, for debugging
+      for (auto &&thread : Threads) {
+        thread.StartAndWait();
+      }
+      // If any of our futures came back negative we have a problem
+      for (auto &&EvalFuture : EvalFutures) {
+        if (EvalFuture.get() == ESR_Failed) {
+            return ESR_Failed;
+         }
+      }
+      
+      // Destroy ForScope here
+      return ForScope.destroy() ? ESR_Succeeded : ESR_Failed;
+    }
+    
+    // sequential implementation
     while (true) {
       BlockScopeRAII IterScope(Info);
       bool Continue = true;
