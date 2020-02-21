@@ -4649,7 +4649,7 @@ namespace {
     // the CallStackFrame?
     bool VisitDeclRefExpr(const DeclRefExpr *DRE) {
       if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(DRE->getFoundDecl())) {
-        if (Arg.isLValue()) {
+//        if (Arg.isLValue()) {
           auto TySz = 
             Info.Ctx.getTypeSizeInChars(PVD->getOriginalType()).getQuantity();
           for (int i = 0; i < ThreadIds.size(); ++i) {
@@ -4676,7 +4676,7 @@ namespace {
               ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
                                  PVD->getFunctionScopeIndex())] = Arg;
           }
-        }
+//        }
 
         return true;
       }
