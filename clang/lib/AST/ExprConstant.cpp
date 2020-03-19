@@ -516,6 +516,8 @@ namespace {
                      /*llvm::SmallVector<*/APValue/*, 4>*/> ThreadArgMapTy;
     ThreadArgMapTy ThreadArgumentsMap;
 
+    CallStackFrame(const CallStackFrame& CSF, EvalInfo& EI);
+
     APValue* getArguments(unsigned Index) {
       // TODO: This is a naive implementation that's going to check the
       // ThreadArgumentsMap first, then if nothing is found it'll check the 
@@ -783,6 +785,31 @@ namespace {
     /// CurrentCall - The top of the constexpr call stack.
     CallStackFrame *CurrentCall;
 
+    // This isn't really a copy constructor / exact copy... it's only 
+    // replicating at the level of the CurrentCall Frame, nothing above it, 
+    // perhaps that's OK though as it's unlikely we would want to replicate
+    // the whole CallStack and likely just reference it
+    EvalInfo(const EvalInfo& EI) : Ctx(EI.Ctx), EvalStatus(EI.EvalStatus),
+      CurrentCall(nullptr), CallStackDepth(EI.CallStackDepth),  
+      NextCallIndex(EI.NextCallIndex),StepsLeft(EI.StepsLeft), 
+      EnableNewConstInterp(EI.EnableNewConstInterp), 
+      BottomFrame(*EI.CurrentCall, *this),
+      /*CleanupStack(EI.CleanupStack),*/ EvaluatingDecl(EI.EvaluatingDecl), 
+      IsEvaluatingDecl(EI.IsEvaluatingDecl), 
+      ObjectsUnderConstruction(EI.ObjectsUnderConstruction),
+      HeapAllocs(EI.HeapAllocs), NumHeapAllocs(EI.NumHeapAllocs),
+      SpeculativeEvaluationDepth(EI.SpeculativeEvaluationDepth),
+      ArrayInitIndex(EI.ArrayInitIndex), 
+      HasActiveDiagnostic(EI.HasActiveDiagnostic),
+      HasFoldFailureDiagnostic(EI.HasFoldFailureDiagnostic),
+      InConstantContext(EI.InConstantContext),
+      CheckingPotentialConstantExpression(
+        EI.CheckingPotentialConstantExpression),
+      CheckingForUndefinedBehavior(EI.CheckingForUndefinedBehavior),
+      EvalMode(EI.EvalMode) {
+          Expr::EvalStatus Status;
+          EvalStatus = Status;
+      }
     /// CallStackDepth - The number of calls in the call stack right now.
     unsigned CallStackDepth;
 
@@ -1401,6 +1428,20 @@ void SubobjectDesignator::diagnosePointerArithmetic(EvalInfo &Info,
   setInvalid();
 }
 
+CallStackFrame::CallStackFrame(const CallStackFrame& CSF, EvalInfo& EI) 
+      : Info(EI), Caller(CSF.Caller), Callee(CSF.Callee), This(CSF.This), 
+      Arguments(CSF.Arguments), ThreadArgumentsMap(CSF.ThreadArgumentsMap),
+      /*CurSourceLocExprScope(EI.CurSourceLocExprScope),*/
+      Temporaries(CSF.Temporaries), CallLoc(CSF.CallLoc), Index(CSF.Index), 
+      TempVersionStack(CSF.TempVersionStack), CurTempVersion(CSF.CurTempVersion),
+      LambdaCaptureFields(CSF.LambdaCaptureFields), 
+      LambdaThisCaptureField(CSF.LambdaThisCaptureField)
+    {
+        /* It may not be guaranteed that this is generating a totally new 
+           EvalInfo, generally this CallStackFrame copy constructor is expected
+           to be called as part of the copying of a new EvalInfo. */
+        Info.CurrentCall = this; 
+    }
 CallStackFrame::CallStackFrame(EvalInfo &Info, SourceLocation CallLoc,
                                const FunctionDecl *Callee, const LValue *This,
                                APValue *Arguments)
@@ -3180,11 +3221,19 @@ static QualType getSubobjectType(QualType ObjType, QualType SubobjType,
   return SubobjType;
 }
 
+std::mutex test_lock;
+
 /// Find the designated sub-object of an rvalue.
 template<typename SubobjectHandler>
 typename SubobjectHandler::result_type
 findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
               const SubobjectDesignator &Sub, SubobjectHandler &handler) {
+  // agozillon: This lock "fixes" the issue, but its not ideal so there are 
+  // several race conditions in this function that pose problems, the lock seems
+  // a little hamfisted as a fix, need to find the locations of contention and 
+  // decide what the best course of action is. There is one problem I know of at
+  // expandArray, which will cause asserts when multiple threads try to expand 
+  // it at once.
   if (Sub.Invalid)
     // A diagnostic will have already been produced.
     return handler.failed();
@@ -3203,6 +3252,8 @@ findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
   QualType ObjType = Obj.Type;
   const FieldDecl *LastField = nullptr;
   const FieldDecl *VolatileField = nullptr;
+  
+  std::lock_guard<std::mutex> locked(test_lock);
 
   // Walk the designator's path to find the subobject.
   for (unsigned I = 0, N = Sub.Entries.size(); /**/; ++I) {
@@ -3306,6 +3357,9 @@ findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
       if (O->getArrayInitializedElts() > Index)
         O = &O->getArrayInitializedElt(Index);
       else if (!isRead(handler.AccessKind)) {
+        /// agozillon: race condition/resource contention issue here, this mutex
+        /// isn't the ideal fix
+//        std::lock_guard<std::mutex> locked(test_lock);
         expandArray(*O, Index);
         O = &O->getArrayInitializedElt(Index);
       } else
@@ -5036,21 +5090,26 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       }
     }
     if (Info.CurrentCall->Callee && 
-        Info.CurrentCall->Callee->getNameAsString() == "transform") {
+        Info.CurrentCall->Callee->getNameAsString() == "transform" ||
+        Info.CurrentCall->Callee->getNameAsString() == "for_each" /*||
+        Info.CurrentCall->Callee->getNameAsString() == "iota"*/) {
+      // AGOZILLON: iota will cause an assert right now, need to look into it
+//      llvm::errs() << "func name: " << Info.CurrentCall->Callee->getNameAsString() << "\n";
       // I also need to know the context it's in, not just that its named transform
       // e.g. I need to know its defined in the standard library and not some user code
       llvm::SmallVector<ThreadWrapper, 4> Threads;
       llvm::SmallVector<std::thread::id, 4> ThreadIds;
       llvm::SmallVector<std::promise<EvalStmtResult>, 4> EvalPromises;
       llvm::SmallVector<std::future<EvalStmtResult>, 4> EvalFutures;
-      
+      llvm::SmallVector<EvalInfo, 4> EvalInfos;
+            
       // TODO: Maybe a shared_future is more useful than a vector of them..
-      for (int i = 0; i < 2/*std::thread::hardware_concurrency()*/; ++i) {
+      for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {
         EvalPromises.push_back(std::promise<EvalStmtResult>());
         EvalFutures.push_back(EvalPromises[i].get_future());
+        EvalInfos.push_back(Info);
       }
-            
-      auto ForThreadFunction = [=](EvalInfo &Info, BlockScopeRAII &ForScope, 
+      auto ForThreadFunction = [](EvalInfo &Info, BlockScopeRAII &ForScope, 
                                    const ForStmt *FS, StmtResult &Result,
                                    std::promise<EvalStmtResult> &p) {
 
@@ -5097,8 +5156,11 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
           p.set_value(ESR_Succeeded);
       };
 
-      for (int i = 0; i < 2/*std::thread::hardware_concurrency()*/; ++i) {
-        Threads.push_back(ThreadWrapper(ForThreadFunction, std::ref(Info), 
+      // CallStackFrame on a per thread basis..
+      //
+      for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {
+        Threads.push_back(ThreadWrapper(ForThreadFunction, 
+                                        std::ref(EvalInfos[i]), 
                                         std::ref(ForScope), FS, 
                                         std::ref(Result),
                                         std::ref(EvalPromises[i])));
@@ -5106,10 +5168,22 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       for (auto &&thread : Threads) {
         ThreadIds.push_back(thread.GetThreadId());
       }
-      LoopDependentsGatherer(Info, ThreadIds).Visit(FS);
+      
+      // I grab all the data using it, but then need to have some intermediate 
+      for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {
+        LoopDependentsGatherer(EvalInfos[i], ThreadIds).Visit(FS);
+      }
+            
+      // think is essentially a synchronous start and wait loop, otherwise it's 
+      // probably going to be slower rather than faster
+      // 
       // sequential threads, for debugging
       for (auto &&thread : Threads) {
-        thread.StartAndWait();
+        thread.Start();
+      }
+
+      for (auto &&thread : Threads) {
+        thread.Wait();
       }
       // If any of our futures came back negative we have a problem
       for (auto &&EvalFuture : EvalFutures) {

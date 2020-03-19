@@ -16,14 +16,14 @@
 // TODO:
 // a) Remember this only works for double, because the size of the types
 //    when offsetting the pointer is currently not taken into consideration 
-// b) Check why this segfaults with 1200000 elements with and without the 
-//    parallel implementation, more importantly check if it works fine with a 
-//    version of the compiler ive not touched.
+// b) Check why this segfaults with 1200000 (Breaks at 64000) elements with and 
+// without the parallel implementation, more importantly check if it works fine 
+// with a version of the compiler ive not touched.
 constexpr auto test_constexpr_transform() {
-    std::array<double, 120000> a = {0};
-    std::array<double, 120000> b = {0};
-    std::array<double, 120000> c = {0};
-    std::array<double, 120000> expected = {0};
+    std::array<double, 320000> a = {0};
+    std::array<double, 320000> b = {0};
+    std::array<double, 320000> c = {0};
+    std::array<double, 320000> expected = {0};
 
     std::iota(a.begin(), a.end(), 0);
     std::iota(b.begin(), b.end(), 0);
@@ -57,7 +57,7 @@ constexpr auto test_constexpr_transform() {
 
 
 consteval auto golden_array() {
-  std::array<double, 120000> a = {0};
+  std::array<double, 320000> a = {0};
   std::iota(a.begin(), a.end(), 0);
   std::for_each(a.begin(), a.end(), [](auto &i){ i *= 2; });
   return a;
