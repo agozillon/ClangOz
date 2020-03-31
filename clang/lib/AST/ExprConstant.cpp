@@ -3221,13 +3221,14 @@ static QualType getSubobjectType(QualType ObjType, QualType SubobjType,
   return SubobjType;
 }
 
-std::mutex test_lock;
 
 /// Find the designated sub-object of an rvalue.
 template<typename SubobjectHandler>
 typename SubobjectHandler::result_type
 findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
               const SubobjectDesignator &Sub, SubobjectHandler &handler) {
+  static std::mutex test_lock;
+  
   // agozillon: This lock "fixes" the issue, but its not ideal so there are 
   // several race conditions in this function that pose problems, the lock seems
   // a little hamfisted as a fix, need to find the locations of contention and 
@@ -3253,7 +3254,6 @@ findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
   const FieldDecl *LastField = nullptr;
   const FieldDecl *VolatileField = nullptr;
   
-  std::lock_guard<std::mutex> locked(test_lock);
 
   // Walk the designator's path to find the subobject.
   for (unsigned I = 0, N = Sub.Entries.size(); /**/; ++I) {
@@ -3337,6 +3337,7 @@ findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
 
     LastField = nullptr;
     if (ObjType->isArrayType()) {
+      std::lock_guard<std::mutex> locked(test_lock);
       // Next subobject is an array element.
       const ConstantArrayType *CAT = Info.Ctx.getAsConstantArrayType(ObjType);
       assert(CAT && "vla in literal type?");
@@ -4616,7 +4617,7 @@ namespace {
               LoopExtent = (RHSOffset.getQuantity() -
                             LHSOffset.getQuantity()) / LHSPtrSz.getQuantity();
               // TODO: Case when things are not easily divisable
-              ThreadSize = LoopExtent / 2;//std::thread::hardware_concurrency();
+              ThreadSize = LoopExtent / std::thread::hardware_concurrency();
           }
         }
       }
