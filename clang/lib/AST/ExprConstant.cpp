@@ -61,6 +61,7 @@
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/ThreadPool.h"
 #include <cstring>
 #include <functional>
 
@@ -4549,17 +4550,17 @@ namespace {
     : public ConstStmtVisitor<LoopDependentsGatherer, bool> {
 
   EvalInfo &Info;
-  llvm::SmallVector<std::thread::id, 4> &ThreadIds;
+  std::vector<std::thread::id> ThreadIds;
   int LoopExtent;
   int ThreadSize;
-
+  
   // TODO/SELFNOTE: Perhaps the right way to do this is generate an RAII that 
   // will keep the old stack frame and create a new one with thread id and 
   // delete it once its completed and fallen out of scope
   public:
     LoopDependentsGatherer(EvalInfo &Info, 
-                           llvm::SmallVector<std::thread::id, 4> &ThreadIds) :
-                              Info(Info), ThreadIds(ThreadIds) {}
+                           std::vector<std::thread::id> ThreadIds) :
+                           Info(Info), ThreadIds(ThreadIds) {}
 
     // Realistically, this should take into consideration the condition and the
     // step/increment, although the increment doesn't always exist
@@ -4575,6 +4576,7 @@ namespace {
     //   condition and check the difference in value from first step to last 
     //   step
     bool LoopExtentFromCondition(const BinaryOperator* Cond) {
+
       // For now I will do the simple version where we just assume that the 
       // LHS and RHS are pointers or some numeric type and then work it out
       // trivially
@@ -4586,15 +4588,15 @@ namespace {
       // Similarly an RAII for holding the additional thread data may also be 
       // useful for keeping track and cleaning it up
       if (Cond->getLHS() && Cond->getRHS()) {
-        LValue LHSValue, RHSValue;
-      
         QualType LHSTy = Cond->getLHS()->getType();
         QualType RHSTy = Cond->getRHS()->getType();
         
+        // Should be two iterators, this probably doesn't handle nested pointers
+        // very well, I'm not sure which use-case this would come up in though
         if (LHSTy->isPointerType() && RHSTy->isPointerType()) {
-          auto LHSPtrSz = Info.Ctx.getTypeSizeInChars(LHSTy);
-          auto RHSPtrSz = Info.Ctx.getTypeSizeInChars(RHSTy);
-
+          LValue LHSValue, RHSValue;
+          // Perhaps there is a way to cut out the middle man for this and 
+          // directly access the LValue pointer information?
           bool LHSOK = EvaluatePointer(Cond->getLHS(), LHSValue, Info);
           if (!LHSOK && !Info.noteFailure())
             return false;
@@ -4602,48 +4604,57 @@ namespace {
           if (!EvaluatePointer(Cond->getRHS(), RHSValue, Info) || !LHSOK)
             return false;
 
+          // We actually care about the size of the type, not the Ptr because 
+          // the iterator will move in offsets of the underlying type, however
+          // this sort of only considers one layer of pointer indirection. Not
+          // sure if it's possible to run into a case where it's a problem 
+          // though under our constraints
+          int64_t LHSTySz = 
+            Info.Ctx.getTypeSizeInChars(LHSTy->getPointeeType()).getQuantity();
+          int64_t RHSTySz = 
+            Info.Ctx.getTypeSizeInChars(RHSTy->getPointeeType()).getQuantity();
+          
           // Only doing this for types of the same size at the moment, the 
-          // calculation will probably be different for differnet types although
+          // calculation will probably be different for different types although
           // I'm not too sure in which case mismatched iterators would be used
-          if (LHSPtrSz.getQuantity() == RHSPtrSz.getQuantity()) {
-              const CharUnits &LHSOffset = LHSValue.getLValueOffset();
-              const CharUnits &RHSOffset = RHSValue.getLValueOffset();
-              
+          // in our context (use with std algorithms)
+          if (LHSTySz == RHSTySz) {
+              int64_t LHSOffset = LHSValue.getLValueOffset().getQuantity();
+              int64_t RHSOffset = RHSValue.getLValueOffset().getQuantity();
 
               // TODO/FIXME: This also doesn't work for non-doubles, because 
               // it's working things out using the pointers size, not the actual
               // types size, which means the LoopExtent is calculated wrong for
               // things like int's which are 4 bytes rather than 8 bytes
-              LoopExtent = (RHSOffset.getQuantity() -
-                            LHSOffset.getQuantity()) / LHSPtrSz.getQuantity();
-              // TODO: Case when things are not easily divisable
-              ThreadSize = LoopExtent / std::thread::hardware_concurrency();
+              LoopExtent = (RHSOffset - LHSOffset) / RHSTySz;
+              ThreadSize = LoopExtent / ThreadIds.size();
+          }
+          
+          // This is computing the RHS, which always has to be greater than the 
+          // LHS by a thread e.g. 4 threads, loop size of 8, first threads RHS 
+          // has to be 2, next 4, next 6, next 8. The LHS will have to be 0, 2,
+          // 4, 6 so that it iterates across a section of the range in each 
+          // thread
+          // FIXME/TODO: This likely needs to be in a different function
+          // FIXME/TODO: This likey needs to be tracked in some sort of visitor 
+          //  esque fashion, so it's not accidentally duplicated in the Visitor 
+          //  section..
+          if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(
+                Cond->getRHS()->getReferencedDeclOfCallee())) {
+            for (int i = 0; i < ThreadIds.size(); ++i) {
+             auto Arg = 
+                APValue(
+                  Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
+
+              Arg.getLValueOffset() = 
+                CharUnits::fromQuantity(RHSTySz * ThreadSize * (i + 1));
+              
+              Info.CurrentCall->
+                ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
+                                   PVD->getFunctionScopeIndex())] = Arg;
+            }
           }
         }
-      }
-
-      // Not sure if im a fan of doing this in this function, or if I'm a fan of
-      // how i've currently implemented the resizing in general
-      if (auto Decl = Cond->getRHS()->getReferencedDeclOfCallee()) {
-        if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(Decl)) {
-          auto TySz = 
-            Info.Ctx.getTypeSizeInChars(PVD->getOriginalType()).getQuantity();
-          
-          for (int i = 0; i < ThreadIds.size(); ++i) {
-            
-          
-            auto Arg = 
-              APValue(Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
-          
-            Arg.getLValueOffset() = 
-              CharUnits::fromQuantity(TySz * ThreadSize * (i + 1));
-            Info.CurrentCall->
-              ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
-                                 PVD->getFunctionScopeIndex())] = Arg;
-            
-          }
-          
-        } 
       }
 
       return true;
@@ -4659,9 +4670,9 @@ namespace {
       if (FS->getCond()) {
         // not the right way to do this I think, as the condiiton isn't always 
         // going to be a binary operator
-        if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(FS->getCond())) {
+        if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(FS->getCond()))
           LoopExtentFromCondition(BO);
-        }
+        
       }
       
       // Realistically we should probably check for variables that change state 
@@ -4704,13 +4715,32 @@ namespace {
     // the CallStackFrame?
     bool VisitDeclRefExpr(const DeclRefExpr *DRE) {
       if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(DRE->getFoundDecl())) {
-//        if (Arg.isLValue()) {
-          auto TySz = 
-            Info.Ctx.getTypeSizeInChars(PVD->getOriginalType()).getQuantity();
-          for (int i = 0; i < ThreadIds.size(); ++i) {
-            auto Arg = 
-              APValue(Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
-            
+        // TODO: Create new CallStackFrame for ThreadId -> ArgIndex..?
+        // 1) Check what type of APValue it is
+        // 2) Increment or decrement it appropriately using whatever adjustment 
+        //    method there is for the type for each thread
+        //    Note: probably don't care about decrement we know there is none
+        //          right now
+        // 3) Store a copy of it based on threadid somewhere in the 
+        //    CallStackFrame
+        
+        for (int i = 0; i < ThreadIds.size(); ++i) {
+         APValue Arg = 
+           APValue(Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
+          
+         // Likely need to change this to a switch statement, a little clearer
+         // cleaner
+         if (Arg.isLValue()) {
+           auto OrigType = PVD->getOriginalType();
+           // We want the size of the underlying type, not the size of the 
+           // pointer to the type (in the case of iterators), to appropriately
+           // calculate the offsets. 
+           // This very likely does not cover all the edge cases.
+           auto TySz = OrigType->isPointerType() ?
+                Info.Ctx.getTypeSizeInChars(
+                  OrigType->getPointeeType()).getQuantity()
+              : Info.Ctx.getTypeSizeInChars(OrigType).getQuantity();
+
             std::vector<APValue::LValuePathEntry> NewLValPath;
             
             // The first element is an arbitrary looking value, but it appears 
@@ -4726,12 +4756,19 @@ namespace {
                           CharUnits::fromQuantity(TySz * ThreadSize * i), 
                           NewLValPath, Arg.isLValueOnePastTheEnd(), 
                           Arg.isNullPointer()); 
-          
+           
             Info.CurrentCall->
               ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
                                  PVD->getFunctionScopeIndex())] = Arg;
+            } else if (Arg.isInt()) {
+              Arg.getInt() = ThreadSize * i;
+              Info.CurrentCall->
+                ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
+                                 PVD->getFunctionScopeIndex())] = Arg;
+            } else {
+              llvm_unreachable("Unhandled Loop Dependents Case");
+            }
           }
-//        }
 
         return true;
       }
@@ -4749,7 +4786,7 @@ namespace {
       return true;
     }
     
-    bool VisitCastExpr(const CastExpr *E) { 
+    bool VisitCastExpr(const CastExpr *E) {
       if (E->getSubExpr())
         Visit(E->getSubExpr());
       return true;
@@ -4757,77 +4794,6 @@ namespace {
   };
 }
 
-/// Threading Helpers
-namespace {
-  // A barebones thread wrapper for now. The onus is on the user not to commit 
-  // seppuku by passing weird functions (or non-functions) and arguments to this 
-  // for the moment and to actually wait on the results/make sure there isn't 
-  // a thread floating in space on program exit
-  // 
-  // The general point in this class was to allow the ability to get an id from 
-  // the thread before actually launching the event..
-  //
-  // TODO/FIXME: A way to do this with less overhead maybe just to self-assign an
-  // id for each thread inside clang, rather than care about the thread id
-  //
-  // Or design a pool thread for it that has a fixed size array of anything 
-  // un-copyable and un-moveable in a 1:1 ratio with the threads the pool owns
-  class ThreadWrapper {
-      // if you want to have any kind of container for the thread_wrapper class 
-      // then mutex/condition_variable have to be wrapped in a unique_ptr, a pool
-      // of threads with seperate cv, mutex and booleans per thread would 
-      // probably make this a non-issue
-      std::unique_ptr<std::condition_variable> cv;
-      std::unique_ptr<std::mutex> mutex;
-      std::unique_ptr<std::atomic_bool> ready;
-      std::thread thread;
-
-     public: 
-      template <typename Func, typename ...Args>
-      ThreadWrapper(Func f, Args... args) : 
-        cv(std::make_unique<std::condition_variable>()),
-        mutex(std::make_unique<std::mutex>()), 
-        ready(std::make_unique<std::atomic_bool>()) {
-          // not a big fan of the way the condition_variable and mutex are 
-          // captured in the lambda, but unique_ptr's are not implicitly captured
-          // and std::move'ng them as you would normally do is going to remove the
-          // ability to access them outside of the lambda for synchronization...
-          thread = std::thread(std::thread([=, cv = cv.get(), mutex = mutex.get(),
-                                            ready = ready.get()]() {
-              std::unique_lock<std::mutex> ul(*mutex);
-              cv->wait(ul, [=](){ return *ready == true; });
-              f(args...);
-          }));
-      }
-      
-      ThreadWrapper(ThreadWrapper&&) = default;
-      
-      std::thread::id GetThreadId() {
-        return thread.get_id();
-      }
-      
-      void Start() {
-        {
-          std::lock_guard<std::mutex> lg(*mutex); 
-          *ready = true;
-        }
-        cv->notify_all();
-      }
-      
-      void Wait() {
-        thread.join();
-      }
-      
-      void StartAndWait() {
-        {
-          std::lock_guard<std::mutex> lg(*mutex); 
-          *ready = true;
-        }
-        cv->notify_all();
-        thread.join();
-      }
-  };
-}
 // Evaluate a statement.
 static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
                                    const Stmt *S, const SwitchCase *Case) {
@@ -4914,7 +4880,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
           return ESR;
         }
       }
-
+   
       EvalStmtResult ESR =
           EvaluateLoopBody(Result, Info, FS->getBody(), Case);
       if (ESR != ESR_Continue)
@@ -5090,30 +5056,45 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         return ESR;
       }
     }
-    if (Info.CurrentCall->Callee && 
-        Info.CurrentCall->Callee->getNameAsString() == "transform" ||
-        Info.CurrentCall->Callee->getNameAsString() == "for_each" /*||
-        Info.CurrentCall->Callee->getNameAsString() == "iota"*/) {
-      // AGOZILLON: iota will cause an assert right now, need to look into it
-//      llvm::errs() << "func name: " << Info.CurrentCall->Callee->getNameAsString() << "\n";
-      // I also need to know the context it's in, not just that its named transform
-      // e.g. I need to know its defined in the standard library and not some user code
-      llvm::SmallVector<ThreadWrapper, 4> Threads;
-      llvm::SmallVector<std::thread::id, 4> ThreadIds;
+
+    /// Making this static for now, realistically the ASTContext could hold 
+    /// the ThreadPool instead, but I'm not sure having it carry one around
+    /// all the time is great long term..
+    /// TODO/FIXME: The threading "manager" state and class could be stored 
+    /// inside of the ASTContext similar to interp::Context which is accessible 
+    /// through EvalInfo
+    static llvm::ThreadPool tp;
+    
+    // I also need to know the context it's in, not just that its named transform
+    // e.g. I need to know its defined in the standard library and not some user
+    // code 
+    /// TODO/FIXME: Implement test that will check if the ThreadPool is already
+    /// busy before launching more, we don't want to give more work and then 
+    /// wait because it's likely the pool will lock up if we enter here inside 
+    /// of a threads task
+    
+    if (Info.getLangOpts().ExperimentalConstexprParallel &&
+        Info.CurrentCall->Callee && 
+        (Info.CurrentCall->Callee->getNameAsString() == "transform" ||
+        Info.CurrentCall->Callee->getNameAsString() == "for_each" ||
+        Info.CurrentCall->Callee->getNameAsString() == "iota")
+        && !tp.threadsAreActive()
+        && LLVM_ENABLE_THREADS == 1) {
+      LoopDependentsGatherer(Info, tp.getThreadIds()).Visit(FS);
+
+      llvm::SmallVector<EvalInfo, 4> EvalInfos;
       llvm::SmallVector<std::promise<EvalStmtResult>, 4> EvalPromises;
       llvm::SmallVector<std::future<EvalStmtResult>, 4> EvalFutures;
-      llvm::SmallVector<EvalInfo, 4> EvalInfos;
-            
-      // TODO: Maybe a shared_future is more useful than a vector of them..
-      for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {
+
+      for (int i = 0; i <  tp.getPoolSize(); ++i) {
         EvalPromises.push_back(std::promise<EvalStmtResult>());
         EvalFutures.push_back(EvalPromises[i].get_future());
         EvalInfos.push_back(Info);
       }
+                
       auto ForThreadFunction = [](EvalInfo &Info, BlockScopeRAII &ForScope, 
                                    const ForStmt *FS, StmtResult &Result,
                                    std::promise<EvalStmtResult> &p) {
-
           while (true) {
             BlockScopeRAII IterScope(Info);
             bool Continue = true;
@@ -5124,9 +5105,10 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
               return;
             }
             
+
             if (!Continue)
               break;
-            
+
             EvalStmtResult ESR = EvaluateLoopBody(Result, Info, FS->getBody());
             if (ESR != ESR_Continue) {
               if (ESR != ESR_Failed && 
@@ -5134,7 +5116,6 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
                 p.set_value(ESR_Failed);
                 return;
               }
-              
               p.set_value(ESR);
               return;
             }
@@ -5157,35 +5138,18 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
           p.set_value(ESR_Succeeded);
       };
 
-      // CallStackFrame on a per thread basis..
-      //
-      for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {
-        Threads.push_back(ThreadWrapper(ForThreadFunction, 
-                                        std::ref(EvalInfos[i]), 
-                                        std::ref(ForScope), FS, 
-                                        std::ref(Result),
-                                        std::ref(EvalPromises[i])));
-      }
-      for (auto &&thread : Threads) {
-        ThreadIds.push_back(thread.GetThreadId());
-      }
-      
-      // I grab all the data using it, but then need to have some intermediate 
-      for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {
-        LoopDependentsGatherer(EvalInfos[i], ThreadIds).Visit(FS);
-      }
-            
-      // think is essentially a synchronous start and wait loop, otherwise it's 
-      // probably going to be slower rather than faster
-      // 
-      // sequential threads, for debugging
-      for (auto &&thread : Threads) {
-        thread.Start();
+      for (int i = 0; i < tp.getPoolSize(); ++i) {
+          tp.async(ForThreadFunction, std::ref(EvalInfos[i]), 
+                   std::ref(ForScope), FS, std::ref(Result),
+                   std::ref(EvalPromises[i]));
       }
 
-      for (auto &&thread : Threads) {
-        thread.Wait();
-      }
+      /// TODO/FIXME: Implement check that will check if the ThreadPool is 
+      /// already busy before launching more, we don't want to give more work 
+      /// and then wait because it's likely the pool will lock up if we enter 
+      /// here inside of a threads task
+      tp.wait();
+      
       // If any of our futures came back negative we have a problem
       for (auto &&EvalFuture : EvalFutures) {
         if (EvalFuture.get() == ESR_Failed) {
