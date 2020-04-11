@@ -3105,7 +3105,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   }
 
   Opts.SYCLIsDevice = Args.hasArg(options::OPT_fsycl_is_device);
-
+  Opts.ExperimentalConstexprParallel = 
+        Args.hasArg(options::OPT_fexperimental_constexpr_parallel);
+        
   // Set CUDA mode for OpenMP target NVPTX if specified in options
   Opts.OpenMPCUDAMode = Opts.OpenMPIsDevice && T.isNVPTX() &&
                         Args.hasArg(options::OPT_fopenmp_cuda_mode);

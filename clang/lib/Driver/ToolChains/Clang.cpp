@@ -4366,6 +4366,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
+  if (Args.hasArg(options::OPT_fexperimental_constexpr_parallel)) {
+    CmdArgs.push_back("-fexperimental-constexpr-parallel");
+  }
+  
   if (Args.hasFlag(options::OPT_mrtd, options::OPT_mno_rtd, false))
     CmdArgs.push_back("-fdefault-calling-conv=stdcall");
 
