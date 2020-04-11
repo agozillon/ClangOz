@@ -4,26 +4,43 @@
 #include <numeric>
 #include <iterator>
 
+// No parallelism:
+// 
 // clang++ -fconstexpr-steps=2147483647 -std=c++2a -stdlib=libc++ \
 //    constexpr_transform_slow.cpp
 //
 // 
 // clang++ -ftime-report -fconstexpr-steps=2147483647 -std=c++2a \
 //  -stdlib=libc++ constexpr_transform_slow.cpp
+//
+// With Parallelism: 
+//
+// $CLANG_BIN/clang++ -fconstexpr-steps=2147483647 -std=c++2a -stdlib=libc++  
+//  -fexperimental-constexpr-parallel constexpr_transform_slow.cpp
+//
+// $CLANG_BIN/clang++ -ftime-report -fconstexpr-steps=2147483647 -std=c++2a 
+//  -stdlib=libc++ -fexperimental-constexpr-parallel 
+//   constexpr_transform_slow.cpp
+//
+// I moved away from using -ftime-reprot to just using linux's time function, 
+// less verbose output.
 
-
-// TEST IF WEIRD SEG FAULT HAPPENS WITH UNMODED CLANG LLVM
 // TODO:
-// a) Remember this only works for double, because the size of the types
-//    when offsetting the pointer is currently not taken into consideration 
-// b) Check why this segfaults with 1200000 (Breaks at 64000) elements with and 
-// without the parallel implementation, more importantly check if it works fine 
-// with a version of the compiler ive not touched.
+// 2) Try with 2 threads...
+// 3) Check why this segfaults with 1200000 (Breaks at 640000) elements with and 
+//    without the parallel implementation, more importantly check if it works fine 
+//    with a version of the compiler ive not touched.
+// 4) This currently only works with values divisable by the number of cores 
+//    because I don't take into account the remainder values yet
+// 5) Use secondary argument to a std function to denote if it should be parallelized
+//    or not
+
+template <typename T>
 constexpr auto test_constexpr_transform() {
-    std::array<double, 320000> a = {0};
-    std::array<double, 320000> b = {0};
-    std::array<double, 320000> c = {0};
-    std::array<double, 320000> expected = {0};
+    std::array<T, 320000> a = {0};
+    std::array<T, 320000> b = {0};
+    std::array<T, 320000> c = {0};
+    std::array<T, 320000> expected = {0};
 
     std::iota(a.begin(), a.end(), 0);
     std::iota(b.begin(), b.end(), 0);
@@ -55,27 +72,48 @@ constexpr auto test_constexpr_transform() {
    return c; 
 }
 
-
+template <typename T>
 consteval auto golden_array() {
-  std::array<double, 320000> a = {0};
+  std::array<T, 320000> a = {0};
   std::iota(a.begin(), a.end(), 0);
   std::for_each(a.begin(), a.end(), [](auto &i){ i *= 2; });
   return a;
 }
 
 int main() {
-  constexpr auto transformed = test_constexpr_transform(); 
-  constexpr auto golden = golden_array();
+  constexpr auto transformed_double = test_constexpr_transform<double>(); 
+  constexpr auto golden_double = golden_array<double>();
+  constexpr auto transformed_float = test_constexpr_transform<float>(); 
+  constexpr auto golden_float = golden_array<float>();
   
-  static_assert(transformed == golden);
-  static_assert(test_constexpr_transform() == golden_array());
+  static_assert(transformed_double == golden_double);
+  static_assert(transformed_float == golden_float);
+  static_assert(test_constexpr_transform<double>() == golden_array<double>());
+  static_assert(test_constexpr_transform<float>() == golden_array<float>());
+  static_assert(test_constexpr_transform<int>() == golden_array<int>());
   
-  std::cout << "transformed.size(): " << transformed.size() << "\n";
+  std::cout << "transformed_double.size(): " << transformed_double.size() << "\n";
   bool correct = true;
-  for (int i = 0; i < transformed.size(); ++i) {
-    if (transformed[i] != i * 2 || transformed[i] != golden[i])
+  for (int i = 0; i < transformed_double.size(); ++i) {
+    if (transformed_double[i] != i * 2 || 
+        transformed_double[i] != golden_double[i])
       correct = false;
   }
+  
+  std::cout << "transformed_float.size(): " << transformed_float.size() << "\n";
+  for (int i = 0; i < transformed_float.size(); ++i) {
+    if (transformed_float[i] != i * 2 || 
+        transformed_float[i] != golden_float[i])
+      correct = false;
+  }
+  
+//  for (int i = 0; i < transformed_float.size(); ++i) {
+//    std::cout << "transformed_float: " << transformed_float[i] << "\n";
+//  }
+//  
+//  for (int i = 0; i < transformed_double.size(); ++i) {
+//    std::cout << "transformed_double: " << transformed_double[i] << "\n";
+//  }
   
   if (!correct)
     std::cout << "incorrect values at runtime \n";
