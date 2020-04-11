@@ -64,6 +64,18 @@ public:
     return asyncImpl(std::forward<Function>(F));
   }
 
+  /// Returns vector containing native thread identifiers for each thread in the
+  /// pool
+  inline std::vector<std::thread::id> getThreadIds() {
+    return ThreadIds;
+  }
+  
+  inline size_t getPoolSize() {
+    return Threads.size();
+  }
+  
+  inline bool threadsAreActive() { return (ActiveThreads > 0); };
+  
   /// Blocking wait for all the threads to complete and the queue to be empty.
   /// It is an error to try to add new tasks while blocking on this call.
   void wait();
@@ -75,7 +87,10 @@ private:
 
   /// Threads in flight
   std::vector<llvm::thread> Threads;
-
+  
+  /// Native identifiers for each thread in flight
+  std::vector<std::thread::id> ThreadIds;
+  
   /// Tasks waiting for execution in the pool.
   std::queue<PackagedTaskTy> Tasks;
 

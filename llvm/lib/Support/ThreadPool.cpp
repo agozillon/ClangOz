@@ -28,6 +28,8 @@ ThreadPool::ThreadPool(unsigned ThreadCount)
   // Create ThreadCount threads that will loop forever, wait on QueueCondition
   // for tasks to be queued or the Pool to be destroyed.
   Threads.reserve(ThreadCount);
+  ThreadIds.reserve(ThreadCount);
+  
   for (unsigned ThreadID = 0; ThreadID < ThreadCount; ++ThreadID) {
     Threads.emplace_back([&] {
       while (true) {
@@ -65,6 +67,8 @@ ThreadPool::ThreadPool(unsigned ThreadCount)
         CompletionCondition.notify_all();
       }
     });
+    
+    ThreadIds.emplace_back(Threads[ThreadID].get_id());
   }
 }
 
