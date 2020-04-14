@@ -4551,8 +4551,8 @@ namespace {
 
   EvalInfo &Info;
   std::vector<std::thread::id> ThreadIds;
-  int LoopExtent;
-  int ThreadSize;
+  int ThreadPartitionOverflow;
+  int ThreadParitionSize;
   
   // TODO/SELFNOTE: Perhaps the right way to do this is generate an RAII that 
   // will keep the old stack frame and create a new one with thread id and 
@@ -4575,7 +4575,7 @@ namespace {
     // 2) Would be to force the evaluation of the statements involved in the 
     //   condition and check the difference in value from first step to last 
     //   step
-    bool LoopExtentFromCondition(const BinaryOperator* Cond) {
+    bool ThreadPartitionFromCondition(const BinaryOperator* Cond) {
 
       // For now I will do the simple version where we just assume that the 
       // LHS and RHS are pointers or some numeric type and then work it out
@@ -4626,8 +4626,9 @@ namespace {
               // it's working things out using the pointers size, not the actual
               // types size, which means the LoopExtent is calculated wrong for
               // things like int's which are 4 bytes rather than 8 bytes
-              LoopExtent = (RHSOffset - LHSOffset) / RHSTySz;
-              ThreadSize = LoopExtent / ThreadIds.size();
+              int64_t LoopExtent = (RHSOffset - LHSOffset) / RHSTySz;
+              ThreadParitionSize = LoopExtent / ThreadIds.size();
+              ThreadPartitionOverflow = LoopExtent % ThreadIds.size();
           }
           
           // This is computing the RHS, which always has to be greater than the 
@@ -4646,8 +4647,15 @@ namespace {
                 APValue(
                   Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
 
+              // Might be a cleaner way of writing this..
+              int64_t endOfThreadLoop 
+                = (i != ThreadIds.size() - 1) ? 
+                    RHSTySz * ThreadParitionSize * (i + 1)
+                  : RHSTySz * ((ThreadParitionSize * (i + 1)) 
+                    + ThreadPartitionOverflow);
+              
               Arg.getLValueOffset() = 
-                CharUnits::fromQuantity(RHSTySz * ThreadSize * (i + 1));
+                CharUnits::fromQuantity(endOfThreadLoop);
               
               Info.CurrentCall->
                 ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
@@ -4667,13 +4675,12 @@ namespace {
       // perhaps another set of calls later for working out the step... for now 
       // the assumption is the step will be a basic ++ for a basic proof of 
       // concept
-      if (FS->getCond()) {
-        // not the right way to do this I think, as the condiiton isn't always 
+      if (FS->getCond())
+        // not the perfect way to do this I think, as the condiiton isn't always 
         // going to be a binary operator
         if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(FS->getCond()))
-          LoopExtentFromCondition(BO);
-        
-      }
+          ThreadPartitionFromCondition(BO);
+      
       
       // Realistically we should probably check for variables that change state 
       // in the body, condition and initializer, but in the non-general case 
@@ -4747,13 +4754,14 @@ namespace {
             // to be important, or at least it's avoiding an assertion
             for (int j = 0; j < Arg.getLValuePath().size(); ++j) {
               NewLValPath.push_back((j == 0) ? Arg.getLValuePath()[j] : 
-                             Arg.getLValuePath()[j].ArrayIndex(ThreadSize * i));
+                             Arg.getLValuePath()[j]
+                                .ArrayIndex(ThreadParitionSize * i));
             }
             
             // Only altering a few values, but unfortunately LValue Path has no
             // set function and the get returns a const array.
             Arg.setLValue(Arg.getLValueBase(), 
-                          CharUnits::fromQuantity(TySz * ThreadSize * i), 
+                          CharUnits::fromQuantity(TySz * ThreadParitionSize * i), 
                           NewLValPath, Arg.isLValueOnePastTheEnd(), 
                           Arg.isNullPointer()); 
            
@@ -4761,7 +4769,7 @@ namespace {
               ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
                                  PVD->getFunctionScopeIndex())] = Arg;
             } else if (Arg.isInt()) {
-              Arg.getInt() = ThreadSize * i;
+              Arg.getInt() = ThreadParitionSize * i;
               Info.CurrentCall->
                 ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
                                  PVD->getFunctionScopeIndex())] = Arg;

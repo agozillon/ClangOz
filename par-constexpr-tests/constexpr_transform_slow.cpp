@@ -26,12 +26,6 @@
 // less verbose output.
 
 // TODO:
-// 2) Try with 2 threads...
-// 3) Check why this segfaults with 1200000 (Breaks at 640000) elements with and 
-//    without the parallel implementation, more importantly check if it works fine 
-//    with a version of the compiler ive not touched.
-// 4) This currently only works with values divisable by the number of cores 
-//    because I don't take into account the remainder values yet
 // 5) Use secondary argument to a std function to denote if it should be parallelized
 //    or not
 
