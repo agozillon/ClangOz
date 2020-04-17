@@ -1,0 +1,148 @@
+numerics header:
+
+iota : works 
+accumulate : isn't trivially parellizeable (could try for fun...)
+reduce : isn't trivially parellizeable (more complex version of accumulate)
+transform_reduce : isn't trivially parellizeable (need accumulate or reduce 
+                   working first)
+inner_product : essentially a transform reduce unlikely to work easily
+adjacent_difference : Seems like it should work, provided the result iterator 
+  isn't the same iterator, but it doesn't seem to work right now.
+partial_sum : Seems like it should work, provided the result iterator 
+  isn't the same iterator, but it doesn't seem to work right now.
+inclusive_scan : it doesn't seem like this would work, it relies on prior 
+  elements being calculated to work out newer ones
+exclusive_scan : it doesn't seem like this would work, it relies on prior 
+  elements being calculated to work out newer ones
+transform_inclusive_scan : it doesn't seem like this would work, it relies on 
+  prior elements being calculated to work out newer ones
+transform_exclusive_scan : it doesn't seem like this would work, it relies on 
+  prior elements being calculated to work out newer ones
+gcd : only works on 2 values, not an array, also doesn't fit a loop format,
+      may be out of scope
+lcm : only works on 2 values, not an array, also doesn't fit a loop format,
+      may be out of scope
+midpoint : only works on 2 values, not an array, also doesn't fit a loop format,
+      may be out of scope
+
+Working:
+* iota
+
+Not Working:
+* adjacent_difference
+* partial_sum
+
+Maybe could be made to work:
+* accumulate
+* transform_reduce
+* reduce
+* inner_product
+
+Shouldn't Work:
+* gcd
+* lcm
+* midpoint
+* transform_exclusive_scan
+* transform_inclusive_scan
+* exclusive_scan
+* inclusive_scan
+
+algorithms header:
+
+all_of :
+any_of : 
+none_of :
+for_each : 
+for_each_n :
+count : 
+count_if :
+mismatch : 
+find :
+find_if :
+find_if_not :
+find_end :
+find_first_of :
+adjacent_find :
+search : 
+search_n : 
+copy : 
+copy_if : 
+copy_n : 
+copy_backward : 
+move : 
+move_backward :
+fill : 
+fill_n :
+transform :
+generate :
+generate_n :
+remove : 
+remove_if :
+remove_copy :
+remove_copy_if :
+replace : 
+replace_if :
+replace_copy :
+replace_copy_if :
+swap : 
+swap_ranges :
+iter_swap :
+reverse : 
+reverse_copy :
+rotate :
+rotate_copy :
+shift_left : 
+shift_right :
+random_shuffle : 
+shuffle :
+sample :
+unique :
+unique_copy :
+is_partitioned :
+partition : 
+partition_copy : 
+stable_partition : 
+partition_point :
+is_sorted : 
+is_sorted_until : 
+sort :
+partial_sort :
+partial_sort_copy : 
+stable_sort : 
+nth_element : 
+lower_bound :
+upper_bound :
+binary_search :
+equal_range :
+merge :
+inplace_merge :
+includes :
+set_difference :
+set_intersection :
+set_symmetric_difference :
+set_union :
+is_heap :
+is_heap_until :
+make_heap :
+push_heap :
+pop_heap :
+sort_heap :
+max :
+max_element :
+min :
+min_element :
+minmax :
+minmax_element :
+clamp :
+equal :
+lexicographical_compare : 
+lexicographical_compare_three_way :
+is_permutation :
+next_permutation : 
+prev_permutation :
+
+
+
+
+
+

@@ -795,7 +795,7 @@ namespace {
       NextCallIndex(EI.NextCallIndex),StepsLeft(EI.StepsLeft), 
       EnableNewConstInterp(EI.EnableNewConstInterp), 
       BottomFrame(*EI.CurrentCall, *this),
-      /*CleanupStack(EI.CleanupStack),*/ EvaluatingDecl(EI.EvaluatingDecl), 
+      CleanupStack(EI.CleanupStack), EvaluatingDecl(EI.EvaluatingDecl), 
       IsEvaluatingDecl(EI.IsEvaluatingDecl), 
       ObjectsUnderConstruction(EI.ObjectsUnderConstruction),
       HeapAllocs(EI.HeapAllocs), NumHeapAllocs(EI.NumHeapAllocs),
@@ -5080,12 +5080,17 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
     /// busy before launching more, we don't want to give more work and then 
     /// wait because it's likely the pool will lock up if we enter here inside 
     /// of a threads task
-    
+    // TODO: Put the string comparisons into a function, its getting a bit much
     if (Info.getLangOpts().ExperimentalConstexprParallel &&
         Info.CurrentCall->Callee && 
         (Info.CurrentCall->Callee->getNameAsString() == "transform" ||
         Info.CurrentCall->Callee->getNameAsString() == "for_each" ||
-        Info.CurrentCall->Callee->getNameAsString() == "iota")
+        Info.CurrentCall->Callee->getNameAsString() == "iota" ||
+        Info.CurrentCall->Callee->getNameAsString() == "adjacent_difference" ||
+        Info.CurrentCall->Callee->getNameAsString() == "partial_sum" ||
+        Info.CurrentCall->Callee->getNameAsString() == "any_of" || 
+        Info.CurrentCall->Callee->getNameAsString() == "all_of" || 
+        Info.CurrentCall->Callee->getNameAsString() == "none_of")
         && !tp.threadsAreActive()
         && LLVM_ENABLE_THREADS == 1) {
       LoopDependentsGatherer(Info, tp.getThreadIds()).Visit(FS);
