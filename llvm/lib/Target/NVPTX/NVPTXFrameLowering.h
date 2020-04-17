@@ -25,11 +25,12 @@ public:
   void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   int getFrameIndexReference(const MachineFunction &MF, int FI,
-                             unsigned &FrameReg) const override;
+                             Register &FrameReg) const override;
 
   MachineBasicBlock::iterator
   eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
                                 MachineBasicBlock::iterator I) const override;
+  DwarfFrameBase getDwarfFrameBase(const MachineFunction &MF) const override;
 };
 
 } // End llvm namespace

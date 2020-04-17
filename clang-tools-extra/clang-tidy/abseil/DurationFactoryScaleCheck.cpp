@@ -31,7 +31,7 @@ getScaleForFactory(llvm::StringRef FactoryName) {
        {"Minutes", DurationScale::Minutes},
        {"Hours", DurationScale::Hours}});
 
-  auto ScaleIter = ScaleMap.find(FactoryName);
+  auto ScaleIter = ScaleMap.find(std::string(FactoryName));
   if (ScaleIter == ScaleMap.end())
     return llvm::None;
 
@@ -51,7 +51,7 @@ static double GetValue(const IntegerLiteral *IntLit,
 
 // Given the scale of a duration and a `Multiplier`, determine if `Multiplier`
 // would produce a new scale.  If so, return a tuple containing the new scale
-// and a suitable Multipler for that scale, otherwise `None`.
+// and a suitable Multiplier for that scale, otherwise `None`.
 static llvm::Optional<std::tuple<DurationScale, double>>
 GetNewScaleSingleStep(DurationScale OldScale, double Multiplier) {
   switch (OldScale) {

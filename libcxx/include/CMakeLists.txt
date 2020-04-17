@@ -25,6 +25,7 @@ set(files
   any
   array
   atomic
+  barrier
   bit
   bitset
   cassert
@@ -44,6 +45,7 @@ set(files
   compare
   complex
   complex.h
+  concepts
   condition_variable
   csetjmp
   csignal
@@ -103,6 +105,7 @@ set(files
   iostream
   istream
   iterator
+  latch
   limits
   limits.h
   list
@@ -122,6 +125,7 @@ set(files
   ratio
   regex
   scoped_allocator
+  semaphore
   set
   setjmp.h
   shared_mutex
@@ -267,8 +271,5 @@ if (LIBCXX_INSTALL_HEADERS)
                               -P "${CMAKE_BINARY_DIR}/cmake_install.cmake")
     # Stripping is a no-op for headers
     add_custom_target(install-${CXX_HEADER_TARGET}-stripped DEPENDS install-${CXX_HEADER_TARGET})
-
-    add_custom_target(install-libcxx-headers DEPENDS install-${CXX_HEADER_TARGET})
-    add_custom_target(install-libcxx-headers-stripped DEPENDS install-${CXX_HEADER_TARGET}-stripped)
   endif()
 endif()

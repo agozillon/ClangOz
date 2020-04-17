@@ -60,8 +60,8 @@ bool HexagonTTIImpl::isTypeForHVX(Type *VecTy) const {
 }
 
 unsigned HexagonTTIImpl::getTypeNumElements(Type *Ty) const {
-  if (Ty->isVectorTy())
-    return Ty->getVectorNumElements();
+  if (auto *VTy = dyn_cast<VectorType>(Ty))
+    return VTy->getNumElements();
   assert((Ty->isIntegerTy() || Ty->isFloatingPointTy()) &&
          "Expecting scalar type");
   return 1;
@@ -131,19 +131,23 @@ unsigned HexagonTTIImpl::getCallInstrCost(Function *F, Type *RetTy,
 }
 
 unsigned HexagonTTIImpl::getIntrinsicInstrCost(Intrinsic::ID ID, Type *RetTy,
-      ArrayRef<Value*> Args, FastMathFlags FMF, unsigned VF) {
-  return BaseT::getIntrinsicInstrCost(ID, RetTy, Args, FMF, VF);
+                                               ArrayRef<Value *> Args,
+                                               FastMathFlags FMF, unsigned VF,
+                                               const Instruction *I) {
+  return BaseT::getIntrinsicInstrCost(ID, RetTy, Args, FMF, VF, I);
 }
 
 unsigned HexagonTTIImpl::getIntrinsicInstrCost(Intrinsic::ID ID, Type *RetTy,
-      ArrayRef<Type*> Tys, FastMathFlags FMF,
-      unsigned ScalarizationCostPassed) {
+                                               ArrayRef<Type *> Tys,
+                                               FastMathFlags FMF,
+                                               unsigned ScalarizationCostPassed,
+                                               const Instruction *I) {
   if (ID == Intrinsic::bswap) {
     std::pair<int, MVT> LT = TLI.getTypeLegalizationCost(DL, RetTy);
     return LT.first + 2;
   }
   return BaseT::getIntrinsicInstrCost(ID, RetTy, Tys, FMF,
-                                      ScalarizationCostPassed);
+                                      ScalarizationCostPassed, I);
 }
 
 unsigned HexagonTTIImpl::getAddressComputationCost(Type *Tp,
@@ -161,7 +165,7 @@ unsigned HexagonTTIImpl::getMemoryOpCost(unsigned Opcode, Type *Src,
 
   if (Src->isVectorTy()) {
     VectorType *VecTy = cast<VectorType>(Src);
-    unsigned VecWidth = VecTy->getBitWidth();
+    unsigned VecWidth = VecTy->getPrimitiveSizeInBits().getFixedSize();
     if (useHVX() && isTypeForHVX(VecTy)) {
       unsigned RegWidth = getRegisterBitWidth(true);
       assert(RegWidth && "Non-zero vector register width expected");
@@ -183,7 +187,7 @@ unsigned HexagonTTIImpl::getMemoryOpCost(unsigned Opcode, Type *Src,
     unsigned Cost =
         VecTy->getElementType()->isFloatingPointTy() ? FloatFactor : 1;
 
-    // At this point unspecified alignment is considered as Align::None().
+    // At this point unspecified alignment is considered as Align(1).
     const Align BoundAlignment = std::min(Alignment.valueOrOne(), Align(8));
     unsigned AlignWidth = 8 * BoundAlignment.value();
     unsigned NumLoads = alignTo(VecWidth, AlignWidth) / AlignWidth;
@@ -209,9 +213,11 @@ unsigned HexagonTTIImpl::getShuffleCost(TTI::ShuffleKind Kind, Type *Tp,
 }
 
 unsigned HexagonTTIImpl::getGatherScatterOpCost(unsigned Opcode, Type *DataTy,
-      Value *Ptr, bool VariableMask, unsigned Alignment) {
+                                                Value *Ptr, bool VariableMask,
+                                                unsigned Alignment,
+                                                const Instruction *I) {
   return BaseT::getGatherScatterOpCost(Opcode, DataTy, Ptr, VariableMask,
-                                       Alignment);
+                                       Alignment, I);
 }
 
 unsigned HexagonTTIImpl::getInterleavedMemoryOpCost(unsigned Opcode,

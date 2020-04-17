@@ -1,6 +1,6 @@
 //===- TestLinalgTransforms.cpp - Test Linalg transformation patterns -----===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -12,7 +12,6 @@
 
 #include "mlir/Dialect/Linalg/IR/LinalgOps.h"
 #include "mlir/Dialect/Linalg/Transforms/LinalgTransforms.h"
-#include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
@@ -28,7 +27,8 @@ namespace {
 } // end namespace mlir
 
 namespace {
-struct TestLinalgTransforms : public FunctionPass<TestLinalgTransforms> {
+struct TestLinalgTransforms
+    : public PassWrapper<TestLinalgTransforms, FunctionPass> {
   void runOnFunction() override;
 };
 } // end anonymous namespace
@@ -40,7 +40,7 @@ void TestLinalgTransforms::runOnFunction() {
 
   // Add the generated patterns to the list.
   linalg::populateWithGenerated(&getContext(), &patterns);
-  applyPatternsGreedily(funcOp, patterns);
+  applyPatternsAndFoldGreedily(funcOp, patterns);
 
   // Drop the marker.
   funcOp.walk([](LinalgOp op) {
@@ -48,6 +48,10 @@ void TestLinalgTransforms::runOnFunction() {
   });
 }
 
-static PassRegistration<TestLinalgTransforms>
-    pass("test-linalg-transform-patterns",
-         "Test Linalg transformation patterns by applying them greedily.");
+namespace mlir {
+void registerTestLinalgTransforms() {
+  PassRegistration<TestLinalgTransforms>(
+      "test-linalg-transform-patterns",
+      "Test Linalg transformation patterns by applying them greedily.");
+}
+} // namespace mlir

@@ -133,12 +133,14 @@ public:
   int getCmpSelInstrCost(unsigned Opcode, Type *ValTy, Type *CondTy,
                          const Instruction *I = nullptr);
   int getVectorInstrCost(unsigned Opcode, Type *Val, unsigned Index);
+  unsigned getScalarizationOverhead(Type *Ty, bool Insert, bool Extract);
   int getMemoryOpCost(unsigned Opcode, Type *Src, MaybeAlign Alignment,
                       unsigned AddressSpace, const Instruction *I = nullptr);
   int getMaskedMemoryOpCost(unsigned Opcode, Type *Src, unsigned Alignment,
                             unsigned AddressSpace);
   int getGatherScatterOpCost(unsigned Opcode, Type *DataTy, Value *Ptr,
-                             bool VariableMask, unsigned Alignment);
+                             bool VariableMask, unsigned Alignment,
+                             const Instruction *I);
   int getAddressComputationCost(Type *PtrTy, ScalarEvolution *SE,
                                 const SCEV *Ptr);
 
@@ -146,13 +148,16 @@ public:
 
   int getIntrinsicInstrCost(Intrinsic::ID IID, Type *RetTy,
                             ArrayRef<Type *> Tys, FastMathFlags FMF,
-                            unsigned ScalarizationCostPassed = UINT_MAX);
+                            unsigned ScalarizationCostPassed = UINT_MAX,
+                            const Instruction *I = nullptr);
   int getIntrinsicInstrCost(Intrinsic::ID IID, Type *RetTy,
                             ArrayRef<Value *> Args, FastMathFlags FMF,
-                            unsigned VF = 1);
+                            unsigned VF = 1, const Instruction *I = nullptr);
 
   int getArithmeticReductionCost(unsigned Opcode, Type *Ty,
                                  bool IsPairwiseForm);
+
+  int getMinMaxCost(Type *Ty, Type *CondTy, bool IsUnsigned);
 
   int getMinMaxReductionCost(Type *Ty, Type *CondTy, bool IsPairwiseForm,
                              bool IsUnsigned);

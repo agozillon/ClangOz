@@ -143,8 +143,7 @@ Instruction *InstCombiner::OptAndOp(BinaryOperator *Op,
           // the XOR is to toggle the bit.  If it is clear, then the ADD has
           // no effect.
           if ((AddRHS & AndRHSV).isNullValue()) { // Bit is not set, noop
-            TheAnd.setOperand(0, X);
-            return &TheAnd;
+            return replaceOperand(TheAnd, 0, X);
           } else {
             // Pull the XOR out of the AND.
             Value *NewAnd = Builder.CreateAnd(X, AndRHS);
@@ -1072,9 +1071,6 @@ static Value *foldUnsignedUnderflowCheck(ICmpInst *ZeroICmp,
             m_c_ICmp(UnsignedPred, m_Specific(ZeroCmpOp), m_Value(A))) &&
       match(ZeroCmpOp, m_c_Add(m_Specific(A), m_Value(B))) &&
       (ZeroICmp->hasOneUse() || UnsignedICmp->hasOneUse())) {
-    if (UnsignedICmp->getOperand(0) != ZeroCmpOp)
-      UnsignedPred = ICmpInst::getSwappedPredicate(UnsignedPred);
-
     auto GetKnownNonZeroAndOther = [&](Value *&NonZero, Value *&Other) {
       if (!IsKnownNonZero(NonZero))
         std::swap(NonZero, Other);
@@ -1111,8 +1107,6 @@ static Value *foldUnsignedUnderflowCheck(ICmpInst *ZeroICmp,
              m_c_ICmp(UnsignedPred, m_Specific(Base), m_Specific(Offset))) ||
       !ICmpInst::isUnsigned(UnsignedPred))
     return nullptr;
-  if (UnsignedICmp->getOperand(0) != Base)
-    UnsignedPred = ICmpInst::getSwappedPredicate(UnsignedPred);
 
   // Base >=/> Offset && (Base - Offset) != 0  <-->  Base > Offset
   // (no overflow and not null)
@@ -1658,7 +1652,7 @@ static bool canNarrowShiftAmt(Constant *C, unsigned BitWidth) {
 
   if (C->getType()->isVectorTy()) {
     // Check each element of a constant vector.
-    unsigned NumElts = C->getType()->getVectorNumElements();
+    unsigned NumElts = cast<VectorType>(C->getType())->getNumElements();
     for (unsigned i = 0; i != NumElts; ++i) {
       Constant *Elt = C->getAggregateElement(i);
       if (!Elt)
@@ -2020,7 +2014,7 @@ Instruction *InstCombiner::matchBSwap(BinaryOperator &Or) {
   LastInst->removeFromParent();
 
   for (auto *Inst : Insts)
-    Worklist.Add(Inst);
+    Worklist.push(Inst);
   return LastInst;
 }
 
@@ -2088,7 +2082,7 @@ static Instruction *matchRotate(Instruction &Or) {
 
 /// If all elements of two constant vectors are 0/-1 and inverses, return true.
 static bool areInverseVectorBitmasks(Constant *C1, Constant *C2) {
-  unsigned NumElts = C1->getType()->getVectorNumElements();
+  unsigned NumElts = cast<VectorType>(C1->getType())->getNumElements();
   for (unsigned i = 0; i != NumElts; ++i) {
     Constant *EltC1 = C1->getAggregateElement(i);
     Constant *EltC2 = C2->getAggregateElement(i);
@@ -2729,6 +2723,32 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
           canonicalizeCondSignextOfHighBitExtractToSignextHighBitExtract(I))
     return V;
 
+  CmpInst::Predicate Pred;
+  Value *Mul, *Ov, *MulIsNotZero, *UMulWithOv;
+  // Check if the OR weakens the overflow condition for umul.with.overflow by
+  // treating any non-zero result as overflow. In that case, we overflow if both
+  // umul.with.overflow operands are != 0, as in that case the result can only
+  // be 0, iff the multiplication overflows.
+  if (match(&I,
+            m_c_Or(m_CombineAnd(m_ExtractValue<1>(m_Value(UMulWithOv)),
+                                m_Value(Ov)),
+                   m_CombineAnd(m_ICmp(Pred,
+                                       m_CombineAnd(m_ExtractValue<0>(
+                                                        m_Deferred(UMulWithOv)),
+                                                    m_Value(Mul)),
+                                       m_ZeroInt()),
+                                m_Value(MulIsNotZero)))) &&
+      (Ov->hasOneUse() || (MulIsNotZero->hasOneUse() && Mul->hasOneUse())) &&
+      Pred == CmpInst::ICMP_NE) {
+    Value *A, *B;
+    if (match(UMulWithOv, m_Intrinsic<Intrinsic::umul_with_overflow>(
+                              m_Value(A), m_Value(B)))) {
+      Value *NotNullA = Builder.CreateIsNotNull(A);
+      Value *NotNullB = Builder.CreateIsNotNull(B);
+      return BinaryOperator::CreateAnd(NotNullA, NotNullB);
+    }
+  }
+
   return nullptr;
 }
 
@@ -2748,33 +2768,24 @@ static Instruction *foldXorToXor(BinaryOperator &I,
   // (A | B) ^ (A & B) -> A ^ B
   // (A | B) ^ (B & A) -> A ^ B
   if (match(&I, m_c_Xor(m_And(m_Value(A), m_Value(B)),
-                        m_c_Or(m_Deferred(A), m_Deferred(B))))) {
-    I.setOperand(0, A);
-    I.setOperand(1, B);
-    return &I;
-  }
+                        m_c_Or(m_Deferred(A), m_Deferred(B)))))
+    return BinaryOperator::CreateXor(A, B);
 
   // (A | ~B) ^ (~A | B) -> A ^ B
   // (~B | A) ^ (~A | B) -> A ^ B
   // (~A | B) ^ (A | ~B) -> A ^ B
   // (B | ~A) ^ (A | ~B) -> A ^ B
   if (match(&I, m_Xor(m_c_Or(m_Value(A), m_Not(m_Value(B))),
-                      m_c_Or(m_Not(m_Deferred(A)), m_Deferred(B))))) {
-    I.setOperand(0, A);
-    I.setOperand(1, B);
-    return &I;
-  }
+                      m_c_Or(m_Not(m_Deferred(A)), m_Deferred(B)))))
+    return BinaryOperator::CreateXor(A, B);
 
   // (A & ~B) ^ (~A & B) -> A ^ B
   // (~B & A) ^ (~A & B) -> A ^ B
   // (~A & B) ^ (A & ~B) -> A ^ B
   // (B & ~A) ^ (A & ~B) -> A ^ B
   if (match(&I, m_Xor(m_c_And(m_Value(A), m_Not(m_Value(B))),
-                      m_c_And(m_Not(m_Deferred(A)), m_Deferred(B))))) {
-    I.setOperand(0, A);
-    I.setOperand(1, B);
-    return &I;
-  }
+                      m_c_And(m_Not(m_Deferred(A)), m_Deferred(B)))))
+    return BinaryOperator::CreateXor(A, B);
 
   // For the remaining cases we need to get rid of one of the operands.
   if (!Op0->hasOneUse() && !Op1->hasOneUse())
@@ -2878,6 +2889,7 @@ Value *InstCombiner::foldXorOfICmps(ICmpInst *LHS, ICmpInst *RHS,
           Builder.SetInsertPoint(Y->getParent(), ++(Y->getIterator()));
           Value *NotY = Builder.CreateNot(Y, Y->getName() + ".not");
           // Replace all uses of Y (excluding the one in NotY!) with NotY.
+          Worklist.pushUsersToWorkList(*Y);
           Y->replaceUsesWithIf(NotY,
                                [NotY](Use &U) { return U.getUser() != NotY; });
         }
@@ -3058,13 +3070,23 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
     // ~(C >>s Y) --> ~C >>u Y (when inverting the replicated sign bits)
     Constant *C;
     if (match(NotVal, m_AShr(m_Constant(C), m_Value(Y))) &&
-        match(C, m_Negative()))
+        match(C, m_Negative())) {
+      // We matched a negative constant, so propagating undef is unsafe.
+      // Clamp undef elements to -1.
+      Type *EltTy = C->getType()->getScalarType();
+      C = Constant::replaceUndefsWith(C, ConstantInt::getAllOnesValue(EltTy));
       return BinaryOperator::CreateLShr(ConstantExpr::getNot(C), Y);
+    }
 
     // ~(C >>u Y) --> ~C >>s Y (when inverting the replicated sign bits)
     if (match(NotVal, m_LShr(m_Constant(C), m_Value(Y))) &&
-        match(C, m_NonNegative()))
+        match(C, m_NonNegative())) {
+      // We matched a non-negative constant, so propagating undef is unsafe.
+      // Clamp undef elements to 0.
+      Type *EltTy = C->getType()->getScalarType();
+      C = Constant::replaceUndefsWith(C, ConstantInt::getNullValue(EltTy));
       return BinaryOperator::CreateAShr(ConstantExpr::getNot(C), Y);
+    }
 
     // ~(X + C) --> -(C + 1) - X
     if (match(Op0, m_Add(m_Value(X), m_Constant(C))))
@@ -3114,10 +3136,7 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
       if (match(Op0, m_Or(m_Value(X), m_APInt(C))) &&
           MaskedValueIsZero(X, *C, 0, &I)) {
         Constant *NewC = ConstantInt::get(I.getType(), *C ^ *RHSC);
-        Worklist.Add(cast<Instruction>(Op0));
-        I.setOperand(0, X);
-        I.setOperand(1, NewC);
-        return &I;
+        return BinaryOperator::CreateXor(X, NewC);
       }
     }
   }

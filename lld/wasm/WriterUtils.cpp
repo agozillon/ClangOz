@@ -48,7 +48,7 @@ std::string toString(const WasmSignature &sig) {
     s += "void";
   else
     s += toString(sig.Returns[0]);
-  return s.str();
+  return std::string(s.str());
 }
 
 std::string toString(const WasmGlobalType &type) {
@@ -216,6 +216,9 @@ void writeExport(raw_ostream &os, const WasmExport &export_) {
     break;
   case WASM_EXTERNAL_GLOBAL:
     writeUleb128(os, export_.Index, "global index");
+    break;
+  case WASM_EXTERNAL_EVENT:
+    writeUleb128(os, export_.Index, "event index");
     break;
   case WASM_EXTERNAL_MEMORY:
     writeUleb128(os, export_.Index, "memory index");

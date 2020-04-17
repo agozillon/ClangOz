@@ -3,6 +3,7 @@
 # "reasonable".
 
 # REQUIRES: x86
+# UNSUPPORTED: lldb-repro
 
 # RUN: llvm-mc -triple=x86_64-pc-linux -filetype=obj %s --defsym LOC=0 > %t
 # RUN: %lldb %t -o "image lookup -v -a 0" -o "image lookup -v -a 2" \
@@ -28,8 +29,7 @@
 # CHECK-NEXT:  [0x0000000000000000, 0x0000000000000001): DW_OP_reg5 RDI
 # CHECK-NEXT:  [0x0000000000000001, 0x0000000000000006): DW_OP_reg0 RAX
 # CHECK:     Variable{{.*}}, name = "x1", {{.*}}, scope = parameter
-# CHECK:     Variable{{.*}}, name = "x2", {{.*}}, scope = parameter, location =
-# CHECK-NEXT:  error: unexpected end of data
+# CHECK:     Variable{{.*}}, name = "x2", {{.*}}, scope = parameter, location = 0x00000000: error: unexpected end of data
 # CHECK:     Variable{{.*}}, name = "x3", {{.*}}, scope = parameter, location =
 # CHECK-NEXT:  [0x0000000000000002, 0x0000000000000003): DW_OP_reg1 RDX
 # LOCLISTS:  Variable{{.*}}, name = "x4", {{.*}}, scope = parameter, location =

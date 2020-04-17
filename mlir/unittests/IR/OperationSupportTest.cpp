@@ -1,6 +1,6 @@
 //===- OperationSupportTest.cpp - Operation support unit tests ------------===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -14,15 +14,16 @@
 using namespace mlir;
 using namespace mlir::detail;
 
-namespace {
-Operation *createOp(MLIRContext *context, bool resizableOperands,
-                    ArrayRef<Value> operands = llvm::None,
-                    ArrayRef<Type> resultTypes = llvm::None) {
+static Operation *createOp(MLIRContext *context, bool resizableOperands,
+                           ArrayRef<Value> operands = llvm::None,
+                           ArrayRef<Type> resultTypes = llvm::None) {
+  context->allowUnregisteredDialects();
   return Operation::create(
       UnknownLoc::get(context), OperationName("foo.bar", context), resultTypes,
       operands, llvm::None, llvm::None, 0, resizableOperands);
 }
 
+namespace {
 TEST(OperandStorageTest, NonResizable) {
   MLIRContext context;
   Builder builder(&context);

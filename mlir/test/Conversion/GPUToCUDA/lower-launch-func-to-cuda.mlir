@@ -1,13 +1,13 @@
-// RUN: mlir-opt %s --launch-func-to-cuda | FileCheck %s
+// RUN: mlir-opt -allow-unregistered-dialect %s --launch-func-to-cuda | FileCheck %s
 
 module attributes {gpu.container_module} {
 
   // CHECK: llvm.mlir.global internal constant @[[kernel_name:.*]]("kernel\00")
   // CHECK: llvm.mlir.global internal constant @[[global:.*]]("CUBIN")
 
-  module @kernel_module attributes {gpu.kernel_module, nvvm.cubin = "CUBIN"} {
-    gpu.func @kernel(%arg0: !llvm.float, %arg1: !llvm<"float*">) attributes {gpu.kernel} {
-      gpu.return
+  gpu.module @kernel_module attributes {nvvm.cubin = "CUBIN"} {
+    llvm.func @kernel(%arg0: !llvm.float, %arg1: !llvm<"float*">) attributes {gpu.kernel} {
+      llvm.return
     }
   }
 

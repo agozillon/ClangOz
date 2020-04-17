@@ -14,14 +14,10 @@
 #ifndef LLVM_ANALYSIS_PROFILE_SUMMARY_INFO_H
 #define LLVM_ANALYSIS_PROFILE_SUMMARY_INFO_H
 
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/ProfileSummary.h"
-#include "llvm/IR/ValueHandle.h"
 #include "llvm/Pass.h"
 #include <memory>
 
@@ -29,6 +25,7 @@ namespace llvm {
 class BasicBlock;
 class BlockFrequencyInfo;
 class CallSite;
+class Instruction;
 class ProfileSummary;
 /// Analysis providing profile information.
 ///
@@ -120,6 +117,11 @@ public:
   bool isFunctionHotInCallGraphNthPercentile(int PercentileCutoff,
                                              const Function *F,
                                              BlockFrequencyInfo &BFI);
+  /// Returns true if \p F contains cold code with regard to a given cold
+  /// percentile cutoff value.
+  bool isFunctionColdInCallGraphNthPercentile(int PercentileCutoff,
+                                              const Function *F,
+                                              BlockFrequencyInfo &BFI);
   /// Returns true if count \p C is considered hot.
   bool isHotCount(uint64_t C);
   /// Returns true if count \p C is considered cold.
@@ -127,6 +129,9 @@ public:
   /// Returns true if count \p C is considered hot with regard to a given
   /// hot percentile cutoff value.
   bool isHotCountNthPercentile(int PercentileCutoff, uint64_t C);
+  /// Returns true if count \p C is considered cold with regard to a given
+  /// cold percentile cutoff value.
+  bool isColdCountNthPercentile(int PercentileCutoff, uint64_t C);
   /// Returns true if BasicBlock \p BB is considered hot.
   bool isHotBlock(const BasicBlock *BB, BlockFrequencyInfo *BFI);
   /// Returns true if BasicBlock \p BB is considered cold.
@@ -135,6 +140,10 @@ public:
   /// hot percentile cutoff value.
   bool isHotBlockNthPercentile(int PercentileCutoff,
                                const BasicBlock *BB, BlockFrequencyInfo *BFI);
+  /// Returns true if BasicBlock \p BB is considered cold with regard to a given
+  /// cold percentile cutoff value.
+  bool isColdBlockNthPercentile(int PercentileCutoff,
+                                const BasicBlock *BB, BlockFrequencyInfo *BFI);
   /// Returns true if CallSite \p CS is considered hot.
   bool isHotCallSite(const CallSite &CS, BlockFrequencyInfo *BFI);
   /// Returns true if Callsite \p CS is considered cold.
@@ -153,6 +162,17 @@ public:
   uint64_t getColdCountThreshold() {
     return ColdCountThreshold ? ColdCountThreshold.getValue() : 0;
   }
+
+ private:
+  template<bool isHot>
+  bool isFunctionHotOrColdInCallGraphNthPercentile(int PercentileCutoff,
+                                                   const Function *F,
+                                                   BlockFrequencyInfo &BFI);
+  template<bool isHot>
+  bool isHotOrColdCountNthPercentile(int PercentileCutoff, uint64_t C);
+  template<bool isHot>
+  bool isHotOrColdBlockNthPercentile(int PercentileCutoff, const BasicBlock *BB,
+                                     BlockFrequencyInfo *BFI);
 };
 
 /// An analysis pass based on legacy pass manager to deliver ProfileSummaryInfo.

@@ -465,6 +465,10 @@ public:
 
   ASTContext &getASTContext() const LLVM_READONLY;
 
+  /// Helper to get the language options from the ASTContext.
+  /// Defined out of line to avoid depending on ASTContext.h.
+  const LangOptions &getLangOpts() const LLVM_READONLY;
+
   void setAccess(AccessSpecifier AS) {
     Access = AS;
     assert(AccessDeclContextSanity());
@@ -626,7 +630,16 @@ protected:
     setModuleOwnershipKind(ModuleOwnershipKind::ModulePrivate);
   }
 
-  /// Set the owning module ID.
+public:
+  /// Set the FromASTFile flag. This indicates that this declaration
+  /// was deserialized and not parsed from source code and enables
+  /// features such as module ownership information.
+  void setFromASTFile() {
+    FromASTFile = true;
+  }
+
+  /// Set the owning module ID.  This may only be called for
+  /// deserialized Decls.
   void setOwningModuleID(unsigned ID) {
     assert(isFromASTFile() && "Only works on a deserialized declaration");
     *((unsigned*)this - 2) = ID;

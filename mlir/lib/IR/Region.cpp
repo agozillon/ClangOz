@@ -1,6 +1,6 @@
 //===- Region.cpp - MLIR Region Class -------------------------------------===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -84,7 +84,7 @@ void Region::cloneInto(Region *dest, Region::iterator destPos,
     // argument to the cloned block.
     for (auto arg : block.getArguments())
       if (!mapper.contains(arg))
-        mapper.map(arg, newBlock->addArgument(arg->getType()));
+        mapper.map(arg, newBlock->addArgument(arg.getType()));
 
     // Clone and remap the operations within this block.
     for (auto &op : block)
@@ -146,7 +146,7 @@ static bool isIsolatedAbove(Region &region, Region &limit,
 
           // Check that any value that is used by an operation is defined in the
           // same region as either an operation result or a block argument.
-          if (operand->getParentRegion()->isProperAncestor(&limit)) {
+          if (operand.getParentRegion()->isProperAncestor(&limit)) {
             if (noteLoc) {
               op.emitOpError("using value defined outside the region")
                       .attachNote(noteLoc)
@@ -214,14 +214,14 @@ RegionRange::RegionRange(MutableArrayRef<Region> regions)
 RegionRange::RegionRange(ArrayRef<std::unique_ptr<Region>> regions)
     : RegionRange(regions.data(), regions.size()) {}
 
-/// See `detail::indexed_accessor_range_base` for details.
+/// See `llvm::detail::indexed_accessor_range_base` for details.
 RegionRange::OwnerT RegionRange::offset_base(const OwnerT &owner,
                                              ptrdiff_t index) {
   if (auto *operand = owner.dyn_cast<const std::unique_ptr<Region> *>())
     return operand + index;
   return &owner.get<Region *>()[index];
 }
-/// See `detail::indexed_accessor_range_base` for details.
+/// See `llvm::detail::indexed_accessor_range_base` for details.
 Region *RegionRange::dereference_iterator(const OwnerT &owner,
                                           ptrdiff_t index) {
   if (auto *operand = owner.dyn_cast<const std::unique_ptr<Region> *>())

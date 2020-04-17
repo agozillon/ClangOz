@@ -98,6 +98,8 @@ public:
     return m_collector;
   }
 
+  void recordInterestingDirectory(const llvm::Twine &dir);
+
   void Keep() override {
     auto mapping = GetRoot().CopyByAppendingPathComponent(Info::file);
     // Temporary files that are removed during execution can cause copy errors.
@@ -132,7 +134,7 @@ public:
   static char ID;
 };
 
-/// Provider for the LLDB current working directroy.
+/// Provider for the LLDB current working directory.
 ///
 /// When the reproducer is kept, it writes lldb's current working directory to
 /// a file named cwd.txt in the reproducer root.
@@ -142,7 +144,7 @@ public:
     llvm::SmallString<128> cwd;
     if (std::error_code EC = llvm::sys::fs::current_path(cwd))
       return;
-    m_cwd = cwd.str();
+    m_cwd = std::string(cwd.str());
   }
   struct Info {
     static const char *name;
@@ -231,6 +233,12 @@ public:
   /// might need to clean up files already written to disk.
   void Discard();
 
+  /// Enable or disable auto generate.
+  void SetAutoGenerate(bool b);
+
+  /// Return whether auto generate is enabled.
+  bool IsAutoGenerate() const;
+
   /// Create and register a new provider.
   template <typename T> T *Create() {
     std::unique_ptr<ProviderBase> provider = std::make_unique<T>(m_root);
@@ -272,6 +280,9 @@ private:
 
   /// Flag to ensure that we never call both keep and discard.
   bool m_done = false;
+
+  /// Flag to auto generate a reproducer when it would otherwise be discarded.
+  bool m_auto_generate = false;
 };
 
 class Loader final {

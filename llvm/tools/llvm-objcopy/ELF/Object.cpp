@@ -1520,7 +1520,7 @@ template <class ELFT> void ELFBuilder<ELFT>::readSectionHeaders() {
       continue;
     }
     auto &Sec = makeSection(Shdr);
-    Sec.Name = unwrapOrError(ElfFile.getSectionName(&Shdr));
+    Sec.Name = std::string(unwrapOrError(ElfFile.getSectionName(&Shdr)));
     Sec.Type = Sec.OriginalType = Shdr.sh_type;
     Sec.Flags = Sec.OriginalFlags = Shdr.sh_flags;
     Sec.Addr = Shdr.sh_addr;
@@ -1902,8 +1902,7 @@ static void orderSegments(std::vector<Segment *> &Segments) {
 // returns an Offset one past the end of the last segment.
 static uint64_t layoutSegments(std::vector<Segment *> &Segments,
                                uint64_t Offset) {
-  assert(std::is_sorted(std::begin(Segments), std::end(Segments),
-                        compareSegmentsByOffset));
+  assert(llvm::is_sorted(Segments, compareSegmentsByOffset));
   // The only way a segment should move is if a section was between two
   // segments and that section was removed. If that section isn't in a segment
   // then it's acceptable, but not ideal, to simply move it to after the

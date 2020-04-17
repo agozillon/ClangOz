@@ -51,6 +51,7 @@
 ; CHECK-NEXT:       Expand reduction intrinsics
 ; CHECK-NEXT:       Dominator Tree Construction
 ; CHECK-NEXT:       Interleaved Access Pass
+; CHECK-NEXT:       X86 Partial Reduction
 ; CHECK-NEXT:       Expand indirectbr instructions
 ; CHECK-NEXT:       Dominator Tree Construction
 ; CHECK-NEXT:       Natural Loop Information
@@ -138,9 +139,11 @@
 ; CHECK-NEXT:       Machine Loop Invariant Code Motion
 ; CHECK-NEXT:       Bundle Machine CFG Edges
 ; CHECK-NEXT:       X86 FP Stackifier
+; CHECK-NEXT:       Fixup Statepoint Caller Saved
 ; CHECK-NEXT:       PostRA Machine Sink
-; CHECK-NEXT:       Machine Block Frequency Analysis
 ; CHECK-NEXT:       MachineDominator Tree Construction
+; CHECK-NEXT:       Machine Natural Loop Construction
+; CHECK-NEXT:       Machine Block Frequency Analysis
 ; CHECK-NEXT:       MachinePostDominator Tree Construction
 ; CHECK-NEXT:       Lazy Machine Block Frequency Analysis
 ; CHECK-NEXT:       Machine Optimization Remark Emitter
@@ -159,6 +162,9 @@
 ; CHECK-NEXT:       Machine Block Frequency Analysis
 ; CHECK-NEXT:       MachinePostDominator Tree Construction
 ; CHECK-NEXT:       Branch Probability Basic Block Placement
+; CHECK-NEXT:       Insert fentry calls
+; CHECK-NEXT:       Insert XRay ops
+; CHECK-NEXT:       Implement the 'patchable-function' attribute
 ; CHECK-NEXT:       ReachingDefAnalysis
 ; CHECK-NEXT:       X86 Execution Dependency Fix
 ; CHECK-NEXT:       BreakFalseDeps
@@ -174,14 +180,13 @@
 ; CHECK-NEXT:       Compressing EVEX instrs to VEX encoding when possible
 ; CHECK-NEXT:       X86 Discriminate Memory Operands
 ; CHECK-NEXT:       X86 Insert Cache Prefetches
+; CHECK-NEXT:       X86 insert wait instruction
 ; CHECK-NEXT:       Contiguously Lay Out Funclets
 ; CHECK-NEXT:       StackMap Liveness Analysis
 ; CHECK-NEXT:       Live DEBUG_VALUE analysis
-; CHECK-NEXT:       Insert fentry calls
-; CHECK-NEXT:       Insert XRay ops
-; CHECK-NEXT:       Implement the 'patchable-function' attribute
-; CHECK-NEXT:       X86 Retpoline Thunks
+; CHECK-NEXT:       X86 Indirect Thunks
 ; CHECK-NEXT:       Check CFA info and insert CFI instructions if needed
+; CHECK-NEXT:       X86 Load Value Injection (LVI) Ret-Hardening
 ; CHECK-NEXT:       Lazy Machine Block Frequency Analysis
 ; CHECK-NEXT:       Machine Optimization Remark Emitter
 ; CHECK-NEXT:       X86 Assembly Printer

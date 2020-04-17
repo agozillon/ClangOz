@@ -1,6 +1,6 @@
 //===- BlockSupport.h -------------------------------------------*- C++ -*-===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -54,19 +54,19 @@ public:
 
 /// This class implements the successor iterators for Block.
 class SuccessorRange final
-    : public detail::indexed_accessor_range_base<SuccessorRange, BlockOperand *,
-                                                 Block *, Block *, Block *> {
+    : public llvm::detail::indexed_accessor_range_base<
+          SuccessorRange, BlockOperand *, Block *, Block *, Block *> {
 public:
   using RangeBaseT::RangeBaseT;
   SuccessorRange(Block *block);
   SuccessorRange(Operation *term);
 
 private:
-  /// See `detail::indexed_accessor_range_base` for details.
+  /// See `llvm::detail::indexed_accessor_range_base` for details.
   static BlockOperand *offset_base(BlockOperand *object, ptrdiff_t index) {
     return object + index;
   }
-  /// See `detail::indexed_accessor_range_base` for details.
+  /// See `llvm::detail::indexed_accessor_range_base` for details.
   static Block *dereference_iterator(BlockOperand *object, ptrdiff_t index) {
     return object[index].get();
   }

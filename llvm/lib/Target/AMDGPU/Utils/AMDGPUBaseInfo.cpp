@@ -268,6 +268,13 @@ unsigned getLocalMemorySize(const MCSubtargetInfo *STI) {
 }
 
 unsigned getEUsPerCU(const MCSubtargetInfo *STI) {
+  // "Per CU" really means "per whatever functional block the waves of a
+  // workgroup must share". For gfx10 in CU mode this is the CU, which contains
+  // two SIMDs.
+  if (isGFX10(*STI) && STI->getFeatureBits().test(FeatureCuMode))
+    return 2;
+  // Pre-gfx10 a CU contains four SIMDs. For gfx10 in WGP mode the WGP contains
+  // two CUs, so a total of four SIMDs.
   return 4;
 }
 
@@ -283,15 +290,6 @@ unsigned getMaxWorkGroupsPerCU(const MCSubtargetInfo *STI,
   return std::min(N, 16u);
 }
 
-unsigned getMaxWavesPerCU(const MCSubtargetInfo *STI) {
-  return getMaxWavesPerEU(STI) * getEUsPerCU(STI);
-}
-
-unsigned getMaxWavesPerCU(const MCSubtargetInfo *STI,
-                          unsigned FlatWorkGroupSize) {
-  return getWavesPerWorkGroup(STI, FlatWorkGroupSize);
-}
-
 unsigned getMinWavesPerEU(const MCSubtargetInfo *STI) {
   return 1;
 }
@@ -303,10 +301,10 @@ unsigned getMaxWavesPerEU(const MCSubtargetInfo *STI) {
   return 20;
 }
 
-unsigned getMaxWavesPerEU(const MCSubtargetInfo *STI,
-                          unsigned FlatWorkGroupSize) {
-  return alignTo(getMaxWavesPerCU(STI, FlatWorkGroupSize),
-                 getEUsPerCU(STI)) / getEUsPerCU(STI);
+unsigned getWavesPerEUForWorkGroup(const MCSubtargetInfo *STI,
+                                   unsigned FlatWorkGroupSize) {
+  return divideCeil(getWavesPerWorkGroup(STI, FlatWorkGroupSize),
+                    getEUsPerCU(STI));
 }
 
 unsigned getMinFlatWorkGroupSize(const MCSubtargetInfo *STI) {
@@ -320,8 +318,7 @@ unsigned getMaxFlatWorkGroupSize(const MCSubtargetInfo *STI) {
 
 unsigned getWavesPerWorkGroup(const MCSubtargetInfo *STI,
                               unsigned FlatWorkGroupSize) {
-  return alignTo(FlatWorkGroupSize, getWavefrontSize(STI)) /
-                 getWavefrontSize(STI);
+  return divideCeil(FlatWorkGroupSize, getWavefrontSize(STI));
 }
 
 unsigned getSGPRAllocGranule(const MCSubtargetInfo *STI) {
@@ -559,7 +556,7 @@ bool isReadOnlySegment(const GlobalValue *GV) {
 }
 
 bool shouldEmitConstantsToTextSection(const Triple &TT) {
-  return TT.getOS() == Triple::AMDPAL;
+  return TT.getOS() == Triple::AMDPAL || TT.getArch() == Triple::r600;
 }
 
 int getIntegerAttribute(const Function &F, StringRef Name, int Default) {
@@ -927,7 +924,11 @@ bool hasSRAMECC(const MCSubtargetInfo &STI) {
 }
 
 bool hasMIMG_R128(const MCSubtargetInfo &STI) {
-  return STI.getFeatureBits()[AMDGPU::FeatureMIMG_R128];
+  return STI.getFeatureBits()[AMDGPU::FeatureMIMG_R128] && !STI.getFeatureBits()[AMDGPU::FeatureR128A16];
+}
+
+bool hasGFX10A16(const MCSubtargetInfo &STI) {
+  return STI.getFeatureBits()[AMDGPU::FeatureGFX10A16];
 }
 
 bool hasPackedD16(const MCSubtargetInfo &STI) {
@@ -960,7 +961,7 @@ bool isGCN3Encoding(const MCSubtargetInfo &STI) {
 
 bool isSGPR(unsigned Reg, const MCRegisterInfo* TRI) {
   const MCRegisterClass SGPRClass = TRI->getRegClass(AMDGPU::SReg_32RegClassID);
-  const unsigned FirstSubReg = TRI->getSubReg(Reg, 1);
+  const unsigned FirstSubReg = TRI->getSubReg(Reg, AMDGPU::sub0);
   return SGPRClass.contains(FirstSubReg != 0 ? FirstSubReg : Reg) ||
     Reg == AMDGPU::SCC;
 }
@@ -1247,16 +1248,53 @@ static bool hasSMEMByteOffset(const MCSubtargetInfo &ST) {
   return isGCN3Encoding(ST) || isGFX10(ST);
 }
 
-int64_t getSMRDEncodedOffset(const MCSubtargetInfo &ST, int64_t ByteOffset) {
+static bool hasSMRDSignedImmOffset(const MCSubtargetInfo &ST) {
+  return isGFX9(ST) || isGFX10(ST);
+}
+
+static bool isLegalSMRDEncodedUnsignedOffset(const MCSubtargetInfo &ST,
+                                             int64_t EncodedOffset) {
+  return hasSMEMByteOffset(ST) ? isUInt<20>(EncodedOffset)
+                               : isUInt<8>(EncodedOffset);
+}
+
+static bool isDwordAligned(uint64_t ByteOffset) {
+  return (ByteOffset & 3) == 0;
+}
+
+uint64_t convertSMRDOffsetUnits(const MCSubtargetInfo &ST,
+                                uint64_t ByteOffset) {
   if (hasSMEMByteOffset(ST))
     return ByteOffset;
+
+  assert(isDwordAligned(ByteOffset));
   return ByteOffset >> 2;
 }
 
-bool isLegalSMRDImmOffset(const MCSubtargetInfo &ST, int64_t ByteOffset) {
-  int64_t EncodedOffset = getSMRDEncodedOffset(ST, ByteOffset);
-  return (hasSMEMByteOffset(ST)) ?
-    isUInt<20>(EncodedOffset) : isUInt<8>(EncodedOffset);
+Optional<int64_t> getSMRDEncodedOffset(const MCSubtargetInfo &ST,
+                                       int64_t ByteOffset, bool IsBuffer) {
+  // The signed version is always a byte offset.
+  if (!IsBuffer && hasSMRDSignedImmOffset(ST)) {
+    assert(hasSMEMByteOffset(ST));
+    return isInt<20>(ByteOffset) ? Optional<int64_t>(ByteOffset) : None;
+  }
+
+  if (!isDwordAligned(ByteOffset) && !hasSMEMByteOffset(ST))
+    return None;
+
+  int64_t EncodedOffset = convertSMRDOffsetUnits(ST, ByteOffset);
+  return isLegalSMRDEncodedUnsignedOffset(ST, EncodedOffset)
+             ? Optional<int64_t>(EncodedOffset)
+             : None;
+}
+
+Optional<int64_t> getSMRDEncodedLiteralOffset32(const MCSubtargetInfo &ST,
+                                                int64_t ByteOffset) {
+  if (!isCI(ST) || !isDwordAligned(ByteOffset))
+    return None;
+
+  int64_t EncodedOffset = convertSMRDOffsetUnits(ST, ByteOffset);
+  return isUInt<32>(EncodedOffset) ? Optional<int64_t>(EncodedOffset) : None;
 }
 
 // Given Imm, split it into the values to put into the SOffset and ImmOffset
@@ -1305,8 +1343,7 @@ bool splitMUBUFOffset(uint32_t Imm, uint32_t &SOffset, uint32_t &ImmOffset,
   return true;
 }
 
-SIModeRegisterDefaults::SIModeRegisterDefaults(const Function &F,
-                                               const GCNSubtarget &ST) {
+SIModeRegisterDefaults::SIModeRegisterDefaults(const Function &F) {
   *this = getDefaultForCallingConv(F.getCallingConv());
 
   StringRef IEEEAttr = F.getFnAttribute("amdgpu-ieee").getValueAsString();
@@ -1318,8 +1355,25 @@ SIModeRegisterDefaults::SIModeRegisterDefaults(const Function &F,
   if (!DX10ClampAttr.empty())
     DX10Clamp = DX10ClampAttr == "true";
 
-  FP32Denormals = ST.hasFP32Denormals(F);
-  FP64FP16Denormals = ST.hasFP64FP16Denormals(F);
+  StringRef DenormF32Attr = F.getFnAttribute("denormal-fp-math-f32").getValueAsString();
+  if (!DenormF32Attr.empty()) {
+    DenormalMode DenormMode = parseDenormalFPAttribute(DenormF32Attr);
+    FP32InputDenormals = DenormMode.Input == DenormalMode::IEEE;
+    FP32OutputDenormals = DenormMode.Output == DenormalMode::IEEE;
+  }
+
+  StringRef DenormAttr = F.getFnAttribute("denormal-fp-math").getValueAsString();
+  if (!DenormAttr.empty()) {
+    DenormalMode DenormMode = parseDenormalFPAttribute(DenormAttr);
+
+    if (DenormF32Attr.empty()) {
+      FP32InputDenormals = DenormMode.Input == DenormalMode::IEEE;
+      FP32OutputDenormals = DenormMode.Output == DenormalMode::IEEE;
+    }
+
+    FP64FP16InputDenormals = DenormMode.Input == DenormalMode::IEEE;
+    FP64FP16OutputDenormals = DenormMode.Output == DenormalMode::IEEE;
+  }
 }
 
 namespace {

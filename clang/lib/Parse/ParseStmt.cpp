@@ -105,6 +105,7 @@ Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
 
   StmtResult Res = ParseStatementOrDeclarationAfterAttributes(
       Stmts, StmtCtx, TrailingElseLoc, Attrs);
+  MaybeDestroyTemplateIds();
 
   assert((Attrs.empty() || Res.isInvalid() || Res.isUsable()) &&
          "attributes on empty statement");
@@ -1014,9 +1015,9 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
                                 Tok.getLocation(),
                                 "in compound statement ('{}')");
 
-  // Record the state of the FP_CONTRACT pragma, restore on leaving the
+  // Record the state of the FPFeatures, restore on leaving the
   // compound statement.
-  Sema::FPContractStateRAII SaveFPContractState(Actions);
+  Sema::FPFeaturesStateRAII SaveFPContractState(Actions);
 
   InMessageExpressionRAIIObject InMessage(*this, false);
   BalancedDelimiterTracker T(*this, tok::l_brace);

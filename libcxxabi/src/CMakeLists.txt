@@ -95,6 +95,9 @@ if (MINGW)
   # MINGW_LIBRARIES is defined in config-ix.cmake
   list(APPEND LIBCXXABI_LIBRARIES ${MINGW_LIBRARIES})
 endif()
+if (ANDROID AND ANDROID_PLATFORM_LEVEL LESS 21)
+  list(APPEND LIBCXXABI_LIBRARIES android_support)
+endif()
 
 if (NOT LIBCXXABI_USE_COMPILER_RT)
   add_library_flags_if(LIBCXXABI_HAS_GCC_LIB gcc)
@@ -255,7 +258,7 @@ if (LIBCXXABI_ENABLE_STATIC)
     set(MERGE_ARCHIVES_LIBTOOL "--use-libtool" "--libtool" "${CMAKE_LIBTOOL}")
   endif()
 
-  # Merge the the libc++abi.a and libunwind.a into one.
+  # Merge the libc++abi.a and libunwind.a into one.
   if(LIBCXXABI_USE_LLVM_UNWINDER AND LIBCXXABI_STATICALLY_LINK_UNWINDER_IN_STATIC_LIBRARY)
     add_custom_command(TARGET cxxabi_static POST_BUILD
       COMMAND ${PYTHON_EXECUTABLE} ${LIBCXXABI_LIBCXX_PATH}/utils/merge_archives.py
@@ -292,7 +295,4 @@ if (NOT CMAKE_CONFIGURATION_TYPES AND LIBCXXABI_INSTALL_LIBRARY)
             -DCMAKE_INSTALL_COMPONENT=cxxabi
             -DCMAKE_INSTALL_DO_STRIP=1
             -P "${LIBCXXABI_BINARY_DIR}/cmake_install.cmake")
-
-  # TODO: This is a legacy target name and should be removed at some point.
-  add_custom_target(install-libcxxabi DEPENDS install-cxxabi)
 endif()

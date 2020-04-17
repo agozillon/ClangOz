@@ -153,7 +153,7 @@ public:
     if (!isa<VectorType>(DataType) || !ST->hasSVE())
       return false;
 
-    Type *Ty = DataType->getVectorElementType();
+    Type *Ty = cast<VectorType>(DataType)->getElementType();
     if (Ty->isHalfTy() || Ty->isFloatTy() || Ty->isDoubleTy())
       return true;
 
@@ -172,6 +172,23 @@ public:
     return isLegalMaskedLoadStore(DataType, Alignment);
   }
 
+  bool isLegalNTStore(Type *DataType, Align Alignment) {
+    // NOTE: The logic below is mostly geared towards LV, which calls it with
+    //       vectors with 2 elements. We might want to improve that, if other
+    //       users show up.
+    // Nontemporal vector stores can be directly lowered to STNP, if the vector
+    // can be halved so that each half fits into a register. That's the case if
+    // the element type fits into a register and the number of elements is a
+    // power of 2 > 1.
+    if (auto *DataTypeVTy = dyn_cast<VectorType>(DataType)) {
+      unsigned NumElements = DataTypeVTy->getNumElements();
+      unsigned EltSize = DataTypeVTy->getElementType()->getScalarSizeInBits();
+      return NumElements > 1 && isPowerOf2_64(NumElements) && EltSize >= 8 &&
+             EltSize <= 128 && isPowerOf2_64(EltSize);
+    }
+    return BaseT::isLegalNTStore(DataType, Alignment);
+  }
+
   int getInterleavedMemoryOpCost(unsigned Opcode, Type *VecTy, unsigned Factor,
                                  ArrayRef<unsigned> Indices, unsigned Alignment,
                                  unsigned AddressSpace,
@@ -183,7 +200,21 @@ public:
                                      bool &AllowPromotionWithoutCommonHeader);
 
   bool shouldExpandReduction(const IntrinsicInst *II) const {
-    return false;
+    switch (II->getIntrinsicID()) {
+    case Intrinsic::experimental_vector_reduce_v2_fadd:
+    case Intrinsic::experimental_vector_reduce_v2_fmul:
+      // We don't have legalization support for ordered FP reductions.
+      return !II->getFastMathFlags().allowReassoc();
+
+    case Intrinsic::experimental_vector_reduce_fmax:
+    case Intrinsic::experimental_vector_reduce_fmin:
+      // Lowering asserts that there are no NaNs.
+      return !II->getFastMathFlags().noNaNs();
+
+    default:
+      // Don't expand anything else, let legalization deal with it.
+      return false;
+    }
   }
 
   unsigned getGISelRematGlobalCost() const {

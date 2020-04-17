@@ -383,7 +383,7 @@ LoadInst *AtomicExpand::convertAtomicLoadToIntegerType(LoadInst *LI) {
   Value *NewAddr = Builder.CreateBitCast(Addr, PT);
 
   auto *NewLI = Builder.CreateLoad(NewTy, NewAddr);
-  NewLI->setAlignment(MaybeAlign(LI->getAlignment()));
+  NewLI->setAlignment(LI->getAlign());
   NewLI->setVolatile(LI->isVolatile());
   NewLI->setAtomic(LI->getOrdering(), LI->getSyncScopeID());
   LLVM_DEBUG(dbgs() << "Replaced " << *LI << " with " << *NewLI << "\n");
@@ -470,7 +470,7 @@ StoreInst *AtomicExpand::convertAtomicStoreToIntegerType(StoreInst *SI) {
   Value *NewAddr = Builder.CreateBitCast(Addr, PT);
 
   StoreInst *NewSI = Builder.CreateStore(NewVal, NewAddr);
-  NewSI->setAlignment(MaybeAlign(SI->getAlignment()));
+  NewSI->setAlignment(SI->getAlign());
   NewSI->setVolatile(SI->isVolatile());
   NewSI->setAtomic(SI->getOrdering(), SI->getSyncScopeID());
   LLVM_DEBUG(dbgs() << "Replaced " << *SI << " with " << *NewSI << "\n");
@@ -1377,7 +1377,7 @@ Value *AtomicExpand::insertRMWCmpXchgLoop(
   Builder.SetInsertPoint(BB);
   LoadInst *InitLoaded = Builder.CreateLoad(ResultTy, Addr);
   // Atomics require at least natural alignment.
-  InitLoaded->setAlignment(MaybeAlign(ResultTy->getPrimitiveSizeInBits() / 8));
+  InitLoaded->setAlignment(Align(ResultTy->getPrimitiveSizeInBits() / 8));
   Builder.CreateBr(LoopBB);
 
   // Start the main loop block now that we've taken care of the preliminaries.
@@ -1622,7 +1622,7 @@ bool AtomicExpand::expandAtomicOpToLibcall(
   bool UseSizedLibcall = canUseSizedAtomicCall(Size, Align, DL);
   Type *SizedIntTy = Type::getIntNTy(Ctx, Size * 8);
 
-  unsigned AllocaAlignment = DL.getPrefTypeAlignment(SizedIntTy);
+  const llvm::Align AllocaAlignment(DL.getPrefTypeAlignment(SizedIntTy));
 
   // TODO: the "order" argument type is "int", not int32. So
   // getInt32Ty may be wrong if the arch uses e.g. 16-bit ints.
@@ -1712,7 +1712,7 @@ bool AtomicExpand::expandAtomicOpToLibcall(
   // 'expected' argument, if present.
   if (CASExpected) {
     AllocaCASExpected = AllocaBuilder.CreateAlloca(CASExpected->getType());
-    AllocaCASExpected->setAlignment(MaybeAlign(AllocaAlignment));
+    AllocaCASExpected->setAlignment(AllocaAlignment);
     unsigned AllocaAS =  AllocaCASExpected->getType()->getPointerAddressSpace();
 
     AllocaCASExpected_i8 =
@@ -1731,7 +1731,7 @@ bool AtomicExpand::expandAtomicOpToLibcall(
       Args.push_back(IntValue);
     } else {
       AllocaValue = AllocaBuilder.CreateAlloca(ValueOperand->getType());
-      AllocaValue->setAlignment(MaybeAlign(AllocaAlignment));
+      AllocaValue->setAlignment(AllocaAlignment);
       AllocaValue_i8 =
           Builder.CreateBitCast(AllocaValue, Type::getInt8PtrTy(Ctx));
       Builder.CreateLifetimeStart(AllocaValue_i8, SizeVal64);
@@ -1743,7 +1743,7 @@ bool AtomicExpand::expandAtomicOpToLibcall(
   // 'ret' argument.
   if (!CASExpected && HasResult && !UseSizedLibcall) {
     AllocaResult = AllocaBuilder.CreateAlloca(I->getType());
-    AllocaResult->setAlignment(MaybeAlign(AllocaAlignment));
+    AllocaResult->setAlignment(AllocaAlignment);
     unsigned AllocaAS =  AllocaResult->getType()->getPointerAddressSpace();
     AllocaResult_i8 =
       Builder.CreateBitCast(AllocaResult, Type::getInt8PtrTy(Ctx, AllocaAS));

@@ -19,6 +19,7 @@
 #include "clang/Basic/ObjCRuntime.h"
 #include "clang/Basic/Sanitizers.h"
 #include "clang/Basic/Visibility.h"
+#include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
 #include <string>
@@ -53,6 +54,7 @@ enum class MSVtorDispMode { Never, ForVBaseOverride, ForVFTable };
 class LangOptions : public LangOptionsBase {
 public:
   using Visibility = clang::Visibility;
+  using RoundingMode = llvm::RoundingMode;
 
   enum GCMode { NonGC, GCOnly, HybridGC };
   enum StackProtectorMode { SSPOff, SSPOn, SSPStrong, SSPReq };
@@ -190,23 +192,9 @@ public:
     FEA_On
   };
 
-  // Values of the following enumerations correspond to metadata arguments
-  // specified for constrained floating-point intrinsics:
-  // http://llvm.org/docs/LangRef.html#constrained-floating-point-intrinsics.
-
-  /// Possible rounding modes.
-  enum FPRoundingModeKind {
-    /// Rounding to nearest, corresponds to "round.tonearest".
-    FPR_ToNearest,
-    /// Rounding toward -Inf, corresponds to "round.downward".
-    FPR_Downward,
-    /// Rounding toward +Inf, corresponds to "round.upward".
-    FPR_Upward,
-    /// Rounding toward zero, corresponds to "round.towardzero".
-    FPR_TowardZero,
-    /// Is determined by runtime environment, corresponds to "round.dynamic".
-    FPR_Dynamic
-  };
+  /// Alias for RoundingMode::NearestTiesToEven.
+  static constexpr unsigned FPR_ToNearest =
+      static_cast<unsigned>(llvm::RoundingMode::NearestTiesToEven);
 
   /// Possible floating point exception behavior.
   enum FPExceptionModeKind {
@@ -227,6 +215,22 @@ public:
     /// Permit vector bitcasts between all vectors with the same total
     /// bit-width.
     All,
+  };
+
+  enum class SignReturnAddressScopeKind {
+    /// No signing for any function.
+    None,
+    /// Sign the return address of functions that spill LR.
+    NonLeaf,
+    /// Sign the return address of all functions,
+    All
+  };
+
+  enum class SignReturnAddressKeyKind {
+    /// Return address signing uses APIA key.
+    AKey,
+    /// Return address signing uses APIB key.
+    BKey
   };
 
 public:
@@ -351,24 +355,57 @@ public:
 
   /// Return the OpenCL C or C++ version as a VersionTuple.
   VersionTuple getOpenCLVersionTuple() const;
+
+  /// Check if return address signing is enabled.
+  bool hasSignReturnAddress() const {
+    return getSignReturnAddressScope() != SignReturnAddressScopeKind::None;
+  }
+
+  /// Check if return address signing uses AKey.
+  bool isSignReturnAddressWithAKey() const {
+    return getSignReturnAddressKey() == SignReturnAddressKeyKind::AKey;
+  }
+
+  /// Check if leaf functions are also signed.
+  bool isSignReturnAddressScopeAll() const {
+    return getSignReturnAddressScope() == SignReturnAddressScopeKind::All;
+  }
 };
 
 /// Floating point control options
 class FPOptions {
+  using RoundingMode = llvm::RoundingMode;
+
 public:
   FPOptions() : fp_contract(LangOptions::FPC_Off),
-                fenv_access(LangOptions::FEA_Off) {}
+                fenv_access(LangOptions::FEA_Off),
+                rounding(LangOptions::FPR_ToNearest),
+                exceptions(LangOptions::FPE_Ignore)
+        {}
 
   // Used for serializing.
   explicit FPOptions(unsigned I)
-      : fp_contract(static_cast<LangOptions::FPContractModeKind>(I & 3)),
-        fenv_access(static_cast<LangOptions::FEnvAccessModeKind>((I >> 2) & 1))
+      : fp_contract(I & 3),
+        fenv_access((I >> 2) & 1),
+        rounding   ((I >> 3) & 7),
+        exceptions ((I >> 6) & 3)
         {}
 
   explicit FPOptions(const LangOptions &LangOpts)
       : fp_contract(LangOpts.getDefaultFPContractMode()),
-        fenv_access(LangOptions::FEA_Off) {}
+        fenv_access(LangOptions::FEA_Off),
+        rounding(LangOptions::FPR_ToNearest),
+        exceptions(LangOptions::FPE_Ignore)
+        {}
   // FIXME: Use getDefaultFEnvAccessMode() when available.
+
+  /// Return the default value of FPOptions that's used when trailing
+  /// storage isn't required.
+  static FPOptions defaultWithoutTrailingStorage(const LangOptions &LO);
+
+  /// Does this FPOptions require trailing storage when stored in various
+  /// AST nodes, or can it be recreated using `defaultWithoutTrailingStorage`?
+  bool requiresTrailingStorage(const LangOptions &LO);
 
   bool allowFPContractWithinStatement() const {
     return fp_contract == LangOptions::FPC_On;
@@ -398,14 +435,42 @@ public:
 
   void setDisallowFEnvAccess() { fenv_access = LangOptions::FEA_Off; }
 
+  RoundingMode getRoundingMode() const {
+    return static_cast<RoundingMode>(rounding);
+  }
+
+  void setRoundingMode(RoundingMode RM) {
+    rounding = static_cast<unsigned>(RM);
+  }
+
+  LangOptions::FPExceptionModeKind getExceptionMode() const {
+    return static_cast<LangOptions::FPExceptionModeKind>(exceptions);
+  }
+
+  void setExceptionMode(LangOptions::FPExceptionModeKind EM) {
+    exceptions = EM;
+  }
+
+  bool isFPConstrained() const {
+    return getRoundingMode() != RoundingMode::NearestTiesToEven ||
+           getExceptionMode() != LangOptions::FPE_Ignore ||
+           allowFEnvAccess();
+  }
+
   /// Used to serialize this.
-  unsigned getInt() const { return fp_contract | (fenv_access << 2); }
+  unsigned getAsOpaqueInt() const {
+    return fp_contract | (fenv_access << 2) | (rounding << 3) |
+           (exceptions << 6);
+  }
 
 private:
-  /// Adjust BinaryOperator::FPFeatures to match the total bit-field size
-  /// of these two.
+  /// Adjust BinaryOperatorBitfields::FPFeatures and
+  /// CXXOperatorCallExprBitfields::FPFeatures to match the total bit-field size
+  /// of these fields.
   unsigned fp_contract : 2;
   unsigned fenv_access : 1;
+  unsigned rounding : 3;
+  unsigned exceptions : 2;
 };
 
 /// Describes the kind of translation unit being processed.

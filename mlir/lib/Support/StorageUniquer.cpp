@@ -1,6 +1,6 @@
 //===- StorageUniquer.cpp - Common Storage Class Uniquer ------------------===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -176,14 +176,14 @@ StorageUniquer::~StorageUniquer() {}
 auto StorageUniquer::getImpl(
     unsigned kind, unsigned hashValue,
     function_ref<bool(const BaseStorage *)> isEqual,
-    std::function<BaseStorage *(StorageAllocator &)> ctorFn) -> BaseStorage * {
+    function_ref<BaseStorage *(StorageAllocator &)> ctorFn) -> BaseStorage * {
   return impl->getOrCreate(kind, hashValue, isEqual, ctorFn);
 }
 
 /// Implementation for getting/creating an instance of a derived type with
 /// default storage.
 auto StorageUniquer::getImpl(
-    unsigned kind, std::function<BaseStorage *(StorageAllocator &)> ctorFn)
+    unsigned kind, function_ref<BaseStorage *(StorageAllocator &)> ctorFn)
     -> BaseStorage * {
   return impl->getOrCreate(kind, ctorFn);
 }
@@ -192,6 +192,6 @@ auto StorageUniquer::getImpl(
 /// storage.
 void StorageUniquer::eraseImpl(unsigned kind, unsigned hashValue,
                                function_ref<bool(const BaseStorage *)> isEqual,
-                               std::function<void(BaseStorage *)> cleanupFn) {
+                               function_ref<void(BaseStorage *)> cleanupFn) {
   impl->erase(kind, hashValue, isEqual, cleanupFn);
 }

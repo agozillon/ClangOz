@@ -252,7 +252,7 @@ Scatterer::Scatterer(BasicBlock *bb, BasicBlock::iterator bbi, Value *v,
   PtrTy = dyn_cast<PointerType>(Ty);
   if (PtrTy)
     Ty = PtrTy->getElementType();
-  Size = Ty->getVectorNumElements();
+  Size = cast<VectorType>(Ty)->getNumElements();
   if (!CachePtr)
     Tmp.resize(Size, nullptr);
   else if (CachePtr->empty())
@@ -269,7 +269,7 @@ Value *Scatterer::operator[](unsigned I) {
     return CV[I];
   IRBuilder<> Builder(BB, BBI);
   if (PtrTy) {
-    Type *ElTy = PtrTy->getElementType()->getVectorElementType();
+    Type *ElTy = cast<VectorType>(PtrTy->getElementType())->getElementType();
     if (!CV[0]) {
       Type *NewPtrTy = PointerType::get(ElTy, PtrTy->getAddressSpace());
       CV[0] = Builder.CreateBitCast(V, NewPtrTy, V->getName() + ".i0");
@@ -802,7 +802,7 @@ bool ScalarizerVisitor::visitLoadInst(LoadInst &LI) {
 
   for (unsigned I = 0; I < NumElems; ++I)
     Res[I] = Builder.CreateAlignedLoad(Layout.VecTy->getElementType(), Ptr[I],
-                                       Layout.getElemAlign(I),
+                                       Align(Layout.getElemAlign(I)),
                                        LI.getName() + ".i" + Twine(I));
   gather(&LI, Res);
   return true;
@@ -829,7 +829,7 @@ bool ScalarizerVisitor::visitStoreInst(StoreInst &SI) {
   Stores.resize(NumElems);
   for (unsigned I = 0; I < NumElems; ++I) {
     unsigned Align = Layout.getElemAlign(I);
-    Stores[I] = Builder.CreateAlignedStore(Val[I], Ptr[I], Align);
+    Stores[I] = Builder.CreateAlignedStore(Val[I], Ptr[I], MaybeAlign(Align));
   }
   transferMetadataAndIRFlags(&SI, Stores);
   return true;
@@ -852,10 +852,10 @@ bool ScalarizerVisitor::finish() {
     if (!Op->use_empty()) {
       // The value is still needed, so recreate it using a series of
       // InsertElements.
-      Type *Ty = Op->getType();
+      auto *Ty = cast<VectorType>(Op->getType());
       Value *Res = UndefValue::get(Ty);
       BasicBlock *BB = Op->getParent();
-      unsigned Count = Ty->getVectorNumElements();
+      unsigned Count = Ty->getNumElements();
       IRBuilder<> Builder(Op);
       if (isa<PHINode>(Op))
         Builder.SetInsertPoint(BB, BB->getFirstInsertionPt());

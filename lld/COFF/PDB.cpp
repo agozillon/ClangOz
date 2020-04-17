@@ -63,11 +63,10 @@
 
 using namespace llvm;
 using namespace llvm::codeview;
+using namespace lld;
+using namespace lld::coff;
 
 using llvm::object::coff_section;
-
-namespace lld {
-namespace coff {
 
 static ExitOnError exitOnErr;
 
@@ -100,6 +99,9 @@ public:
 
   /// Add natvis files specified on the command line.
   void addNatvisFiles();
+
+  /// Add named streams specified on the command line.
+  void addNamedStreams();
 
   /// Link CodeView from each object file in the symbol table into the PDB.
   void addObjectsToPDB();
@@ -177,8 +179,6 @@ private:
   DebugStringTableSubsection pdbStrTab;
 
   llvm::SmallString<128> nativePath;
-
-  std::vector<pdb::SecMapEntry> sectionMap;
 
   /// Type index mappings of type server PDBs that we've loaded so far.
   std::map<codeview::GUID, CVIndexMap> typeServerIndexMappings;
@@ -1388,6 +1388,8 @@ void PDBLinker::printStats() {
       TypeIndex typeIndex;
       uint64_t totalInputSize() const { return uint64_t(dupCount) * typeSize; }
       bool operator<(const TypeSizeInfo &rhs) const {
+        if (totalInputSize() == rhs.totalInputSize())
+          return typeIndex < rhs.typeIndex;
         return totalInputSize() < rhs.totalInputSize();
       }
     };
@@ -1438,6 +1440,19 @@ void PDBLinker::addNatvisFiles() {
   }
 }
 
+void PDBLinker::addNamedStreams() {
+  for (const auto &streamFile : config->namedStreams) {
+    const StringRef stream = streamFile.getKey(), file = streamFile.getValue();
+    ErrorOr<std::unique_ptr<MemoryBuffer>> dataOrErr =
+        MemoryBuffer::getFile(file);
+    if (!dataOrErr) {
+      warn("Cannot open input file: " + file);
+      continue;
+    }
+    exitOnErr(builder.addNamedStream(stream, (*dataOrErr)->getBuffer()));
+  }
+}
+
 static codeview::CPUType toCodeViewMachine(COFF::MachineTypes machine) {
   switch (machine) {
   case COFF::IMAGE_FILE_MACHINE_AMD64:
@@ -1473,7 +1488,7 @@ static std::string quote(ArrayRef<StringRef> args) {
       a.split(s, '"');
       r.append(join(s, "\"\""));
     } else {
-      r.append(a);
+      r.append(std::string(a));
     }
     if (hasWS || hasQ)
       r.push_back('"');
@@ -1681,10 +1696,10 @@ void PDBLinker::addImportFilesToPDB(ArrayRef<OutputSection *> outputSections) {
 }
 
 // Creates a PDB file.
-void createPDB(SymbolTable *symtab,
-                     ArrayRef<OutputSection *> outputSections,
-                     ArrayRef<uint8_t> sectionTable,
-                     llvm::codeview::DebugInfo *buildId) {
+void lld::coff::createPDB(SymbolTable *symtab,
+                          ArrayRef<OutputSection *> outputSections,
+                          ArrayRef<uint8_t> sectionTable,
+                          llvm::codeview::DebugInfo *buildId) {
   ScopedTimer t1(totalPdbLinkTimer);
   PDBLinker pdb(symtab);
 
@@ -1693,6 +1708,7 @@ void createPDB(SymbolTable *symtab,
   pdb.addImportFilesToPDB(outputSections);
   pdb.addSections(outputSections, sectionTable);
   pdb.addNatvisFiles();
+  pdb.addNamedStreams();
 
   ScopedTimer t2(diskCommitTimer);
   codeview::GUID guid;
@@ -1766,8 +1782,7 @@ void PDBLinker::addSections(ArrayRef<OutputSection *> outputSections,
   ArrayRef<object::coff_section> sections = {
       (const object::coff_section *)sectionTable.data(),
       sectionTable.size() / sizeof(object::coff_section)};
-  sectionMap = pdb::DbiStreamBuilder::createSectionMap(sections);
-  dbiBuilder.setSectionMap(sectionMap);
+  dbiBuilder.createSectionMap(sections);
 
   // Add COFF section header stream.
   exitOnErr(
@@ -1883,7 +1898,7 @@ static bool findLineTable(const SectionChunk *c, uint32_t addr,
 // offset into the given chunk and return them, or None if a line table was
 // not found.
 Optional<std::pair<StringRef, uint32_t>>
-getFileLineCodeView(const SectionChunk *c, uint32_t addr) {
+lld::coff::getFileLineCodeView(const SectionChunk *c, uint32_t addr) {
   ExitOnError exitOnErr;
 
   DebugStringTableSubsectionRef cVStrTab;
@@ -1917,6 +1932,3 @@ getFileLineCodeView(const SectionChunk *c, uint32_t addr) {
   StringRef filename = exitOnErr(getFileName(cVStrTab, checksums, *nameIndex));
   return std::make_pair(filename, *lineNumber);
 }
-
-} // namespace coff
-} // namespace lld

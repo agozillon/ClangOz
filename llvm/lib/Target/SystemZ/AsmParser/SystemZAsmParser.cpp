@@ -53,8 +53,6 @@ enum RegisterKind {
   GRH32Reg,
   GR64Reg,
   GR128Reg,
-  ADDR32Reg,
-  ADDR64Reg,
   FP32Reg,
   FP64Reg,
   FP128Reg,
@@ -109,7 +107,7 @@ private:
 
   // Base + Disp + Index, where Base and Index are LLVM registers or 0.
   // MemKind says what type of memory this is and RegKind says what type
-  // the base register has (ADDR32Reg or ADDR64Reg).  Length is the operand
+  // the base register has (GR32Reg or GR64Reg).  Length is the operand
   // length for D(L,B)-style operands, otherwise it is null.
   struct MemOp {
     unsigned Base : 12;
@@ -348,8 +346,8 @@ public:
   bool isGRX32() const { return false; }
   bool isGR64() const { return isReg(GR64Reg); }
   bool isGR128() const { return isReg(GR128Reg); }
-  bool isADDR32() const { return isReg(ADDR32Reg); }
-  bool isADDR64() const { return isReg(ADDR64Reg); }
+  bool isADDR32() const { return isReg(GR32Reg); }
+  bool isADDR64() const { return isReg(GR64Reg); }
   bool isADDR128() const { return false; }
   bool isFP32() const { return isReg(FP32Reg); }
   bool isFP64() const { return isReg(FP64Reg); }
@@ -361,16 +359,16 @@ public:
   bool isAR32() const { return isReg(AR32Reg); }
   bool isCR64() const { return isReg(CR64Reg); }
   bool isAnyReg() const { return (isReg() || isImm(0, 15)); }
-  bool isBDAddr32Disp12() const { return isMemDisp12(BDMem, ADDR32Reg); }
-  bool isBDAddr32Disp20() const { return isMemDisp20(BDMem, ADDR32Reg); }
-  bool isBDAddr64Disp12() const { return isMemDisp12(BDMem, ADDR64Reg); }
-  bool isBDAddr64Disp20() const { return isMemDisp20(BDMem, ADDR64Reg); }
-  bool isBDXAddr64Disp12() const { return isMemDisp12(BDXMem, ADDR64Reg); }
-  bool isBDXAddr64Disp20() const { return isMemDisp20(BDXMem, ADDR64Reg); }
-  bool isBDLAddr64Disp12Len4() const { return isMemDisp12Len4(ADDR64Reg); }
-  bool isBDLAddr64Disp12Len8() const { return isMemDisp12Len8(ADDR64Reg); }
-  bool isBDRAddr64Disp12() const { return isMemDisp12(BDRMem, ADDR64Reg); }
-  bool isBDVAddr64Disp12() const { return isMemDisp12(BDVMem, ADDR64Reg); }
+  bool isBDAddr32Disp12() const { return isMemDisp12(BDMem, GR32Reg); }
+  bool isBDAddr32Disp20() const { return isMemDisp20(BDMem, GR32Reg); }
+  bool isBDAddr64Disp12() const { return isMemDisp12(BDMem, GR64Reg); }
+  bool isBDAddr64Disp20() const { return isMemDisp20(BDMem, GR64Reg); }
+  bool isBDXAddr64Disp12() const { return isMemDisp12(BDXMem, GR64Reg); }
+  bool isBDXAddr64Disp20() const { return isMemDisp20(BDXMem, GR64Reg); }
+  bool isBDLAddr64Disp12Len4() const { return isMemDisp12Len4(GR64Reg); }
+  bool isBDLAddr64Disp12Len8() const { return isMemDisp12Len8(GR64Reg); }
+  bool isBDRAddr64Disp12() const { return isMemDisp12(BDRMem, GR64Reg); }
+  bool isBDVAddr64Disp12() const { return isMemDisp12(BDVMem, GR64Reg); }
   bool isU1Imm() const { return isImm(0, 1); }
   bool isU2Imm() const { return isImm(0, 3); }
   bool isU3Imm() const { return isImm(0, 7); }
@@ -405,10 +403,9 @@ private:
     SMLoc StartLoc, EndLoc;
   };
 
-  bool parseRegister(Register &Reg);
+  bool parseRegister(Register &Reg, bool RestoreOnFailure = false);
 
-  bool parseRegister(Register &Reg, RegisterGroup Group, const unsigned *Regs,
-                     bool IsAddress = false);
+  bool parseRegister(Register &Reg, RegisterGroup Group, const unsigned *Regs);
 
   OperandMatchResultTy parseRegister(OperandVector &Operands,
                                      RegisterGroup Group, const unsigned *Regs,
@@ -449,6 +446,10 @@ public:
   // Override MCTargetAsmParser.
   bool ParseDirective(AsmToken DirectiveID) override;
   bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc) override;
+  bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc,
+                     bool RestoreOnFailure);
+  OperandMatchResultTy tryParseRegister(unsigned &RegNo, SMLoc &StartLoc,
+                                        SMLoc &EndLoc) override;
   bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
                         SMLoc NameLoc, OperandVector &Operands) override;
   bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
@@ -473,10 +474,12 @@ public:
     return parseRegister(Operands, RegGR, SystemZMC::GR128Regs, GR128Reg);
   }
   OperandMatchResultTy parseADDR32(OperandVector &Operands) {
-    return parseRegister(Operands, RegGR, SystemZMC::GR32Regs, ADDR32Reg);
+    // For the AsmParser, we will accept %r0 for ADDR32 as well.
+    return parseRegister(Operands, RegGR, SystemZMC::GR32Regs, GR32Reg);
   }
   OperandMatchResultTy parseADDR64(OperandVector &Operands) {
-    return parseRegister(Operands, RegGR, SystemZMC::GR64Regs, ADDR64Reg);
+    // For the AsmParser, we will accept %r0 for ADDR64 as well.
+    return parseRegister(Operands, RegGR, SystemZMC::GR64Regs, GR64Reg);
   }
   OperandMatchResultTy parseADDR128(OperandVector &Operands) {
     llvm_unreachable("Shouldn't be used as an operand");
@@ -512,22 +515,22 @@ public:
     return parseAnyRegister(Operands);
   }
   OperandMatchResultTy parseBDAddr32(OperandVector &Operands) {
-    return parseAddress(Operands, BDMem, SystemZMC::GR32Regs, ADDR32Reg);
+    return parseAddress(Operands, BDMem, SystemZMC::GR32Regs, GR32Reg);
   }
   OperandMatchResultTy parseBDAddr64(OperandVector &Operands) {
-    return parseAddress(Operands, BDMem, SystemZMC::GR64Regs, ADDR64Reg);
+    return parseAddress(Operands, BDMem, SystemZMC::GR64Regs, GR64Reg);
   }
   OperandMatchResultTy parseBDXAddr64(OperandVector &Operands) {
-    return parseAddress(Operands, BDXMem, SystemZMC::GR64Regs, ADDR64Reg);
+    return parseAddress(Operands, BDXMem, SystemZMC::GR64Regs, GR64Reg);
   }
   OperandMatchResultTy parseBDLAddr64(OperandVector &Operands) {
-    return parseAddress(Operands, BDLMem, SystemZMC::GR64Regs, ADDR64Reg);
+    return parseAddress(Operands, BDLMem, SystemZMC::GR64Regs, GR64Reg);
   }
   OperandMatchResultTy parseBDRAddr64(OperandVector &Operands) {
-    return parseAddress(Operands, BDRMem, SystemZMC::GR64Regs, ADDR64Reg);
+    return parseAddress(Operands, BDRMem, SystemZMC::GR64Regs, GR64Reg);
   }
   OperandMatchResultTy parseBDVAddr64(OperandVector &Operands) {
-    return parseAddress(Operands, BDVMem, SystemZMC::GR64Regs, ADDR64Reg);
+    return parseAddress(Operands, BDVMem, SystemZMC::GR64Regs, GR64Reg);
   }
   OperandMatchResultTy parsePCRel12(OperandVector &Operands) {
     return parsePCRel(Operands, -(1LL << 12), (1LL << 12) - 1, false);
@@ -691,27 +694,37 @@ void SystemZOperand::print(raw_ostream &OS) const {
 }
 
 // Parse one register of the form %<prefix><number>.
-bool SystemZAsmParser::parseRegister(Register &Reg) {
+bool SystemZAsmParser::parseRegister(Register &Reg, bool RestoreOnFailure) {
   Reg.StartLoc = Parser.getTok().getLoc();
 
   // Eat the % prefix.
   if (Parser.getTok().isNot(AsmToken::Percent))
     return Error(Parser.getTok().getLoc(), "register expected");
+  const AsmToken &PercentTok = Parser.getTok();
   Parser.Lex();
 
   // Expect a register name.
-  if (Parser.getTok().isNot(AsmToken::Identifier))
+  if (Parser.getTok().isNot(AsmToken::Identifier)) {
+    if (RestoreOnFailure)
+      getLexer().UnLex(PercentTok);
     return Error(Reg.StartLoc, "invalid register");
+  }
 
   // Check that there's a prefix.
   StringRef Name = Parser.getTok().getString();
-  if (Name.size() < 2)
+  if (Name.size() < 2) {
+    if (RestoreOnFailure)
+      getLexer().UnLex(PercentTok);
     return Error(Reg.StartLoc, "invalid register");
+  }
   char Prefix = Name[0];
 
   // Treat the rest of the register name as a register number.
-  if (Name.substr(1).getAsInteger(10, Reg.Num))
+  if (Name.substr(1).getAsInteger(10, Reg.Num)) {
+    if (RestoreOnFailure)
+      getLexer().UnLex(PercentTok);
     return Error(Reg.StartLoc, "invalid register");
+  }
 
   // Look for valid combinations of prefix and number.
   if (Prefix == 'r' && Reg.Num < 16)
@@ -724,8 +737,11 @@ bool SystemZAsmParser::parseRegister(Register &Reg) {
     Reg.Group = RegAR;
   else if (Prefix == 'c' && Reg.Num < 16)
     Reg.Group = RegCR;
-  else
+  else {
+    if (RestoreOnFailure)
+      getLexer().UnLex(PercentTok);
     return Error(Reg.StartLoc, "invalid register");
+  }
 
   Reg.EndLoc = Parser.getTok().getLoc();
   Parser.Lex();
@@ -734,20 +750,17 @@ bool SystemZAsmParser::parseRegister(Register &Reg) {
 
 // Parse a register of group Group.  If Regs is nonnull, use it to map
 // the raw register number to LLVM numbering, with zero entries
-// indicating an invalid register.  IsAddress says whether the
-// register appears in an address context. Allow FP Group if expecting
+// indicating an invalid register.  Allow FP Group if expecting
 // RegV Group, since the f-prefix yields the FP group even while used
 // with vector instructions.
 bool SystemZAsmParser::parseRegister(Register &Reg, RegisterGroup Group,
-                                     const unsigned *Regs, bool IsAddress) {
+                                     const unsigned *Regs) {
   if (parseRegister(Reg))
     return true;
   if (Reg.Group != Group && !(Reg.Group == RegFP && Group == RegV))
     return Error(Reg.StartLoc, "invalid operand for instruction");
   if (Regs && Regs[Reg.Num] == 0)
     return Error(Reg.StartLoc, "invalid register pair");
-  if (Reg.Num == 0 && IsAddress)
-    return Error(Reg.StartLoc, "%r0 used in an address");
   if (Regs)
     Reg.Num = Regs[Reg.Num];
   return false;
@@ -761,8 +774,7 @@ SystemZAsmParser::parseRegister(OperandVector &Operands, RegisterGroup Group,
     return MatchOperand_NoMatch;
 
   Register Reg;
-  bool IsAddress = (Kind == ADDR32Reg || Kind == ADDR64Reg);
-  if (parseRegister(Reg, Group, Regs, IsAddress))
+  if (parseRegister(Reg, Group, Regs))
     return MatchOperand_ParseFail;
 
   Operands.push_back(SystemZOperand::createReg(Kind, Reg.Num,
@@ -882,9 +894,6 @@ SystemZAsmParser::parseAddressRegister(Register &Reg) {
     return true;
   } else if (Reg.Group != RegGR) {
     Error(Reg.StartLoc, "invalid address register");
-    return true;
-  } else if (Reg.Num == 0) {
-    Error(Reg.StartLoc, "%r0 used in an address");
     return true;
   }
   return false;
@@ -1118,15 +1127,15 @@ bool SystemZAsmParser::ParseDirectiveInsn(SMLoc L) {
   }
 
   // Emit as a regular instruction.
-  Parser.getStreamer().EmitInstruction(Inst, getSTI());
+  Parser.getStreamer().emitInstruction(Inst, getSTI());
 
   return false;
 }
 
 bool SystemZAsmParser::ParseRegister(unsigned &RegNo, SMLoc &StartLoc,
-                                     SMLoc &EndLoc) {
+                                     SMLoc &EndLoc, bool RestoreOnFailure) {
   Register Reg;
-  if (parseRegister(Reg))
+  if (parseRegister(Reg, RestoreOnFailure))
     return true;
   if (Reg.Group == RegGR)
     RegNo = SystemZMC::GR64Regs[Reg.Num];
@@ -1141,6 +1150,25 @@ bool SystemZAsmParser::ParseRegister(unsigned &RegNo, SMLoc &StartLoc,
   StartLoc = Reg.StartLoc;
   EndLoc = Reg.EndLoc;
   return false;
+}
+
+bool SystemZAsmParser::ParseRegister(unsigned &RegNo, SMLoc &StartLoc,
+                                     SMLoc &EndLoc) {
+  return ParseRegister(RegNo, StartLoc, EndLoc, /*RestoreOnFailure=*/false);
+}
+
+OperandMatchResultTy SystemZAsmParser::tryParseRegister(unsigned &RegNo,
+                                                        SMLoc &StartLoc,
+                                                        SMLoc &EndLoc) {
+  bool Result =
+      ParseRegister(RegNo, StartLoc, EndLoc, /*RestoreOnFailure=*/true);
+  bool PendingErrors = getParser().hasPendingError();
+  getParser().clearPendingErrors();
+  if (PendingErrors)
+    return MatchOperand_ParseFail;
+  if (Result)
+    return MatchOperand_NoMatch;
+  return MatchOperand_Success;
 }
 
 bool SystemZAsmParser::ParseInstruction(ParseInstructionInfo &Info,
@@ -1252,7 +1280,7 @@ bool SystemZAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   switch (MatchResult) {
   case Match_Success:
     Inst.setLoc(IDLoc);
-    Out.EmitInstruction(Inst, getSTI());
+    Out.emitInstruction(Inst, getSTI());
     return false;
 
   case Match_MissingFeature: {
@@ -1322,7 +1350,7 @@ SystemZAsmParser::parsePCRel(OperandVector &Operands, int64_t MinVal,
     }
     int64_t Value = CE->getValue();
     MCSymbol *Sym = Ctx.createTempSymbol();
-    Out.EmitLabel(Sym);
+    Out.emitLabel(Sym);
     const MCExpr *Base = MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_None,
                                                  Ctx);
     Expr = Value == 0 ? Base : MCBinaryExpr::createAdd(Base, Expr, Ctx);
@@ -1389,6 +1417,6 @@ SystemZAsmParser::parsePCRel(OperandVector &Operands, int64_t MinVal,
 }
 
 // Force static initialization.
-extern "C" void LLVMInitializeSystemZAsmParser() {
+extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSystemZAsmParser() {
   RegisterMCAsmParser<SystemZAsmParser> X(getTheSystemZTarget());
 }

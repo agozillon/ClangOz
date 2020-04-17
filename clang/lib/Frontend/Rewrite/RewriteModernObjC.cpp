@@ -860,7 +860,7 @@ RewriteModernObjC::getIvarAccessString(ObjCIvarDecl *D) {
       // ivar in class extensions requires special treatment.
       if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(CDecl))
         CDecl = CatDecl->getClassInterface();
-      std::string RecName = CDecl->getName();
+      std::string RecName = std::string(CDecl->getName());
       RecName += "_IMPL";
       RecordDecl *RD =
           RecordDecl::Create(*Context, TTK_Struct, TUDecl, SourceLocation(),
@@ -2688,7 +2688,7 @@ Stmt *RewriteModernObjC::RewriteObjCBoxedExpr(ObjCBoxedExpr *Exp) {
   // Don't forget the parens to enforce the proper binding.
   ParenExpr *PE = new (Context) ParenExpr(StartLoc, EndLoc, cast);
 
-  const FunctionType *FT = msgSendType->getAs<FunctionType>();
+  auto *FT = msgSendType->castAs<FunctionType>();
   CallExpr *CE = CallExpr::Create(*Context, PE, MsgExprs, FT->getReturnType(),
                                   VK_RValue, EndLoc);
   ReplaceStmt(Exp, CE);
@@ -4442,7 +4442,7 @@ void RewriteModernObjC::InsertBlockLiteralsWithinFunction(FunctionDecl *FD) {
 static void BuildUniqueMethodName(std::string &Name,
                                   ObjCMethodDecl *MD) {
   ObjCInterfaceDecl *IFace = MD->getClassInterface();
-  Name = IFace->getName();
+  Name = std::string(IFace->getName());
   Name += "__" + MD->getSelector().getAsString();
   // Convert colons to underscores.
   std::string::size_type loc = 0;
@@ -7484,10 +7484,10 @@ Stmt *RewriteModernObjC::RewriteObjCIvarRefExpr(ObjCIvarRefExpr *IV) {
       DeclRefExpr *DRE = new (Context)
           DeclRefExpr(*Context, NewVD, false, Context->UnsignedLongTy,
                       VK_LValue, SourceLocation());
-      BinaryOperator *addExpr =
-        new (Context) BinaryOperator(castExpr, DRE, BO_Add,
-                                     Context->getPointerType(Context->CharTy),
-                                     VK_RValue, OK_Ordinary, SourceLocation(), FPOptions());
+      BinaryOperator *addExpr = BinaryOperator::Create(
+          *Context, castExpr, DRE, BO_Add,
+          Context->getPointerType(Context->CharTy), VK_RValue, OK_Ordinary,
+          SourceLocation(), FPOptions(Context->getLangOpts()));
       // Don't forget the parens to enforce the proper binding.
       ParenExpr *PE = new (Context) ParenExpr(SourceLocation(),
                                               SourceLocation(),
@@ -7501,12 +7501,11 @@ Stmt *RewriteModernObjC::RewriteObjCIvarRefExpr(ObjCIvarRefExpr *IV) {
         RD = RD->getDefinition();
         if (RD && !RD->getDeclName().getAsIdentifierInfo()) {
           // decltype(((Foo_IMPL*)0)->bar) *
-          ObjCContainerDecl *CDecl =
-            dyn_cast<ObjCContainerDecl>(D->getDeclContext());
+          auto *CDecl = cast<ObjCContainerDecl>(D->getDeclContext());
           // ivar in class extensions requires special treatment.
           if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(CDecl))
             CDecl = CatDecl->getClassInterface();
-          std::string RecName = CDecl->getName();
+          std::string RecName = std::string(CDecl->getName());
           RecName += "_IMPL";
           RecordDecl *RD = RecordDecl::Create(
               *Context, TTK_Struct, TUDecl, SourceLocation(), SourceLocation(),

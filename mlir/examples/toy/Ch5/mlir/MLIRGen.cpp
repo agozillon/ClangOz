@@ -1,6 +1,6 @@
 //===- MLIRGen.cpp - MLIR Generation from a Toy AST -----------------------===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -170,6 +170,10 @@ private:
                                                getType(VarType{})));
     }
 
+    // If this function isn't main, then set the visibility to private.
+    if (funcAST.getProto()->getName() != "main")
+      function.setVisibility(mlir::FuncOp::Visibility::Private);
+
     return function;
   }
 
@@ -313,7 +317,7 @@ private:
       operands.push_back(arg);
     }
 
-    // Builting calls have their custom operation, meaning this is a
+    // Builtin calls have their custom operation, meaning this is a
     // straightforward emission.
     if (callee == "transpose") {
       if (call.getArgs().size() != 1) {
@@ -324,9 +328,9 @@ private:
       return builder.create<TransposeOp>(location, operands[0]);
     }
 
-    // Otherwise this is a call to a user-defined function. Calls to ser-defined
-    // functions are mapped to a custom call that takes the callee name as an
-    // attribute.
+    // Otherwise this is a call to a user-defined function. Calls to
+    // user-defined functions are mapped to a custom call that takes the callee
+    // name as an attribute.
     return builder.create<GenericCallOp>(location, callee, operands);
   }
 

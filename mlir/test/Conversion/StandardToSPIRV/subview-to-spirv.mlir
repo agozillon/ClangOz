@@ -4,12 +4,19 @@
 // the desired output. Adding all of patterns within a single pass does
 // not seem to work.
 
+module attributes {
+  spv.target_env = #spv.target_env<
+    #spv.vce<v1.0, [Shader], [SPV_KHR_storage_buffer_storage_class]>,
+    {max_compute_workgroup_invocations = 128 : i32,
+     max_compute_workgroup_size = dense<[128, 128, 64]> : vector<3xi32>}>
+} {
+
 //===----------------------------------------------------------------------===//
 // std.subview
 //===----------------------------------------------------------------------===//
 
 // CHECK-LABEL: @fold_static_stride_subview_with_load
-// CHECK-SAME: [[ARG0:%.*]]: !spv.ptr<!spv.struct<!spv.array<384 x f32 [4]> [0]>, StorageBuffer>, [[ARG1:%.*]]: i32, [[ARG2:%.*]]: i32, [[ARG3:%.*]]: i32, [[ARG4:%.*]]: i32
+// CHECK-SAME: [[ARG0:%.*]]: !spv.ptr<!spv.struct<!spv.array<384 x f32, stride=4> [0]>, StorageBuffer>, [[ARG1:%.*]]: i32, [[ARG2:%.*]]: i32, [[ARG3:%.*]]: i32, [[ARG4:%.*]]: i32
 func @fold_static_stride_subview_with_load(%arg0 : memref<12x32xf32>, %arg1 : index, %arg2 : index, %arg3 : index, %arg4 : index) {
   // CHECK: [[C2:%.*]] = spv.constant 2
   // CHECK: [[C3:%.*]] = spv.constant 3
@@ -31,7 +38,7 @@ func @fold_static_stride_subview_with_load(%arg0 : memref<12x32xf32>, %arg1 : in
 }
 
 // CHECK-LABEL: @fold_static_stride_subview_with_store
-// CHECK-SAME: [[ARG0:%.*]]: !spv.ptr<!spv.struct<!spv.array<384 x f32 [4]> [0]>, StorageBuffer>, [[ARG1:%.*]]: i32, [[ARG2:%.*]]: i32, [[ARG3:%.*]]: i32, [[ARG4:%.*]]: i32, [[ARG5:%.*]]: f32
+// CHECK-SAME: [[ARG0:%.*]]: !spv.ptr<!spv.struct<!spv.array<384 x f32, stride=4> [0]>, StorageBuffer>, [[ARG1:%.*]]: i32, [[ARG2:%.*]]: i32, [[ARG3:%.*]]: i32, [[ARG4:%.*]]: i32, [[ARG5:%.*]]: f32
 func @fold_static_stride_subview_with_store(%arg0 : memref<12x32xf32>, %arg1 : index, %arg2 : index, %arg3 : index, %arg4 : index, %arg5 : f32) {
   // CHECK: [[C2:%.*]] = spv.constant 2
   // CHECK: [[C3:%.*]] = spv.constant 3
@@ -51,3 +58,5 @@ func @fold_static_stride_subview_with_store(%arg0 : memref<12x32xf32>, %arg1 : i
   store %arg5, %0[%arg3, %arg4] : memref<4x4xf32, offset:?, strides: [64, 3]>
   return
 }
+
+} // end module

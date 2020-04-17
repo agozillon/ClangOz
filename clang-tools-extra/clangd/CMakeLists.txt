@@ -22,6 +22,7 @@ configure_file(
 set(LLVM_LINK_COMPONENTS
   Support
   AllTargetsInfos
+  FrontendOpenMP
   )
 
 if(CLANG_BUILT_STANDALONE)
@@ -30,7 +31,7 @@ if(CLANG_BUILT_STANDALONE)
 endif()
 
 set(CLANGD_ATOMIC_LIB "")
-if(NOT HAVE_CXX_ATOMICS64_WITHOUT_LIB)
+if(NOT HAVE_CXX_ATOMICS_WITHOUT_LIB OR NOT HAVE_CXX_ATOMICS64_WITHOUT_LIB)
   list(APPEND CLANGD_ATOMIC_LIB "atomic")
 endif()
 
@@ -41,6 +42,7 @@ add_clang_library(clangDaemon
   ClangdServer.cpp
   CodeComplete.cpp
   CodeCompletionStrings.cpp
+  CollectMacros.cpp
   CompileCommands.cpp
   Compiler.cpp
   Context.cpp
@@ -150,4 +152,13 @@ endif ()
 if(CLANG_INCLUDE_TESTS)
 add_subdirectory(test)
 add_subdirectory(unittests)
+endif()
+
+# FIXME(kirillbobyrev): Document this in the LLVM docs once remote index is stable.
+option(CLANGD_ENABLE_REMOTE "Use gRPC library to enable remote index support for Clangd" OFF)
+set(GRPC_INSTALL_PATH "" CACHE PATH "Path to gRPC library manual installation.")
+
+if (CLANGD_ENABLE_REMOTE)
+  include(FindGRPC)
+  add_subdirectory(index/remote)
 endif()

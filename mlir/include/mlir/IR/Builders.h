@@ -1,6 +1,6 @@
 //===- Builders.h - Helpers for constructing MLIR Classes -------*- C++ -*-===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -70,6 +70,7 @@ public:
 
   IntegerType getI1Type();
   IntegerType getIntegerType(unsigned width);
+  IntegerType getIntegerType(unsigned width, bool isSigned);
   FunctionType getFunctionType(ArrayRef<Type> inputs, ArrayRef<Type> results);
   TupleType getTupleType(ArrayRef<Type> elementTypes);
   NoneType getNoneType();
@@ -110,8 +111,21 @@ public:
   IntegerAttr getI16IntegerAttr(int16_t value);
   IntegerAttr getI32IntegerAttr(int32_t value);
   IntegerAttr getI64IntegerAttr(int64_t value);
+  IntegerAttr getIndexAttr(int64_t value);
 
+  /// Signed and unsigned integer attribute getters.
+  IntegerAttr getSI32IntegerAttr(int32_t value);
+  IntegerAttr getUI32IntegerAttr(uint32_t value);
+
+  /// Vector-typed DenseIntElementsAttr getters. `values` must not be empty.
   DenseIntElementsAttr getI32VectorAttr(ArrayRef<int32_t> values);
+  DenseIntElementsAttr getI64VectorAttr(ArrayRef<int64_t> values);
+
+  /// Tensor-typed DenseIntElementsAttr getters. `values` can be empty.
+  /// These are generally preferable for representing general lists of integers
+  /// as attributes.
+  DenseIntElementsAttr getI32TensorAttr(ArrayRef<int32_t> values);
+  DenseIntElementsAttr getI64TensorAttr(ArrayRef<int64_t> values);
 
   ArrayAttr getAffineMapArrayAttr(ArrayRef<AffineMap> values);
   ArrayAttr getI32ArrayAttr(ArrayRef<int32_t> values);
@@ -175,11 +189,21 @@ public:
     setInsertionPoint(op);
   }
 
-  explicit OpBuilder(Block *block) : OpBuilder(block, block->end()) {}
-
   OpBuilder(Block *block, Block::iterator insertPoint)
       : OpBuilder(block->getParent()) {
     setInsertionPoint(block, insertPoint);
+  }
+
+  /// Create a builder and set the insertion point to before the first operation
+  /// in the block but still inside th block.
+  static OpBuilder atBlockBegin(Block *block) {
+    return OpBuilder(block, block->begin());
+  }
+
+  /// Create a builder and set the insertion point to after the last operation
+  /// in the block but still inside the block.
+  static OpBuilder atBlockEnd(Block *block) {
+    return OpBuilder(block, block->end());
   }
 
   /// This class represents a saved insertion point.
@@ -275,13 +299,15 @@ public:
   /// Insert the given operation at the current insertion point and return it.
   virtual Operation *insert(Operation *op);
 
-  /// Add new block and set the insertion point to the end of it. The block is
-  /// inserted at the provided insertion point of 'parent'.
-  Block *createBlock(Region *parent, Region::iterator insertPt = {});
+  /// Add new block with 'argTypes' arguments and set the insertion point to the
+  /// end of it. The block is inserted at the provided insertion point of
+  /// 'parent'.
+  virtual Block *createBlock(Region *parent, Region::iterator insertPt = {},
+                             TypeRange argTypes = llvm::None);
 
-  /// Add new block and set the insertion point to the end of it. The block is
-  /// placed before 'insertBefore'.
-  Block *createBlock(Block *insertBefore);
+  /// Add new block with 'argTypes' arguments and set the insertion point to the
+  /// end of it. The block is placed before 'insertBefore'.
+  Block *createBlock(Block *insertBefore, TypeRange argTypes = llvm::None);
 
   /// Returns the current block of the builder.
   Block *getBlock() const { return block; }

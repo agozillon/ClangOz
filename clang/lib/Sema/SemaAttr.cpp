@@ -282,7 +282,7 @@ void Sema::ActOnPragmaClangSection(SourceLocation PragmaLoc, PragmaClangSectionA
   }
 
   CSec->Valid = true;
-  CSec->SectionName = SecName;
+  CSec->SectionName = std::string(SecName);
   CSec->PragmaLocation = PragmaLoc;
 }
 
@@ -929,24 +929,32 @@ void Sema::ActOnPragmaVisibility(const IdentifierInfo* VisType,
 void Sema::ActOnPragmaFPContract(LangOptions::FPContractModeKind FPC) {
   switch (FPC) {
   case LangOptions::FPC_On:
-    FPFeatures.setAllowFPContractWithinStatement();
+    CurFPFeatures.setAllowFPContractWithinStatement();
     break;
   case LangOptions::FPC_Fast:
-    FPFeatures.setAllowFPContractAcrossStatement();
+    CurFPFeatures.setAllowFPContractAcrossStatement();
     break;
   case LangOptions::FPC_Off:
-    FPFeatures.setDisallowFPContract();
+    CurFPFeatures.setDisallowFPContract();
     break;
   }
+}
+
+void Sema::setRoundingMode(llvm::RoundingMode FPR) {
+  CurFPFeatures.setRoundingMode(FPR);
+}
+
+void Sema::setExceptionMode(LangOptions::FPExceptionModeKind FPE) {
+  CurFPFeatures.setExceptionMode(FPE);
 }
 
 void Sema::ActOnPragmaFEnvAccess(LangOptions::FEnvAccessModeKind FPC) {
   switch (FPC) {
   case LangOptions::FEA_On:
-    FPFeatures.setAllowFEnvAccess();
+    CurFPFeatures.setAllowFEnvAccess();
     break;
   case LangOptions::FEA_Off:
-    FPFeatures.setDisallowFEnvAccess();
+    CurFPFeatures.setDisallowFEnvAccess();
     break;
   }
 }

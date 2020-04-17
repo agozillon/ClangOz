@@ -1,6 +1,6 @@
 //===- AttributeDetail.h - MLIR Affine Map details Class --------*- C++ -*-===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -196,7 +196,7 @@ struct FloatAttributeStorage final
   size_t numObjects;
 };
 
-/// An attribute representing a integral value.
+/// An attribute representing an integral value.
 struct IntegerAttributeStorage final
     : public AttributeStorage,
       public llvm::TrailingObjects<IntegerAttributeStorage, uint64_t> {

@@ -1,6 +1,6 @@
 //===- Pass.cpp - Pass infrastructure implementation ----------------------===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -52,18 +52,22 @@ void Pass::copyOptionValuesFrom(const Pass *other) {
 void Pass::printAsTextualPipeline(raw_ostream &os) {
   // Special case for adaptors to use the 'op_name(sub_passes)' format.
   if (auto *adaptor = getAdaptorPassBase(this)) {
-    interleaveComma(adaptor->getPassManagers(), os, [&](OpPassManager &pm) {
-      os << pm.getOpName() << "(";
-      pm.printAsTextualPipeline(os);
-      os << ")";
-    });
+    llvm::interleaveComma(adaptor->getPassManagers(), os,
+                          [&](OpPassManager &pm) {
+                            os << pm.getOpName() << "(";
+                            pm.printAsTextualPipeline(os);
+                            os << ")";
+                          });
     return;
   }
-  // Otherwise, print the pass argument followed by its options.
-  if (const PassInfo *info = lookupPassInfo())
-    os << info->getPassArgument();
+  // Otherwise, print the pass argument followed by its options. If the pass
+  // doesn't have an argument, print the name of the pass to give some indicator
+  // of what pass was run.
+  StringRef argument = getArgument();
+  if (!argument.empty())
+    os << argument;
   else
-    os << getName();
+    os << "unknown<" << getName() << ">";
   passOptions.print(os);
 }
 
@@ -292,9 +296,10 @@ void OpPassManager::printAsTextualPipeline(raw_ostream &os) {
       impl->passes, [](const std::unique_ptr<Pass> &pass) {
         return !isa<VerifierPass>(pass);
       });
-  interleaveComma(filteredPasses, os, [&](const std::unique_ptr<Pass> &pass) {
-    pass->printAsTextualPipeline(os);
-  });
+  llvm::interleaveComma(filteredPasses, os,
+                        [&](const std::unique_ptr<Pass> &pass) {
+                          pass->printAsTextualPipeline(os);
+                        });
 }
 
 //===----------------------------------------------------------------------===//
@@ -355,7 +360,7 @@ void OpToOpPassAdaptorBase::mergeInto(OpToOpPassAdaptorBase &rhs) {
 std::string OpToOpPassAdaptorBase::getName() {
   std::string name = "Pipeline Collection : [";
   llvm::raw_string_ostream os(name);
-  interleaveComma(getPassManagers(), os, [&](OpPassManager &pm) {
+  llvm::interleaveComma(getPassManagers(), os, [&](OpPassManager &pm) {
     os << '\'' << pm.getOpName() << '\'';
   });
   os << ']';
@@ -411,7 +416,8 @@ void OpToOpPassAdaptorParallel::runOnOperation() {
   // Create the async executors if they haven't been created, or if the main
   // pipeline has changed.
   if (asyncExecutors.empty() || hasSizeMismatch(asyncExecutors.front(), mgrs))
-    asyncExecutors.assign(llvm::hardware_concurrency(), mgrs);
+    asyncExecutors.assign(llvm::hardware_concurrency().compute_thread_count(),
+                          mgrs);
 
   // Run a prepass over the module to collect the operations to execute over.
   // This ensures that an analysis manager exists for each operation, as well as
@@ -597,11 +603,15 @@ void PassManager::disableMultithreading(bool disable) {
   getImpl().disableThreads = disable;
 }
 
+bool PassManager::isMultithreadingEnabled() {
+  return !getImpl().disableThreads;
+}
+
 /// Enable support for the pass manager to generate a reproducer on the event
 /// of a crash or a pass failure. `outputFile` is a .mlir filename used to write
 /// the generated reproducer.
 void PassManager::enableCrashReproducerGeneration(StringRef outputFile) {
-  crashReproducerFileName = outputFile;
+  crashReproducerFileName = std::string(outputFile);
 }
 
 /// Add the provided instrumentation to the pass manager.
@@ -730,7 +740,7 @@ void PassInstrumentor::runAfterPassFailed(Pass *pass, Operation *op) {
 }
 
 /// See PassInstrumentation::runBeforeAnalysis for details.
-void PassInstrumentor::runBeforeAnalysis(StringRef name, AnalysisID *id,
+void PassInstrumentor::runBeforeAnalysis(StringRef name, TypeID id,
                                          Operation *op) {
   llvm::sys::SmartScopedLock<true> instrumentationLock(impl->mutex);
   for (auto &instr : impl->instrumentations)
@@ -738,7 +748,7 @@ void PassInstrumentor::runBeforeAnalysis(StringRef name, AnalysisID *id,
 }
 
 /// See PassInstrumentation::runAfterAnalysis for details.
-void PassInstrumentor::runAfterAnalysis(StringRef name, AnalysisID *id,
+void PassInstrumentor::runAfterAnalysis(StringRef name, TypeID id,
                                         Operation *op) {
   llvm::sys::SmartScopedLock<true> instrumentationLock(impl->mutex);
   for (auto &instr : llvm::reverse(impl->instrumentations))
@@ -751,5 +761,3 @@ void PassInstrumentor::addInstrumentation(
   llvm::sys::SmartScopedLock<true> instrumentationLock(impl->mutex);
   impl->instrumentations.emplace_back(std::move(pi));
 }
-
-constexpr AnalysisID mlir::detail::PreservedAnalyses::allAnalysesID;

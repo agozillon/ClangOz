@@ -1,6 +1,6 @@
 //===- LinalgTransforms.cpp - Linalg transformations as patterns ----------===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -13,14 +13,15 @@
 #include "mlir/Dialect/Linalg/Transforms/LinalgTransforms.h"
 #include "mlir/Dialect/Linalg/Analysis/DependenceAnalysis.h"
 #include "mlir/Dialect/Linalg/IR/LinalgOps.h"
-#include "mlir/Dialect/Linalg/Utils/Intrinsics.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
-#include "mlir/Dialect/VectorOps/VectorOps.h"
-#include "mlir/EDSC/Helpers.h"
+#include "mlir/Dialect/StandardOps/EDSC/Intrinsics.h"
+#include "mlir/Dialect/Utils/StructuredOpsUtils.h"
+#include "mlir/Dialect/Vector/VectorOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Support/LLVM.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include <type_traits>
@@ -31,7 +32,6 @@ using namespace mlir;
 using namespace mlir::edsc;
 using namespace mlir::edsc::intrinsics;
 using namespace mlir::linalg;
-using namespace mlir::linalg::intrinsics;
 
 using llvm::dbgs;
 using llvm::SetVector;
@@ -40,11 +40,16 @@ using llvm::SetVector;
 const StringLiteral mlir::linalg::LinalgTransforms::kLinalgTransformMarker =
     "__internal_linalg_transform__";
 
-LogicalResult mlir::linalg::tileLinalgOpAndSetMarker(
-    PatternRewriter &rewriter, Operation *op, ArrayRef<int64_t> sizes,
-    StringRef linalgMarker, ArrayRef<unsigned> permutation) {
+using TileFn = Optional<TiledLinalgOp>(OpBuilder &, LinalgOp, ArrayRef<int64_t>,
+                                       ArrayRef<unsigned>, OperationFolder *);
+
+static LogicalResult
+tileLinalgOpAndSetMarkerImpl(TileFn tileFn, PatternRewriter &rewriter,
+                             Operation *op, ArrayRef<int64_t> sizes,
+                             StringRef linalgMarker,
+                             ArrayRef<unsigned> permutation) {
   assert(permutation.empty() || permutation.size() == sizes.size());
-  auto tileRes = tileLinalgOperation(rewriter, op, sizes, permutation);
+  auto tileRes = tileFn(rewriter, op, sizes, permutation, /*folder=*/nullptr);
   if (!tileRes)
     return failure();
   tileRes->op.setAttr(LinalgTransforms::kLinalgTransformMarker,
@@ -52,10 +57,26 @@ LogicalResult mlir::linalg::tileLinalgOpAndSetMarker(
   return success();
 }
 
-LogicalResult mlir::linalg::tileAndFuseLinalgOpAndSetMarker(
+LogicalResult mlir::linalg::tileLinalgOpAndSetMarker(
     PatternRewriter &rewriter, Operation *op, ArrayRef<int64_t> sizes,
-    ArrayRef<int64_t> operandIndicesToFuse, StringRef linalgMarker) {
-  auto tileRes = tileLinalgOperation(rewriter, op, sizes);
+    StringRef linalgMarker, ArrayRef<unsigned> permutation) {
+  return tileLinalgOpAndSetMarkerImpl(tileLinalgOp, rewriter, op, sizes,
+                                      linalgMarker, permutation);
+}
+LogicalResult mlir::linalg::tileLinalgOpToParallelLoopsAndSetMarker(
+    PatternRewriter &rewriter, Operation *op, ArrayRef<int64_t> sizes,
+    StringRef linalgMarker, ArrayRef<unsigned> permutation) {
+  return tileLinalgOpAndSetMarkerImpl(tileLinalgOpToParallelLoops, rewriter, op,
+                                      sizes, linalgMarker, permutation);
+}
+
+static LogicalResult
+tileAndFuseLinalgOpAndSetMarkerImpl(TileFn tileFn, PatternRewriter &rewriter,
+                                    Operation *op, ArrayRef<int64_t> sizes,
+                                    ArrayRef<int64_t> operandIndicesToFuse,
+                                    StringRef linalgMarker) {
+  auto tileRes =
+      tileFn(rewriter, op, sizes, /*permutation=*/{}, /*folder=*/nullptr);
   if (!tileRes)
     return failure();
   tileRes->op.setAttr(LinalgTransforms::kLinalgTransformMarker,
@@ -89,10 +110,26 @@ LogicalResult mlir::linalg::tileAndFuseLinalgOpAndSetMarker(
   return success();
 }
 
+LogicalResult mlir::linalg::tileAndFuseLinalgOpAndSetMarker(
+    PatternRewriter &rewriter, Operation *op, ArrayRef<int64_t> sizes,
+    ArrayRef<int64_t> operandIndicesToFuse, StringRef linalgMarker) {
+  return tileAndFuseLinalgOpAndSetMarkerImpl(
+      tileLinalgOp, rewriter, op, sizes, operandIndicesToFuse, linalgMarker);
+}
+LogicalResult mlir::linalg::tileAndFuseLinalgOpToParallelLoopsAndSetMarker(
+    PatternRewriter &rewriter, Operation *op, ArrayRef<int64_t> sizes,
+    ArrayRef<int64_t> operandIndicesToFuse, StringRef linalgMarker) {
+  return tileAndFuseLinalgOpAndSetMarkerImpl(
+      tileLinalgOpToParallelLoops, rewriter, op, sizes, operandIndicesToFuse,
+      linalgMarker);
+}
+
 bool mlir::linalg::detail::isProducedByOpOfTypeImpl(
     Operation *consumerOp, Value consumedView,
     function_ref<bool(Operation *)> isaOpType) {
   LinalgOp consumer = dyn_cast<LinalgOp>(consumerOp);
+  assert(consumer.hasBufferSemantics() &&
+         "expected linalg op with buffer semantics");
   if (!consumer)
     return false;
 
@@ -143,63 +180,84 @@ static bool hasMultiplyAddBody(linalg::GenericOp op) {
 
 // TODO(ntv) should be Tablegen'd from a single source that generates the op
 // itself.
-static bool isMatmul(linalg::GenericOp genericOp) {
-  auto *ctx = genericOp.getContext();
-  auto m = getAffineDimExpr(0, ctx);
-  auto n = getAffineDimExpr(1, ctx);
-  auto k = getAffineDimExpr(2, ctx);
-  auto mapA = AffineMapAttr::get(AffineMap::get(3, 0, {m, k}));
-  auto mapB = AffineMapAttr::get(AffineMap::get(3, 0, {k, n}));
-  auto mapC = AffineMapAttr::get(AffineMap::get(3, 0, {m, n}));
-  auto maps = ArrayAttr::get({mapA, mapB, mapC}, ctx);
+static bool isRowMajorMatmul(linalg::GenericOp genericOp) {
   return genericOp.getNumInputs() == 2 && genericOp.getNumOutputs() == 1 &&
-         genericOp.indexing_maps() == maps && hasMultiplyAddBody(genericOp);
+         isRowMajorMatmul(genericOp.indexing_maps()) &&
+         hasMultiplyAddBody(genericOp);
 }
 
-LogicalResult
-mlir::linalg::vectorizeGenericLinalgOpPrecondition(Operation *op) {
-  // TODO(ntv): This is in fact much more general than just vectorization for
-  // matmul ops.
+// TODO(ntv, ataei): This is in fact much more general than just vectorization
+// for matmul and fill ops.
+LogicalResult mlir::linalg::vectorizeLinalgOpPrecondition(Operation *op) {
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  // All types must be static shape to go to vector.
+  for (Value operand : linalgOp.getInputsAndOutputBuffers())
+    if (!operand.getType().cast<ShapedType>().hasStaticShape())
+      return failure();
+  for (Type outputTensorType : linalgOp.getOutputTensorTypes())
+    if (!outputTensorType.cast<ShapedType>().hasStaticShape())
+      return failure();
+  if (isa<linalg::MatmulOp>(op) || isa<linalg::FillOp>(op))
+    return success();
+
   auto genericOp = dyn_cast<linalg::GenericOp>(op);
-  if (!genericOp || !isMatmul(genericOp))
+  if (!genericOp || !::isRowMajorMatmul(genericOp))
     return failure();
 
   // TODO(ntv): non-identity layout.
   auto isStaticMemRefWithIdentityLayout = [](Value v) {
-    auto m = v->getType().dyn_cast<MemRefType>();
+    auto m = v.getType().dyn_cast<MemRefType>();
     if (!m || !m.hasStaticShape() || !m.getAffineMaps().empty())
       return false;
     return true;
   };
-  if (!llvm::all_of(genericOp.getInputsAndOutputs(),
+  if (!llvm::all_of(genericOp.getInputsAndOutputBuffers(),
                     isStaticMemRefWithIdentityLayout))
     return failure();
   return success();
 }
 
-SmallVector<Value, 0>
-mlir::linalg::vectorizeGenericLinalgOp(PatternRewriter &rewriter,
-                                       Operation *op) {
-  LLVM_DEBUG(dbgs() << "\n[" DEBUG_TYPE
-                       "]: Rewrite linalg op as vector.contract: "
-                    << *op << ":\n");
-
-  assert(succeeded(vectorizeGenericLinalgOpPrecondition(op)) &&
-         "DRR failure case must be a precondition");
-
-  auto genericOp = cast<linalg::GenericOp>(op);
-  edsc::ScopedContext scope(rewriter, op->getLoc());
-  using edsc::intrinsics::std_load;
-  using edsc::intrinsics::std_store;
+SmallVector<Value, 0> mlir::linalg::vectorizeLinalgOp(PatternRewriter &rewriter,
+                                                      Operation *op) {
   using vector_contract = edsc::intrinsics::ValueBuilder<vector::ContractionOp>;
+  using vector_broadcast = edsc::intrinsics::ValueBuilder<vector::BroadcastOp>;
   using vector_type_cast = edsc::intrinsics::ValueBuilder<vector::TypeCastOp>;
-  auto vA = std_load(vector_type_cast(genericOp.getInput(0)));
-  auto vB = std_load(vector_type_cast(genericOp.getInput(1)));
-  auto vectorMemRefC = vector_type_cast(genericOp.getOutput(0));
-  auto vC = std_load(vectorMemRefC);
-  auto vRes = vector_contract(vA, vB, vC, genericOp.indexing_maps(),
-                              genericOp.iterator_types());
-  std_store(vRes, vectorMemRefC);
+
+  assert(succeeded(vectorizeLinalgOpPrecondition(op)) &&
+         "DRR failure case must be a precondition");
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  assert(linalgOp.hasBufferSemantics() &&
+         "expected linalg op with buffer semantics");
+  if (auto convOp = dyn_cast<linalg::ConvOp>(op)) {
+    // TODO(ntv): add a level of indirection to linalg.generic.
+    if (convOp.padding())
+      llvm_unreachable("Unexpected conv with padding");
+  }
+
+  edsc::ScopedContext scope(rewriter, op->getLoc());
+
+  if (auto fillOp = dyn_cast<linalg::FillOp>(op)) {
+    // Vectorize fill as a vector.broadcast.
+    LLVM_DEBUG(dbgs() << "\n[" DEBUG_TYPE
+                         "]: Rewrite linalg.fill as vector.broadcast: "
+                      << *op << ":\n");
+    auto dstMemrefVec = vector_type_cast(fillOp.getOutputBuffer(0));
+    auto dstVec = std_load(dstMemrefVec);
+    auto resVec = vector_broadcast(dstVec, fillOp.value());
+    std_store(resVec, dstMemrefVec);
+  } else {
+    // Vectorize other ops as vector contraction (currently only matmul).
+    LLVM_DEBUG(dbgs() << "\n[" DEBUG_TYPE
+                         "]: Rewrite linalg op as vector.contract: "
+                      << *op << ":\n");
+    auto vA = std_load(vector_type_cast(linalgOp.getInput(0)));
+    auto vB = std_load(vector_type_cast(linalgOp.getInput(1)));
+    auto vectorMemRefC = vector_type_cast(linalgOp.getOutputBuffer(0));
+    auto vC = std_load(vectorMemRefC);
+    auto vRes = vector_contract(vA, vB, vC, linalgOp.indexing_maps(),
+                                linalgOp.iterator_types());
+    std_store(vRes, vectorMemRefC);
+  }
   return {};
 }
 
@@ -233,11 +291,13 @@ mlir::linalg::permuteGenericLinalgOp(PatternRewriter &rewriter, Operation *op,
   auto linOp = cast<LinalgOp>(op);
   auto permutationMap = inversePermutation(
       AffineMap::getPermutationMap(permutation, rewriter.getContext()));
+  assert(permutationMap && "expected permutation to be invertible");
   SmallVector<AffineMap, 4> newIndexingMap;
   auto indexingMaps = linOp.indexing_maps().getValue();
   for (unsigned i = 0, e = linOp.getNumInputsAndOutputs(); i != e; ++i) {
-    AffineMap m = indexingMaps[i].cast<AffineMapAttr>().getValue().compose(
-        permutationMap);
+    AffineMap m = indexingMaps[i].cast<AffineMapAttr>().getValue();
+    if (!permutationMap.isEmpty())
+      m = m.compose(permutationMap);
     newIndexingMap.push_back(m);
   }
   auto itTypes = linOp.iterator_types().getValue();
@@ -262,7 +322,7 @@ LogicalResult mlir::linalg::promoteSubviewsLinalgOpPrecondition(Operation *op) {
   // Transformation applies to buffers only.
   if (!linOp || !linOp.hasBufferSemantics())
     return failure();
-  if (llvm::none_of(linOp.getInputsAndOutputs(), [](Value v) {
+  if (llvm::none_of(linOp.getInputsAndOutputBuffers(), [](Value v) {
         return isa_and_nonnull<SubViewOp>(v.getDefiningOp());
       }))
     return failure();
@@ -278,10 +338,18 @@ mlir::linalg::promoteSubviewsLinalgOp(PatternRewriter &rewriter,
   assert(succeeded(promoteSubviewsLinalgOpPrecondition(op)) &&
          "DRR failure case must be a precondition");
 
+  if (auto convOp = dyn_cast<linalg::ConvOp>(op)) {
+    // TODO(ntv): add a level of indirection to linalg.generic.
+    if (convOp.padding())
+      llvm_unreachable("Unexpected conv with padding");
+  }
+
   LinalgOp linOp = cast<LinalgOp>(op);
+  assert(linOp.hasBufferSemantics() &&
+         "expected linalg op with buffer semantics");
   SetVector<Value> subViews;
-  for (auto it : linOp.getInputsAndOutputs())
-    if (auto sv = dyn_cast_or_null<SubViewOp>(it->getDefiningOp()))
+  for (auto it : linOp.getInputsAndOutputBuffers())
+    if (auto sv = dyn_cast_or_null<SubViewOp>(it.getDefiningOp()))
       subViews.insert(sv);
   if (!subViews.empty()) {
     promoteSubViewOperands(rewriter, linOp, subViews);

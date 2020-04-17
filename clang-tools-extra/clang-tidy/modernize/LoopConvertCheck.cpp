@@ -14,6 +14,7 @@
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/Lexer.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -42,6 +43,25 @@ static const char ConditionEndVarName[] = "conditionEndVar";
 static const char EndVarName[] = "endVar";
 static const char DerefByValueResultName[] = "derefByValueResult";
 static const char DerefByRefResultName[] = "derefByRefResult";
+
+static ArrayRef<std::pair<StringRef, Confidence::Level>>
+getConfidenceMapping() {
+  static constexpr std::pair<StringRef, Confidence::Level> Mapping[] = {
+      {"reasonable", Confidence::CL_Reasonable},
+      {"safe", Confidence::CL_Safe},
+      {"risky", Confidence::CL_Risky}};
+  return makeArrayRef(Mapping);
+}
+
+static ArrayRef<std::pair<StringRef, VariableNamer::NamingStyle>>
+getStyleMapping() {
+  static constexpr std::pair<StringRef, VariableNamer::NamingStyle> Mapping[] =
+      {{"CamelCase", VariableNamer::NS_CamelCase},
+       {"camelBack", VariableNamer::NS_CamelBack},
+       {"lower_case", VariableNamer::NS_LowerCase},
+       {"UPPER_CASE", VariableNamer::NS_UpperCase}};
+  return makeArrayRef(Mapping);
+}
 
 // shared matchers
 static const TypeMatcher AnyType() { return anything(); }
@@ -457,35 +477,18 @@ LoopConvertCheck::RangeDescriptor::RangeDescriptor()
 LoopConvertCheck::LoopConvertCheck(StringRef Name, ClangTidyContext *Context)
     : ClangTidyCheck(Name, Context), TUInfo(new TUTrackingInfo),
       MaxCopySize(std::stoull(Options.get("MaxCopySize", "16"))),
-      MinConfidence(StringSwitch<Confidence::Level>(
-                        Options.get("MinConfidence", "reasonable"))
-                        .Case("safe", Confidence::CL_Safe)
-                        .Case("risky", Confidence::CL_Risky)
-                        .Default(Confidence::CL_Reasonable)),
-      NamingStyle(StringSwitch<VariableNamer::NamingStyle>(
-                      Options.get("NamingStyle", "CamelCase"))
-                      .Case("camelBack", VariableNamer::NS_CamelBack)
-                      .Case("lower_case", VariableNamer::NS_LowerCase)
-                      .Case("UPPER_CASE", VariableNamer::NS_UpperCase)
-                      .Default(VariableNamer::NS_CamelCase)) {}
+      MinConfidence(Options.get("MinConfidence", getConfidenceMapping(),
+                                Confidence::CL_Reasonable)),
+      NamingStyle(Options.get("NamingStyle", getStyleMapping(),
+                              VariableNamer::NS_CamelCase)) {}
 
 void LoopConvertCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
   Options.store(Opts, "MaxCopySize", std::to_string(MaxCopySize));
-  SmallVector<std::string, 3> Confs{"risky", "reasonable", "safe"};
-  Options.store(Opts, "MinConfidence", Confs[static_cast<int>(MinConfidence)]);
-
-  SmallVector<std::string, 4> Styles{"camelBack", "CamelCase", "lower_case",
-                                     "UPPER_CASE"};
-  Options.store(Opts, "NamingStyle", Styles[static_cast<int>(NamingStyle)]);
+  Options.store(Opts, "MinConfidence", MinConfidence, getConfidenceMapping());
+  Options.store(Opts, "NamingStyle", NamingStyle, getStyleMapping());
 }
 
 void LoopConvertCheck::registerMatchers(MatchFinder *Finder) {
-  // Only register the matchers for C++. Because this checker is used for
-  // modernization, it is reasonable to run it on any C++ standard with the
-  // assumption the user is trying to modernize their codebase.
-  if (!getLangOpts().CPlusPlus)
-    return;
-
   Finder->addMatcher(makeArrayLoopMatcher(), this);
   Finder->addMatcher(makeIteratorLoopMatcher(), this);
   Finder->addMatcher(makePseudoArrayLoopMatcher(), this);
@@ -655,9 +658,14 @@ StringRef LoopConvertCheck::getContainerString(ASTContext *Context,
                                                const ForStmt *Loop,
                                                const Expr *ContainerExpr) {
   StringRef ContainerString;
-  if (isa<CXXThisExpr>(ContainerExpr->IgnoreParenImpCasts())) {
+  ContainerExpr = ContainerExpr->IgnoreParenImpCasts();
+  if (isa<CXXThisExpr>(ContainerExpr)) {
     ContainerString = "this";
   } else {
+    // For CXXOperatorCallExpr (e.g. vector_ptr->size()), its first argument is
+    // the class object (vector_ptr) we are targeting.
+    if (const auto* E = dyn_cast<CXXOperatorCallExpr>(ContainerExpr))
+      ContainerExpr = E->getArg(0);
     ContainerString =
         getStringFromRange(Context->getSourceManager(), Context->getLangOpts(),
                            ContainerExpr->getSourceRange());
@@ -748,7 +756,8 @@ void LoopConvertCheck::determineRangeDescriptor(
     ASTContext *Context, const BoundNodes &Nodes, const ForStmt *Loop,
     LoopFixerKind FixerKind, const Expr *ContainerExpr,
     const UsageResult &Usages, RangeDescriptor &Descriptor) {
-  Descriptor.ContainerString = getContainerString(Context, Loop, ContainerExpr);
+  Descriptor.ContainerString =
+      std::string(getContainerString(Context, Loop, ContainerExpr));
 
   if (FixerKind == LFK_Iterator)
     getIteratorLoopQualifiers(Context, Nodes, Descriptor);

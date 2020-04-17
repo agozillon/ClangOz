@@ -83,18 +83,18 @@ void CodeGenTypes::addRecordTypeName(const RecordDecl *RD,
 /// ConvertType in that it is used to convert to the memory representation for
 /// a type.  For example, the scalar representation for _Bool is i1, but the
 /// memory representation is usually i8 or i32, depending on the target.
-llvm::Type *CodeGenTypes::ConvertTypeForMem(QualType T) {
+llvm::Type *CodeGenTypes::ConvertTypeForMem(QualType T, bool ForBitField) {
   llvm::Type *R = ConvertType(T);
 
-  // If this is a non-bool type, don't map it.
-  if (!R->isIntegerTy(1))
-    return R;
+  // If this is a bool type, or an ExtIntType in a bitfield representation,
+  // map this integer to the target-specified size.
+  if ((ForBitField && T->isExtIntType()) || R->isIntegerTy(1))
+    return llvm::IntegerType::get(getLLVMContext(),
+                                  (unsigned)Context.getTypeSize(T));
 
-  // Otherwise, return an integer of the target-specified size.
-  return llvm::IntegerType::get(getLLVMContext(),
-                                (unsigned)Context.getTypeSize(T));
+  // Else, don't map it.
+  return R;
 }
-
 
 /// isRecordLayoutComplete - Return true if the specified type is already
 /// completely laid out.
@@ -383,6 +383,20 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
 
   const Type *Ty = T.getTypePtr();
 
+  // For the device-side compilation, CUDA device builtin surface/texture types
+  // may be represented in different types.
+  if (Context.getLangOpts().CUDAIsDevice) {
+    if (T->isCUDADeviceBuiltinSurfaceType()) {
+      if (auto *Ty = CGM.getTargetCodeGenInfo()
+                         .getCUDADeviceBuiltinSurfaceDeviceType())
+        return Ty;
+    } else if (T->isCUDADeviceBuiltinTextureType()) {
+      if (auto *Ty = CGM.getTargetCodeGenInfo()
+                         .getCUDADeviceBuiltinTextureDeviceType())
+        return Ty;
+    }
+  }
+
   // RecordTypes are cached and processed specially.
   if (const RecordType *RT = dyn_cast<RecordType>(Ty))
     return ConvertRecordDeclType(RT->getDecl());
@@ -511,23 +525,44 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
     case BuiltinType::OCLReserveID:
       ResultType = CGM.getOpenCLRuntime().convertOpenCLSpecificType(Ty);
       break;
-
-    // TODO: real CodeGen support for SVE types requires more infrastructure
-    // to be added first.  Report an error until then.
-#define SVE_TYPE(Name, Id, SingletonId) case BuiltinType::Id:
-#include "clang/Basic/AArch64SVEACLETypes.def"
-    {
-      unsigned DiagID = CGM.getDiags().getCustomDiagID(
-          DiagnosticsEngine::Error,
-          "cannot yet generate code for SVE type '%0'");
-      auto *BT = cast<BuiltinType>(Ty);
-      auto Name = BT->getName(CGM.getContext().getPrintingPolicy());
-      CGM.getDiags().Report(DiagID) << Name;
-      // Return something safe.
-      ResultType = llvm::IntegerType::get(getLLVMContext(), 32);
+    case BuiltinType::SveInt8:
+    case BuiltinType::SveUint8:
+      return llvm::VectorType::get(llvm::IntegerType::get(getLLVMContext(), 8),
+                                   {16, true});
+    case BuiltinType::SveInt16:
+    case BuiltinType::SveUint16:
+      return llvm::VectorType::get(llvm::IntegerType::get(getLLVMContext(), 16),
+                                   {8, true});
+    case BuiltinType::SveInt32:
+    case BuiltinType::SveUint32:
+      return llvm::VectorType::get(llvm::IntegerType::get(getLLVMContext(), 32),
+                                   {4, true});
+    case BuiltinType::SveInt64:
+    case BuiltinType::SveUint64:
+      return llvm::VectorType::get(llvm::IntegerType::get(getLLVMContext(), 64),
+                                   {2, true});
+    case BuiltinType::SveFloat16:
+      return llvm::VectorType::get(
+          getTypeForFormat(getLLVMContext(),
+                           Context.getFloatTypeSemantics(Context.HalfTy),
+                           /* UseNativeHalf = */ true),
+          {8, true});
+    case BuiltinType::SveFloat32:
+      return llvm::VectorType::get(
+          getTypeForFormat(getLLVMContext(),
+                           Context.getFloatTypeSemantics(Context.FloatTy),
+                           /* UseNativeHalf = */ false),
+          {4, true});
+    case BuiltinType::SveFloat64:
+      return llvm::VectorType::get(
+          getTypeForFormat(getLLVMContext(),
+                           Context.getFloatTypeSemantics(Context.DoubleTy),
+                           /* UseNativeHalf = */ false),
+          {2, true});
+    case BuiltinType::SveBool:
+      return llvm::VectorType::get(llvm::IntegerType::get(getLLVMContext(), 1),
+                                   {16, true});
       break;
-    }
-
     case BuiltinType::Dependent:
 #define BUILTIN_TYPE(Id, SingletonId)
 #define PLACEHOLDER_TYPE(Id, SingletonId) \
@@ -560,7 +595,11 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
     llvm::Type *PointeeType = ConvertTypeForMem(ETy);
     if (PointeeType->isVoidTy())
       PointeeType = llvm::Type::getInt8Ty(getLLVMContext());
-    unsigned AS = Context.getTargetAddressSpace(ETy);
+
+    unsigned AS = PointeeType->isFunctionTy()
+                      ? getDataLayout().getProgramAddressSpace()
+                      : Context.getTargetAddressSpace(ETy);
+
     ResultType = llvm::PointerType::get(PointeeType, AS);
     break;
   }
@@ -690,6 +729,11 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
   }
   case Type::Pipe: {
     ResultType = CGM.getOpenCLRuntime().getPipeType(cast<PipeType>(Ty));
+    break;
+  }
+  case Type::ExtInt: {
+    const auto &EIT = cast<ExtIntType>(Ty);
+    ResultType = llvm::Type::getIntNTy(getLLVMContext(), EIT->getNumBits());
     break;
   }
   }

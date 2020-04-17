@@ -1,4 +1,4 @@
-# Introduction to MLIR Interfaces
+# Interfaces
 
 MLIR is generic and very extensible; it allows for opaquely representing many
 different dialects that have their own operations, attributes, types, and so on.
@@ -63,7 +63,7 @@ struct AffineInlinerInterface : public DialectInlinerInterface {
 };
 
 /// Register the interface with the dialect.
-AffineOpsDialect::AffineOpsDialect(MLIRContext *context) ... {
+AffineDialect::AffineDialect(MLIRContext *context) ... {
   addInterfaces<AffineInlinerInterface>();
 }
 ```

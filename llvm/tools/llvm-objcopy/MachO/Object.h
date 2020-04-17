@@ -55,11 +55,11 @@ struct Section {
   std::vector<RelocationInfo> Relocations;
 
   Section(StringRef SegName, StringRef SectName)
-      : Segname(SegName), Sectname(SectName),
+      : Segname(std::string(SegName)), Sectname(std::string(SectName)),
         CanonicalName((Twine(SegName) + Twine(',') + SectName).str()) {}
 
   Section(StringRef SegName, StringRef SectName, StringRef Content)
-      : Segname(SegName), Sectname(SectName),
+      : Segname(std::string(SegName)), Sectname(std::string(SectName)),
         CanonicalName((Twine(SegName) + Twine(',') + SectName).str()),
         Content(Content) {}
 
@@ -89,7 +89,7 @@ struct LoadCommand {
   // though the contents of the sections are stored separately. The struct
   // Section describes only sections' metadata and where to find the
   // corresponding content inside the binary.
-  std::vector<Section> Sections;
+  std::vector<std::unique_ptr<Section>> Sections;
 
   // Returns the segment name if the load command is a segment command.
   Optional<StringRef> getSegmentName() const;
@@ -161,6 +161,20 @@ struct RelocationInfo {
   // True if Info is a scattered_relocation_info.
   bool Scattered;
   MachO::any_relocation_info Info;
+
+  unsigned getPlainRelocationSymbolNum(bool IsLittleEndian) {
+    if (IsLittleEndian)
+      return Info.r_word1 & 0xffffff;
+    return Info.r_word1 >> 8;
+  }
+
+  void setPlainRelocationSymbolNum(unsigned SymbolNum, bool IsLittleEndian) {
+    assert(SymbolNum < (1 << 24) && "SymbolNum out of range");
+    if (IsLittleEndian)
+      Info.r_word1 = (Info.r_word1 & ~0x00ffffff) | SymbolNum;
+    else
+      Info.r_word1 = (Info.r_word1 & ~0xffffff00) | (SymbolNum << 8);
+  }
 };
 
 /// The location of the rebase info inside the binary is described by
@@ -292,7 +306,7 @@ struct Object {
 
   Object() : NewSectionsContents(Alloc) {}
 
-  void removeSections(function_ref<bool(const Section &)> ToRemove);
+  void removeSections(function_ref<bool(const std::unique_ptr<Section> &)> ToRemove);
   void addLoadCommand(LoadCommand LC);
 
   /// Creates a new segment load command in the object and returns a reference

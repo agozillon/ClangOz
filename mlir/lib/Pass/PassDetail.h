@@ -1,6 +1,6 @@
 //===- PassDetail.h - MLIR Pass details -------------------------*- C++ -*-===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -19,7 +19,7 @@ namespace detail {
 //===----------------------------------------------------------------------===//
 
 /// Pass to verify an operation and signal failure if necessary.
-class VerifierPass : public OperationPass<VerifierPass> {
+class VerifierPass : public PassWrapper<VerifierPass, OperationPass<>> {
   void runOnOperation() override;
 };
 
@@ -49,8 +49,9 @@ protected:
 
 /// An adaptor pass used to run operation passes over nested operations
 /// synchronously on a single thread.
-class OpToOpPassAdaptor : public OperationPass<OpToOpPassAdaptor>,
-                          public OpToOpPassAdaptorBase {
+class OpToOpPassAdaptor
+    : public PassWrapper<OpToOpPassAdaptor, OperationPass<>>,
+      public OpToOpPassAdaptorBase {
 public:
   OpToOpPassAdaptor(OpPassManager &&mgr);
 
@@ -61,7 +62,7 @@ public:
 /// An adaptor pass used to run operation passes over nested operations
 /// asynchronously across multiple threads.
 class OpToOpPassAdaptorParallel
-    : public OperationPass<OpToOpPassAdaptorParallel>,
+    : public PassWrapper<OpToOpPassAdaptorParallel, OperationPass<>>,
       public OpToOpPassAdaptorBase {
 public:
   OpToOpPassAdaptorParallel(OpPassManager &&mgr);

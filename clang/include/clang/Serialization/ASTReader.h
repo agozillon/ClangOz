@@ -723,9 +723,10 @@ private:
 
   struct PendingMacroInfo {
     ModuleFile *M;
-    uint64_t MacroDirectivesOffset;
+    /// Offset relative to ModuleFile::MacroOffsetsBase.
+    uint32_t MacroDirectivesOffset;
 
-    PendingMacroInfo(ModuleFile *M, uint64_t MacroDirectivesOffset)
+    PendingMacroInfo(ModuleFile *M, uint32_t MacroDirectivesOffset)
         : M(M), MacroDirectivesOffset(MacroDirectivesOffset) {}
   };
 
@@ -889,6 +890,12 @@ private:
 
   // A list of late parsed template function data.
   SmallVector<uint64_t, 1> LateParsedTemplates;
+
+  /// The IDs of all decls to be checked for deferred diags.
+  ///
+  /// Sema tracks these to emit deferred diags.
+  SmallVector<uint64_t, 4> DeclsToCheckForDeferredDiags;
+
 
 public:
   struct ImportedSubmodule {
@@ -1983,6 +1990,9 @@ public:
   void ReadUnusedLocalTypedefNameCandidates(
       llvm::SmallSetVector<const TypedefNameDecl *, 4> &Decls) override;
 
+  void ReadDeclsToCheckForDeferredDiags(
+      llvm::SmallVector<Decl *, 4> &Decls) override;
+
   void ReadReferencedSelectors(
            SmallVectorImpl<std::pair<Selector, SourceLocation>> &Sels) override;
 
@@ -2196,7 +2206,7 @@ public:
   /// \param MacroDirectivesOffset Offset of the serialized macro directive
   /// history.
   void addPendingMacro(IdentifierInfo *II, ModuleFile *M,
-                       uint64_t MacroDirectivesOffset);
+                       uint32_t MacroDirectivesOffset);
 
   /// Read the set of macros defined by this external macro source.
   void ReadDefinedMacros() override;

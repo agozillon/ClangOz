@@ -36,7 +36,6 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
@@ -74,6 +73,7 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO.h"
 #include <algorithm>
@@ -295,7 +295,7 @@ doPromotion(Function *F, SmallPtrSetImpl<Argument *> &ArgsToPromote,
               if (auto *ElPTy = dyn_cast<PointerType>(ElTy))
                 ElTy = ElPTy->getElementType();
               else
-                ElTy = cast<CompositeType>(ElTy)->getTypeAtIndex(II);
+                ElTy = GetElementPtrInst::getTypeAtIndex(ElTy, II);
             }
             // And create a GEP to extract those indices.
             V = IRB.CreateGEP(ArgIndex.first, V, Ops, V->getName() + ".idx");
@@ -305,7 +305,7 @@ doPromotion(Function *F, SmallPtrSetImpl<Argument *> &ArgsToPromote,
           // of the previous load.
           LoadInst *newLoad =
               IRB.CreateLoad(OrigLoad->getType(), V, V->getName() + ".val");
-          newLoad->setAlignment(MaybeAlign(OrigLoad->getAlignment()));
+          newLoad->setAlignment(OrigLoad->getAlign());
           // Transfer the AA info too.
           AAMDNodes AAInfo;
           OrigLoad->getAAMetadata(AAInfo);
@@ -453,12 +453,8 @@ doPromotion(Function *F, SmallPtrSetImpl<Argument *> &ArgsToPromote,
           assert(It != ArgIndices.end() && "GEP not handled??");
         }
 
-        std::string NewName = I->getName();
-        for (unsigned i = 0, e = Operands.size(); i != e; ++i) {
-          NewName += "." + utostr(Operands[i]);
-        }
-        NewName += ".val";
-        TheArg->setName(NewName);
+        TheArg->setName(formatv("{0}.{1:$[.]}.val", I->getName(),
+                                make_range(Operands.begin(), Operands.end())));
 
         LLVM_DEBUG(dbgs() << "*** Promoted agg argument '" << TheArg->getName()
                           << "' of function '" << NF->getName() << "'\n");
@@ -774,8 +770,7 @@ static bool isSafeToPromoteArgument(Argument *Arg, Type *ByValTy, AAResults &AAR
   return true;
 }
 
-/// Checks if a type could have padding bytes.
-static bool isDenselyPacked(Type *type, const DataLayout &DL) {
+bool ArgumentPromotionPass::isDenselyPacked(Type *type, const DataLayout &DL) {
   // There is no size information, so be conservative.
   if (!type->isSized())
     return false;
@@ -785,12 +780,17 @@ static bool isDenselyPacked(Type *type, const DataLayout &DL) {
   if (DL.getTypeSizeInBits(type) != DL.getTypeAllocSizeInBits(type))
     return false;
 
-  if (!isa<CompositeType>(type))
-    return true;
-
-  // For homogenous sequential types, check for padding within members.
-  if (SequentialType *seqTy = dyn_cast<SequentialType>(type))
+  // FIXME: This isn't the right way to check for padding in vectors with
+  // non-byte-size elements.
+  if (VectorType *seqTy = dyn_cast<VectorType>(type))
     return isDenselyPacked(seqTy->getElementType(), DL);
+
+  // For array types, check for padding within members.
+  if (ArrayType *seqTy = dyn_cast<ArrayType>(type))
+    return isDenselyPacked(seqTy->getElementType(), DL);
+
+  if (!isa<StructType>(type))
+    return true;
 
   // Check for padding within and between elements of a struct.
   StructType *StructTy = cast<StructType>(type);
@@ -844,12 +844,14 @@ static bool canPaddingBeAccessed(Argument *arg) {
   return false;
 }
 
-static bool areFunctionArgsABICompatible(
+bool ArgumentPromotionPass::areFunctionArgsABICompatible(
     const Function &F, const TargetTransformInfo &TTI,
     SmallPtrSetImpl<Argument *> &ArgsToPromote,
     SmallPtrSetImpl<Argument *> &ByValArgsToTransform) {
   for (const Use &U : F.uses()) {
     CallSite CS(U.getUser());
+    if (!CS)
+      return false;
     const Function *Caller = CS.getCaller();
     const Function *Callee = CS.getCalledFunction();
     if (!TTI.areFunctionArgsABICompatible(Caller, Callee, ArgsToPromote) ||
@@ -951,9 +953,9 @@ promoteArguments(Function *F, function_ref<AAResults &(Function &F)> AARGetter,
     // If this is a byval argument, and if the aggregate type is small, just
     // pass the elements, which is always safe, if the passed value is densely
     // packed or if we can prove the padding bytes are never accessed.
-    bool isSafeToPromote =
-        PtrArg->hasByValAttr() &&
-        (isDenselyPacked(AgTy, DL) || !canPaddingBeAccessed(PtrArg));
+    bool isSafeToPromote = PtrArg->hasByValAttr() &&
+                           (ArgumentPromotionPass::isDenselyPacked(AgTy, DL) ||
+                            !canPaddingBeAccessed(PtrArg));
     if (isSafeToPromote) {
       if (StructType *STy = dyn_cast<StructType>(AgTy)) {
         if (MaxElements > 0 && STy->getNumElements() > MaxElements) {
@@ -1011,8 +1013,8 @@ promoteArguments(Function *F, function_ref<AAResults &(Function &F)> AARGetter,
   if (ArgsToPromote.empty() && ByValArgsToTransform.empty())
     return nullptr;
 
-  if (!areFunctionArgsABICompatible(*F, TTI, ArgsToPromote,
-                                    ByValArgsToTransform))
+  if (!ArgumentPromotionPass::areFunctionArgsABICompatible(
+          *F, TTI, ArgsToPromote, ByValArgsToTransform))
     return nullptr;
 
   return doPromotion(F, ArgsToPromote, ByValArgsToTransform, ReplaceCallSite);

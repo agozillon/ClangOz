@@ -146,6 +146,7 @@ static SectionFlag parseSectionRenameFlag(StringRef SectionName) {
       .CaseLower("strings", SectionFlag::SecStrings)
       .CaseLower("contents", SectionFlag::SecContents)
       .CaseLower("share", SectionFlag::SecShare)
+      .CaseLower("exclude", SectionFlag::SecExclude)
       .Default(SectionFlag::SecNone);
 }
 
@@ -158,8 +159,8 @@ parseSectionFlagSet(ArrayRef<StringRef> SectionFlags) {
       return createStringError(
           errc::invalid_argument,
           "unrecognized section flag '%s'. Flags supported for GNU "
-          "compatibility: alloc, load, noload, readonly, debug, code, data, "
-          "rom, share, contents, merge, strings",
+          "compatibility: alloc, load, noload, readonly, exclude, debug, "
+          "code, data, rom, share, contents, merge, strings",
           Flag.str().c_str());
     ParsedFlags |= ParsedFlag;
   }
@@ -272,6 +273,7 @@ static const StringMap<MachineInfo> TargetMap{
     // SPARC
     {"elf32-sparc", {ELF::EM_SPARC, false, false}},
     {"elf32-sparcel", {ELF::EM_SPARC, false, true}},
+    {"elf32-hexagon", {ELF::EM_HEXAGON, false, true}},
 };
 
 static Expected<TargetInfo>

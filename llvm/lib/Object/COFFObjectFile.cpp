@@ -328,6 +328,12 @@ bool COFFObjectFile::isSectionBSS(DataRefImpl Ref) const {
   return (Sec->Characteristics & BssFlags) == BssFlags;
 }
 
+// The .debug sections are the only debug sections for COFF
+// (\see MCObjectFileInfo.cpp).
+bool COFFObjectFile::isDebugSection(StringRef SectionName) const {
+  return SectionName.startswith(".debug");
+}
+
 unsigned COFFObjectFile::getSectionID(SectionRef Sec) const {
   uintptr_t Offset =
       uintptr_t(Sec.getRawDataRefImpl().p) - uintptr_t(SectionTable);
@@ -1067,7 +1073,7 @@ COFFObjectFile::getSectionName(const coff_section *Sec) const {
     if (Name.startswith("//")) {
       if (decodeBase64StringEntry(Name.substr(2), Offset))
         return createStringError(object_error::parse_failed,
-                                 "inalid section name");
+                                 "invalid section name");
     } else {
       if (Name.substr(1).getAsInteger(10, Offset))
         return createStringError(object_error::parse_failed,

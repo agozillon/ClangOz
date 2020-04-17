@@ -146,6 +146,11 @@ static cl::opt<int> EnableGlobalISelAtO(
     cl::desc("Enable GlobalISel at or below an opt level (-1 to disable)"),
     cl::init(0));
 
+static cl::opt<bool> EnableSVEIntrinsicOpts(
+    "aarch64-sve-intrinsic-opts", cl::Hidden,
+    cl::desc("Enable SVE intrinsic opts"),
+    cl::init(true));
+
 static cl::opt<bool> EnableFalkorHWPFFix("aarch64-enable-falkor-hwpf-fix",
                                          cl::init(true), cl::Hidden);
 
@@ -154,7 +159,7 @@ static cl::opt<bool>
                         cl::desc("Enable the AAcrh64 branch target pass"),
                         cl::init(true));
 
-extern "C" void LLVMInitializeAArch64Target() {
+extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAArch64Target() {
   // Register the target.
   RegisterTargetMachine<AArch64leTargetMachine> X(getTheAArch64leTarget());
   RegisterTargetMachine<AArch64beTargetMachine> Y(getTheAArch64beTarget());
@@ -182,6 +187,7 @@ extern "C" void LLVMInitializeAArch64Target() {
   initializeFalkorHWPFFixPass(*PR);
   initializeFalkorMarkStridedAccessesLegacyPass(*PR);
   initializeLDTLSCleanupPass(*PR);
+  initializeSVEIntrinsicOptsPass(*PR);
   initializeAArch64SpeculationHardeningPass(*PR);
   initializeAArch64StackTaggingPass(*PR);
   initializeAArch64StackTaggingPreRAPass(*PR);
@@ -236,12 +242,8 @@ getEffectiveAArch64CodeModel(const Triple &TT, Optional<CodeModel::Model> CM,
   if (CM) {
     if (*CM != CodeModel::Small && *CM != CodeModel::Tiny &&
         *CM != CodeModel::Large) {
-      if (!TT.isOSFuchsia())
-        report_fatal_error(
-            "Only small, tiny and large code models are allowed on AArch64");
-      else if (*CM != CodeModel::Kernel)
-        report_fatal_error("Only small, tiny, kernel, and large code models "
-                           "are allowed on AArch64");
+      report_fatal_error(
+          "Only small, tiny and large code models are allowed on AArch64");
     } else if (*CM == CodeModel::Tiny && !TT.isOSBinFormatELF())
       report_fatal_error("tiny code model is only supported on ELF");
     return *CM;
@@ -288,6 +290,17 @@ AArch64TargetMachine::AArch64TargetMachine(const Target &T, const Triple &TT,
     this->Options.TrapUnreachable = true;
   }
 
+  if (this->Options.TLSSize == 0) // default
+    this->Options.TLSSize = 24;
+  if ((getCodeModel() == CodeModel::Small ||
+       getCodeModel() == CodeModel::Kernel) &&
+      this->Options.TLSSize > 32)
+    // for the small (and kernel) code model, the maximum TLS size is 4GiB
+    this->Options.TLSSize = 32;
+  else if (getCodeModel() == CodeModel::Tiny && this->Options.TLSSize > 24)
+    // for the tiny code model, the maximum TLS size is 1MiB (< 16MiB)
+    this->Options.TLSSize = 24;
+
   // Enable GlobalISel at or below EnableGlobalISelAt0, unless this is
   // MachO/CodeModel::Large, which GlobalISel does not support.
   if (getOptLevel() <= EnableGlobalISelAtO &&
@@ -302,6 +315,9 @@ AArch64TargetMachine::AArch64TargetMachine(const Target &T, const Triple &TT,
 
   // AArch64 supports default outlining behaviour.
   setSupportsDefaultOutlining(true);
+
+  // AArch64 supports the debug entry values.
+  setSupportsDebugEntryValues(true);
 }
 
 AArch64TargetMachine::~AArch64TargetMachine() = default;
@@ -423,6 +439,10 @@ void AArch64PassConfig::addIRPasses() {
   // Always expand atomic operations, we don't deal with atomicrmw or cmpxchg
   // ourselves.
   addPass(createAtomicExpandPass());
+
+  // Expand any SVE vector library calls that we can't code generate directly.
+  if (EnableSVEIntrinsicOpts && TM->getOptLevel() == CodeGenOpt::Aggressive)
+    addPass(createSVEIntrinsicOptsPass());
 
   // Cmpxchg instructions are often used with a subsequent comparison to
   // determine whether it succeeded. We can exploit existing control-flow in
@@ -637,4 +657,7 @@ void AArch64PassConfig::addPreEmitPass() {
   if (TM->getOptLevel() != CodeGenOpt::None && EnableCollectLOH &&
       TM->getTargetTriple().isOSBinFormatMachO())
     addPass(createAArch64CollectLOHPass());
+
+  // SVE bundles move prefixes with destructive operations.
+  addPass(createUnpackMachineBundles(nullptr));
 }

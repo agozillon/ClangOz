@@ -541,14 +541,17 @@ defm V_MIN_LEGACY_F32 : VOP2Inst <"v_min_legacy_f32", VOP_F32_F32_F32, AMDGPUfmi
 defm V_MAX_LEGACY_F32 : VOP2Inst <"v_max_legacy_f32", VOP_F32_F32_F32, AMDGPUfmax_legacy>;
 } // End SubtargetPredicate = isGFX6GFX7
 
-let SubtargetPredicate = isGFX6GFX7GFX10 in {
 let isCommutable = 1 in {
+let SubtargetPredicate = isGFX6GFX7GFX10 in {
 defm V_MAC_LEGACY_F32 : VOP2Inst <"v_mac_legacy_f32", VOP_F32_F32_F32>;
-defm V_LSHR_B32 : VOP2Inst <"v_lshr_b32", VOP_I32_I32_I32, srl>;
-defm V_ASHR_I32 : VOP2Inst <"v_ashr_i32", VOP_I32_I32_I32, sra>;
-defm V_LSHL_B32 : VOP2Inst <"v_lshl_b32", VOP_I32_I32_I32, shl>;
-} // End isCommutable = 1
 } // End SubtargetPredicate = isGFX6GFX7GFX10
+let SubtargetPredicate = isGFX6GFX7 in {
+defm V_LSHR_B32 : VOP2Inst <"v_lshr_b32", VOP_PAT_GEN<VOP_I32_I32_I32>, srl>;
+defm V_ASHR_I32 : VOP2Inst <"v_ashr_i32", VOP_PAT_GEN<VOP_I32_I32_I32>, sra>;
+defm V_LSHL_B32 : VOP2Inst <"v_lshl_b32", VOP_PAT_GEN<VOP_I32_I32_I32>, shl>;
+} // End SubtargetPredicate = isGFX6GFX7
+} // End isCommutable = 1
+
 
 class DivergentBinOp<SDPatternOperator Op, VOP_Pseudo Inst> :
   GCNPat<
@@ -729,7 +732,7 @@ multiclass Arithmetic_i16_0Hi_Pats <SDPatternOperator op, Instruction inst> {
 
 def : GCNPat<
   (i32 (zext (op i16:$src0, i16:$src1))),
-  (inst $src0, $src1)
+  (inst VSrc_b16:$src0, VSrc_b16:$src1)
 >;
 
 def : GCNPat<
@@ -771,7 +774,7 @@ let Predicates = [Has16BitInsts] in {
 // TODO: Also do for 64-bit.
 def : GCNPat<
   (add i16:$src0, (i16 NegSubInlineConst16:$src1)),
-  (V_SUB_U16_e64 $src0, NegSubInlineConst16:$src1)
+  (V_SUB_U16_e64 VSrc_b16:$src0, NegSubInlineConst16:$src1)
 >;
 
 
@@ -779,7 +782,7 @@ let Predicates = [Has16BitInsts, isGFX7GFX8GFX9] in {
 
 def : GCNPat<
   (i32 (zext (add i16:$src0, (i16 NegSubInlineConst16:$src1)))),
-  (V_SUB_U16_e64 $src0, NegSubInlineConst16:$src1)
+  (V_SUB_U16_e64 VSrc_b16:$src0, NegSubInlineConst16:$src1)
 >;
 
 defm : Arithmetic_i16_0Hi_Pats<add, V_ADD_U16_e64>;
@@ -831,7 +834,7 @@ class VOP2_DPP<bits<6> op, VOP2_DPP_Pseudo ps,
 class Base_VOP2_DPP16<bits<6> op, VOP2_DPP_Pseudo ps,
                  string opName = ps.OpName, VOPProfile p = ps.Pfl> :
     VOP2_DPP<op, ps, opName, p, 1> {
-  let AssemblerPredicate = !if(p.HasExt, HasDPP16, DisableInst);
+  let AssemblerPredicate = HasDPP16;
   let SubtargetPredicate = HasDPP16;
 }
 
@@ -857,7 +860,7 @@ class VOP2_DPP8<bits<6> op, VOP2_Pseudo ps,
   let Inst{30-25} = op;
   let Inst{31}    = 0x0;
 
-  let AssemblerPredicate = !if(p.HasExt, HasDPP8, DisableInst);
+  let AssemblerPredicate = HasDPP8;
   let SubtargetPredicate = HasDPP8;
 }
 

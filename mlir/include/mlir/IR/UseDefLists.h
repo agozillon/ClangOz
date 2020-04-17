@@ -1,6 +1,6 @@
 //===- UseDefLists.h --------------------------------------------*- C++ -*-===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -131,6 +131,7 @@ public:
     for (OperandType &use : llvm::make_early_inc_range(getUses(oldValue)))
       use.set(newValue);
   }
+  using BaseType::replaceAllUsesWith;
 
   //===--------------------------------------------------------------------===//
   // Uses
@@ -147,7 +148,7 @@ public:
     return {use_begin(value), use_end(value)};
   }
   bool hasOneUse(ValueType value) const {
-    return mlir::has_single_element(getUses(value));
+    return llvm::hasSingleElement(getUses(value));
   }
   bool use_empty(ValueType value) const {
     return use_begin(value) == use_end(value);
@@ -294,13 +295,6 @@ public:
 
   /// Return which operand this is in the operand list of the User.
   unsigned getOperandNumber();
-
-private:
-  /// The number of OpOperands that correspond with this block operand.
-  unsigned numSuccessorOperands = 0;
-
-  /// Allow access to 'numSuccessorOperands'.
-  friend Operation;
 };
 
 //===----------------------------------------------------------------------===//
