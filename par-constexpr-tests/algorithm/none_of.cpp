@@ -5,8 +5,6 @@
 
 #include "../helpers/test_helpers.hpp"
 
-// Weird issue with cleanup, it seems to try and cleanup the constexpr stack
-// and then crash due to the stack sizes not being the same.
 template <typename T, int N, int Offset, bool ForceRuntime = false>
 constexpr auto none_of_ov1() {
   // this is just here to make sure the runtime iteration is actually executing

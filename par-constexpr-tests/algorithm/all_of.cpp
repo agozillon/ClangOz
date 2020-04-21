@@ -5,8 +5,6 @@
 
 #include "../helpers/test_helpers.hpp"
 
-// Broken: The early exit of any_of seems like it may be posing a problem.
-
 template <typename T, int N, int Offset, bool ForceRuntime = false>
 constexpr auto all_of_ov1() {
   // this is just here to make sure the runtime iteration is actually executing

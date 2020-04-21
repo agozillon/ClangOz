@@ -5,8 +5,6 @@
 
 #include "../helpers/test_helpers.hpp"
 
-// Broken: The early exit of any_of seems like it may be posing a problem.
-
 template <typename T, int N, int Offset, bool ForceRuntime = false>
 constexpr auto any_of_ov1() {
   // this is just here to make sure the runtime iteration is actually executing
@@ -36,6 +34,6 @@ int main() {
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";
-    
+  
   return 0;
 }

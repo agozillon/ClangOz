@@ -5205,12 +5205,13 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
               break;
 
             EvalStmtResult ESR = EvaluateLoopBody(Result, Info, FS->getBody());
+            
             if (ESR != ESR_Continue) {
-              if (ESR != ESR_Failed && 
-                  (!IterScope.destroy() || !ForScope.destroy())) {
+              if (ESR != ESR_Failed && !IterScope.destroy()) {
                 p.set_value(ESR_Failed);
                 return;
               }
+              
               p.set_value(ESR);
               return;
             }
@@ -5245,15 +5246,33 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       /// here inside of a threads task
       tp.wait();
       
+      // possibly a better way of structuring this
+      EvalStmtResult ESR_Prev, ESR_Cur; 
+      ESR_Prev = ESR_Cur = EvalFutures[0].get();
+      
+      if (ESR_Cur == ESR_Failed)
+        return ESR_Failed;
+        
       // If any of our futures came back negative we have a problem
-      for (auto &&EvalFuture : EvalFutures) {
-        if (EvalFuture.get() == ESR_Failed) {
+      for (int i = 1; i < EvalFutures.size(); ++i) {
+        ESR_Cur = EvalFutures[i].get();
+       
+        // The case where they do not end uniformly needs to be handled, which 
+        // may be a case of working out a priority list, need to think how to 
+        // handle this
+        if (ESR_Cur != ESR_Prev)
+          llvm_unreachable("ESR_Cur != ESR_Prev");
+        else
+          ESR_Prev = ESR_Cur;
+          
+        // Early Exit, at least one segment has failed
+        if (ESR_Cur == ESR_Failed) {
             return ESR_Failed;
          }
       }
       
       // Destroy ForScope here
-      return ForScope.destroy() ? ESR_Succeeded : ESR_Failed;
+      return ForScope.destroy() ? ESR_Prev : ESR_Failed;
     }
     
     // sequential implementation
