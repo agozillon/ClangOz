@@ -512,10 +512,7 @@ namespace {
     /// parameters' function scope indices.
     APValue *Arguments;
     
-    // ThreadId -> APValue *Arguments
-    typedef std::pair<std::thread::id, unsigned> ThreadArgKeyTy;
-    typedef std::map<ThreadArgKeyTy, 
-                     /*llvm::SmallVector<*/APValue/*, 4>*/> ThreadArgMapTy;
+    typedef std::map<unsigned, APValue> ThreadArgMapTy;
     ThreadArgMapTy ThreadArgumentsMap;
 
     CallStackFrame(const CallStackFrame& CSF, EvalInfo& EI);
@@ -529,9 +526,7 @@ namespace {
       // and then the Scope will release it apon destruction
       // OR....
       // Just check theres something actually in the map before looking
-      ThreadArgKeyTy KV(std::this_thread::get_id(), Index);
-      
-      auto val = ThreadArgumentsMap.find(KV);
+      auto val = ThreadArgumentsMap.find(Index);
       if (val != ThreadArgumentsMap.end()) {
         return &val->second; 
       }
@@ -809,10 +804,7 @@ namespace {
       CheckingPotentialConstantExpression(
         EI.CheckingPotentialConstantExpression),
       CheckingForUndefinedBehavior(EI.CheckingForUndefinedBehavior),
-      EvalMode(EI.EvalMode) {
-          Expr::EvalStatus Status;
-          EvalStatus = Status;
-      }
+      EvalMode(EI.EvalMode) {}
     /// CallStackDepth - The number of calls in the call stack right now.
     unsigned CallStackDepth;
 
@@ -4630,9 +4622,8 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
 namespace {
   class LoopDependentsGatherer
     : public ConstStmtVisitor<LoopDependentsGatherer, bool> {
-
-  EvalInfo &Info;
-  std::vector<std::thread::id> ThreadIds;
+  EvalInfo Info;
+  std::vector<EvalInfo> &ThreadInfo;
   int ThreadPartitionOverflow;
   int ThreadParitionSize;
   
@@ -4640,9 +4631,9 @@ namespace {
   // will keep the old stack frame and create a new one with thread id and 
   // delete it once its completed and fallen out of scope
   public:
-    LoopDependentsGatherer(EvalInfo &Info, 
-                           std::vector<std::thread::id> ThreadIds) :
-                           Info(Info), ThreadIds(ThreadIds) {}
+    LoopDependentsGatherer(EvalInfo Info,
+                           std::vector<EvalInfo> &ThreadInfo) :
+                           Info(Info), ThreadInfo(ThreadInfo) {}
 
     // Realistically, this should take into consideration the condition and the
     // step/increment, although the increment doesn't always exist
@@ -4709,8 +4700,8 @@ namespace {
               // types size, which means the LoopExtent is calculated wrong for
               // things like int's which are 4 bytes rather than 8 bytes
               int64_t LoopExtent = (RHSOffset - LHSOffset) / RHSTySz;
-              ThreadParitionSize = LoopExtent / ThreadIds.size();
-              ThreadPartitionOverflow = LoopExtent % ThreadIds.size();
+              ThreadParitionSize = LoopExtent / ThreadInfo.size();
+              ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
           }
           
           // This is computing the RHS, which always has to be greater than the 
@@ -4724,25 +4715,42 @@ namespace {
           //  section..
           if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(
                 Cond->getRHS()->getReferencedDeclOfCallee())) {
-            for (int i = 0; i < ThreadIds.size(); ++i) {
-             auto Arg = 
-                APValue(
-                  Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
+                
+            for (int i = 0; i < ThreadInfo.size(); ++i) {
+            
+               auto Arg = 
+                  APValue(
+                    Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
 
-              // Might be a cleaner way of writing this..
-              int64_t endOfThreadLoop 
-                = (i != ThreadIds.size() - 1) ? 
-                    RHSTySz * ThreadParitionSize * (i + 1)
-                  : RHSTySz * ((ThreadParitionSize * (i + 1)) 
-                    + ThreadPartitionOverflow);
+                // Might be a cleaner way of writing this..
+                int64_t endOfThreadLoop 
+                  = (i != ThreadInfo.size() - 1) ? 
+                      RHSTySz * ThreadParitionSize * (i + 1)
+                    : RHSTySz * ((ThreadParitionSize * (i + 1)) 
+                      + ThreadPartitionOverflow);
+                
+              // The first element is an arbitrary looking value, but it appears 
+              // to be important, or at least it's avoiding an assertion
+              std::vector<APValue::LValuePathEntry> NewLValPath;
+              for (int j = 0; j < Arg.getLValuePath().size(); ++j) {
+                NewLValPath.push_back((j == 0) ? Arg.getLValuePath()[j] : 
+                               Arg.getLValuePath()[j]
+                                  .ArrayIndex(ThreadParitionSize * (i + 1))); 
+              }
               
-              Arg.getLValueOffset() = 
-                CharUnits::fromQuantity(endOfThreadLoop);
-              
-              Info.CurrentCall->
-                ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
-                                   PVD->getFunctionScopeIndex())] = Arg;
+              // Only altering a few values, but unfortunately LValue Path has no
+              // set function and the get returns a const array.
+              Arg.setLValue(Arg.getLValueBase(), 
+                            CharUnits::fromQuantity(endOfThreadLoop), 
+                            NewLValPath, Arg.isLValueOnePastTheEnd(), 
+                            Arg.isNullPointer()); 
+                            
+                ThreadInfo[i].CurrentCall->
+                  ThreadArgumentsMap[PVD->getFunctionScopeIndex()] = Arg;
+            
             }
+            
+            
           }
         }
       }
@@ -4813,7 +4821,7 @@ namespace {
         // 3) Store a copy of it based on threadid somewhere in the 
         //    CallStackFrame
         
-        for (int i = 0; i < ThreadIds.size(); ++i) {
+        for (int i = 0; i < ThreadInfo.size(); ++i) {
          APValue Arg = 
            APValue(Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
           
@@ -4837,7 +4845,7 @@ namespace {
             for (int j = 0; j < Arg.getLValuePath().size(); ++j) {
               NewLValPath.push_back((j == 0) ? Arg.getLValuePath()[j] : 
                              Arg.getLValuePath()[j]
-                                .ArrayIndex(ThreadParitionSize * i));
+                                .ArrayIndex(ThreadParitionSize * i)); 
             }
             
             // Only altering a few values, but unfortunately LValue Path has no
@@ -4847,14 +4855,12 @@ namespace {
                           NewLValPath, Arg.isLValueOnePastTheEnd(), 
                           Arg.isNullPointer()); 
            
-            Info.CurrentCall->
-              ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
-                                 PVD->getFunctionScopeIndex())] = Arg;
+            ThreadInfo[i].CurrentCall->
+              ThreadArgumentsMap[PVD->getFunctionScopeIndex()] = Arg;
             } else if (Arg.isInt()) {
               Arg.getInt() = ThreadParitionSize * i;
-              Info.CurrentCall->
-                ThreadArgumentsMap[CallStackFrame::ThreadArgKeyTy(ThreadIds[i], 
-                                 PVD->getFunctionScopeIndex())] = Arg;
+              ThreadInfo[i].CurrentCall->
+                ThreadArgumentsMap[PVD->getFunctionScopeIndex()] = Arg;
             } else {
               llvm_unreachable("Unhandled Loop Dependents Case");
             }
@@ -5175,9 +5181,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         Info.CurrentCall->Callee->getNameAsString() == "none_of")
         && !tp.threadsAreActive()
         && LLVM_ENABLE_THREADS == 1) {
-      LoopDependentsGatherer(Info, tp.getThreadIds()).Visit(FS);
-
-      llvm::SmallVector<EvalInfo, 4> EvalInfos;
+      std::vector<EvalInfo> EvalInfos;
       llvm::SmallVector<std::promise<EvalStmtResult>, 4> EvalPromises;
       llvm::SmallVector<std::future<EvalStmtResult>, 4> EvalFutures;
 
@@ -5186,7 +5190,9 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         EvalFutures.push_back(EvalPromises[i].get_future());
         EvalInfos.push_back(Info);
       }
-                
+
+      LoopDependentsGatherer(Info, EvalInfos).Visit(FS);
+      
       auto ForThreadFunction = [](EvalInfo &Info, BlockScopeRAII &ForScope, 
                                    const ForStmt *FS, StmtResult &Result,
                                    std::promise<EvalStmtResult> &p) {
