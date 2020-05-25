@@ -19,10 +19,20 @@ bool check_runtime_against_compile(std::array<T, N> v,
                                    std::array<T, N> v2) {
   bool ret = true;
   
-  for (int i = 0; i < v.size(); ++i) {
+  for (int i = 0; i < v.size(); ++i)
     if (v[i] != v2[i])
       ret = false;
-  }
+  
+  return ret;
+}
+
+template <typename T, typename T2, int N>
+bool check_runtime_against_compile(std::pair<T, T2> v,
+                                   std::pair<T, T2> v2) {
+  bool ret = true;
+  
+  if (v.first != v2.first && v.second != v2.second)
+    ret = false;
   
   return ret;
 }

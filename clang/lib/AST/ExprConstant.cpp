@@ -32,11 +32,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <cstring>
-#include <future>
-#include <functional>
-#include <thread>
-#include <iostream>
 #include "Interp/Context.h"
 #include "Interp/Frame.h"
 #include "Interp/State.h"
@@ -64,7 +59,10 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/ThreadPool.h"
 #include <cstring>
+#include <future>
 #include <functional>
+#include <thread>
+#include <iostream>
 
 #define DEBUG_TYPE "exprconstant"
 
@@ -4619,7 +4617,103 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
   llvm_unreachable("Invalid EvalStmtResult!");
 }
 
+// I am open to cleaner patterns than the below visitor pattern, they're a very 
+// baseline attempt. Although, I'm not convinced it's worth persuing it too far 
+// if this recursive evaluation method will eventually be phased out. As this 
+// machinary may be largelly defunct in any case.
+//
+// There are very uncomprehensive adhoc ""as required" implementations at the 
+// moment, does not cover all edge cases
 namespace {
+
+  // This is going to search the loop body for variables that are being clearly
+  // altered in the loop and that require partitioning across threads and then
+  // reduction once complete...
+  // 
+  // We need to find these as the pointer of the object (e.g. a VarDecl) is 
+  // actually a key into the map of temporaries (for non temporaries its simply
+  // an integer representing the index in the parameter list). It may be 
+  // possible to cut out the middle man if we just assume all temporaries inside 
+  // of a call stack should be reduced or alter the way the map works when used 
+  // in a multithreaded context, but it could perhaps have some side effects.
+  //
+  // It's split up from the other gatherer to simplify things, if it's possible
+  // to merge them together in a simpler way then it should be done.
+  class LoopBodyDependentsGatherer 
+    : public ConstStmtVisitor<LoopBodyDependentsGatherer, bool, 
+                              /*Binary||Unary*/bool, /*Enum Val*/int> {
+      EvalInfo Info;
+      std::vector<EvalInfo> &ThreadInfo;
+      std::vector<std::tuple<bool, int, const void*>> &RedList;
+      
+    public:
+      LoopBodyDependentsGatherer(EvalInfo Info,
+                                 std::vector<EvalInfo> &ThreadInfo,
+                                 std::vector<std::tuple<bool, int, const void*>> 
+                                    &RedList) 
+                                 : Info(Info), ThreadInfo(ThreadInfo), 
+                                   RedList(RedList) {}
+      
+      // This may be a little interesting if it has double nested loops, if it
+      // isn't really functioning, this entry function should be renamed!
+      bool VisitForStmt(const ForStmt *FS, bool BinaryOrUnary, int OpCode) {
+        Visit(FS->getBody(), BinaryOrUnary, OpCode);
+        return true;
+      }
+      
+      bool VisitStmt(const Stmt *S, bool BinaryOrUnary, int OpCode) {
+        for (auto *Child : S->children())
+          Visit(Child, BinaryOrUnary, OpCode);
+        return true;
+      }
+      
+      // not sure there is a valid use for checking/distinguishing for a binary 
+      // operator when trying to look for a reduce
+      bool VisitBinaryOperator(const BinaryOperator *BO, bool BinaryOrUnary, 
+                               int OpCode) {
+//        if (BO->getSubExpr())
+//          Visit(BO->getSubExpr(), true, OpCode);
+        return true;
+      }
+  
+      // this may get a little complex, what happens if the Expr the 
+      // UnaryOperator is working on is a large complex expression, you could 
+      // perhaps ask the Expr to evaluate itself, but that may not be possible 
+      // and we're doing a lot of unneccesary work. Otherwise, we can try and 
+      // walk the expression to find what we need..
+      //
+      // The inverse of this whole idea may be to get the pointer key for each
+      // temporary or argument and walk the AST to find any occurences of the 
+      // variable with any operators it comes into contact with. As the 
+      // information we need to perform a "reduce" is basically:
+      //   1) The variable so we can find the correct APValue at the end of each
+      //      parallel invocation
+      //   2) The correct operator we need to reduce things with, this will only
+      //      work with simple operators, a user defined/opaue operator is 
+      //      likely another world of complexity if it's feasible.
+      bool VisitUnaryOperator(const UnaryOperator *UO, bool BinaryOrUnary, 
+                              int OpCode) {
+        if (UO->getSubExpr())
+          Visit(UO->getSubExpr(), false, UO->getOpcode());
+        return true;
+      }
+
+      bool VisitDeclRefExpr(const DeclRefExpr *DRE, bool BinaryOrUnary, 
+                            int OpCode) {
+
+        if (Info.CurrentCall->getCurrentTemporary(DRE->getDecl()) 
+            && OpCode > 0)
+          RedList.push_back(std::tuple<bool, int, const void*>
+                              (BinaryOrUnary, OpCode, 
+                               static_cast<const void*>(DRE->getDecl())));
+        
+        return true;
+      }
+
+  };
+
+  // This perhaps could be split into a Loop Condition and Loop Increment 
+  // Evaluator, or perhaps be named something better... or done better...
   class LoopDependentsGatherer
     : public ConstStmtVisitor<LoopDependentsGatherer, bool> {
   EvalInfo Info;
@@ -4758,6 +4852,8 @@ namespace {
       return true;
     }
     
+    // This may be a little interesting if it has double nested loops, if it
+    // isn't really functioning, this entry function should be renamed!
     bool VisitForStmt(const ForStmt *FS) {
       // This and the subsequent calls related to gathering information may be 
       // better off being detached from the LoopDependentsGatherer, the general
@@ -4801,7 +4897,7 @@ namespace {
     }
     
     bool VisitUnaryOperator(const UnaryOperator *UO) {
-    
+
       if (UO->getSubExpr())
         Visit(UO->getSubExpr());
         
@@ -4888,6 +4984,62 @@ namespace {
       return true;
     }
   };
+  
+  // realistically if a lot look like this we can squash them into a macro...
+  // likely every simple case will look identical even if this isn't the final
+  // implementation
+  void IncReduce(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
+                 const void *key) {
+      auto Temp = Info.CurrentCall->getCurrentTemporary(key);
+      for (auto EI : ThreadInfo) {
+        // only handling int to test for now... there may be a less hacky way to
+        // do this
+        if (Temp->isInt())
+          Temp->setInt(Temp->getInt() 
+                       + EI.CurrentCall->getCurrentTemporary(key)->getInt());
+        
+      }
+  }
+  
+  void DecReduce(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
+                 const void *key) {
+      auto Temp = Info.CurrentCall->getCurrentTemporary(key);
+      for (auto EI : ThreadInfo) {
+        // only handling int to test for now... there may be a less hacky way to
+        // do this
+        if (Temp->isInt())
+          Temp->setInt(Temp->getInt() 
+                       - EI.CurrentCall->getCurrentTemporary(key)->getInt());
+        
+      }
+  }
+  
+  // First attempt at something approaching a reduce, likely an abomination
+  void ParConstExprReduce(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
+                          std::vector<std::tuple<bool, int, const void*>> 
+                            &RedList) {
+    for (auto RedVar : RedList) {
+      // Interpret OpCode as a UnaryValue
+      if (!std::get<0>(RedVar)) {
+          // TODO: Perhaps look into a better way to do OperatorKinds 
+          UnaryOperatorKind uok = 
+            static_cast<UnaryOperatorKind>(std::get<1>(RedVar));
+        switch (uok) {
+          case UnaryOperatorKind::UO_PostInc:
+          case UnaryOperatorKind::UO_PreInc:
+              IncReduce(Info, ThreadInfo, std::get<2>(RedVar));
+            break;
+          case UnaryOperatorKind::UO_PostDec:
+          case UnaryOperatorKind::UO_PreDec:
+              DecReduce(Info, ThreadInfo, std::get<2>(RedVar));
+            break;
+          default:
+              llvm_unreachable("Unhandled ParConstExprReduce Case");
+            break;
+        }
+      }
+    }
+  }
 }
 
 // Evaluate a statement.
@@ -5173,12 +5325,16 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         Info.CurrentCall->Callee && 
         (Info.CurrentCall->Callee->getNameAsString() == "transform" ||
         Info.CurrentCall->Callee->getNameAsString() == "for_each" ||
+        Info.CurrentCall->Callee->getNameAsString() == "for_each_n" ||
         Info.CurrentCall->Callee->getNameAsString() == "iota" ||
         Info.CurrentCall->Callee->getNameAsString() == "adjacent_difference" ||
         Info.CurrentCall->Callee->getNameAsString() == "partial_sum" ||
         Info.CurrentCall->Callee->getNameAsString() == "any_of" || 
         Info.CurrentCall->Callee->getNameAsString() == "all_of" || 
-        Info.CurrentCall->Callee->getNameAsString() == "none_of")
+        Info.CurrentCall->Callee->getNameAsString() == "none_of" ||
+        Info.CurrentCall->Callee->getNameAsString() == "count" ||
+        Info.CurrentCall->Callee->getNameAsString() == "count_if" ||
+        Info.CurrentCall->Callee->getNameAsString() == "mismatch")
         && !tp.threadsAreActive()
         && LLVM_ENABLE_THREADS == 1) {
       std::vector<EvalInfo> EvalInfos;
@@ -5192,6 +5348,9 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       }
 
       LoopDependentsGatherer(Info, EvalInfos).Visit(FS);
+      
+      std::vector<std::tuple<bool, int, const void*>> RedList;
+      LoopBodyDependentsGatherer(Info, EvalInfos, RedList).Visit(FS, false, 0);
       
       auto ForThreadFunction = [](EvalInfo &Info, BlockScopeRAII &ForScope, 
                                    const ForStmt *FS, StmtResult &Result,
@@ -5276,6 +5435,10 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
             return ESR_Failed;
          }
       }
+      
+      // This idea of a reduce isn't superb it only really handles simple cases
+      // what happens if its a complex user defined function?
+      ParConstExprReduce(Info, EvalInfos, RedList);
       
       // Destroy ForScope here
       return ForScope.destroy() ? ESR_Prev : ESR_Failed;
