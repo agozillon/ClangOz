@@ -1,42 +1,43 @@
 #include <array>
-#include <numeric>
+#include <algorithm>
 #include <iostream>
 #include <type_traits>
 
 #include "../helpers/test_helpers.hpp"
 
 template <typename T, int N, bool ForceRuntime = false>
-constexpr auto iota_ov1() {
+constexpr auto for_each_ov1() {
   // this is just here to make sure the runtime iteration is actually executing
   // at runtime
   if constexpr (ForceRuntime) 
     std::cout << "is constant evaluated: " << std::is_constant_evaluated() << "\n";
 
   std::array<T, N> arr {};
+  std::array<T, N> arr_copy {};
     
-  std::iota(arr.begin(), arr.end(), 0);
+  for (int i = 0; i < arr.size(); ++i)
+    arr[i] = i;
 
-  return arr;
+  std::copy(arr.begin(), arr.end(), arr_copy.begin());
+  
+  return arr_copy;
 }
 
-
 int main() {
-  constexpr auto output_ov1 = iota_ov1<int, 32>();
-  auto runtime_ov1 = iota_ov1<int, 32, true>();
-  
-  for (auto arr : output_ov1) {
-    std::cout << arr << "\n";
-  }
+  constexpr auto output_ov1 = for_each_ov1<int, 32>();
+  auto runtime_ov1 = for_each_ov1<int, 32, true>();
+
+  for (auto r : runtime_ov1)
+    std::cout << r << "\n";
   
   std::cout << "\n\n\n";
   
-  for (auto arr : runtime_ov1) {
-    std::cout << arr << "\n";
-  }
-  
-    std::cout << "Runtime == Compile Time: " 
+  for (auto r : output_ov1)
+    std::cout << r << "\n";
+      
+  std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";
-  
+
   return 0;
 }

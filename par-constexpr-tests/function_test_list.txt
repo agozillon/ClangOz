@@ -1,3 +1,10 @@
+Note to self: I think perhaps a more general set of builtins that allow a developer 
+  to define constexpr parallelism may realistically be a lot simpler to implement
+  long term and perhaps more useful. In a way we are currently trying to write a 
+  naive auto parallelization algorithm, it doesn't have to cover a lot of cases
+  but its still quite brittle and requires a lot of TLC even in a constrained 
+  environment like the standard library algorithms.
+
 numerics header:
 
 iota : works 
@@ -49,24 +56,65 @@ Shouldn't Work:
 
 algorithms header:
 
-all_of :
-any_of : 
-none_of :
-for_each : 
-for_each_n :
-count : 
-count_if :
-mismatch : 
-find :
-find_if :
-find_if_not :
-find_end :
-find_first_of :
-adjacent_find :
-search : 
-search_n : 
-copy : 
-copy_if : 
+if it says works next to it then at least one very basic test case exists for it
+but it's possible there are some cases not covered yet. It's also worth noting
+these are only tested with very simple std::array of integers for now.
+
+Working:
+* all_of
+* any_of
+* none_of
+* for_each
+* for_each_n
+* count
+* count_if
+* mismatch
+* find
+* find_if
+* find_if_not
+* find_first_of
+
+Not Working:
+* copy_if
+
+Maybe could be made to work with some difficulty:
+* find_end
+* adjacent_find
+* search
+* search_n
+
+all_of : works
+any_of : works
+none_of : works
+for_each : works
+for_each_n : works
+count : works
+count_if  : works
+mismatch : works
+find : works
+find_if : works
+find_if_not : works
+find_end : won't work in current libc++ implementation, implemented using 
+           while loops which we don't currently cover (only for stmts for now),
+           it's also a series of while loops with no end condition (set to 
+           infinitely loop via true condition). The end conditions are internally 
+           represented in the loop as breaks/returns, this would require a lot
+           more code analysis than really seems feasible at the moment
+find_first_of : works
+adjacent_find : implemented as a while loop in libc++, likely easier to 
+                implement it as a for loop in our own library (which could 
+                contain other functions libc++ doesn't quite implement the 
+                way we'd like) and then use that instead. cppreference has an 
+                example but it will take a little compiler work to get it 
+                working correctly as a bug exists at the moment.
+search : won't work for similar reasons to find_end (infinite while loop, with
+        hard to diagnose split case), even the cppreference which makes use of a 
+        for loop will require a fair chunk more code analysis of the body. But
+        it could be possible to make a naive implementation that will perform
+        better in parallel than any serial implementation.
+search_n : same problems as search/find_end
+copy : works
+copy_if : broken at the moment
 copy_n : 
 copy_backward : 
 move : 

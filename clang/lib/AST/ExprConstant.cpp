@@ -510,6 +510,8 @@ namespace {
     /// parameters' function scope indices.
     APValue *Arguments;
     
+    /// TODO/FIXME: Convert to vector or array, no real need for this to be a
+    /// map anymore
     typedef std::map<unsigned, APValue> ThreadArgMapTy;
     ThreadArgMapTy ThreadArgumentsMap;
 
@@ -3278,7 +3280,10 @@ template<typename SubobjectHandler>
 typename SubobjectHandler::result_type
 findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
               const SubobjectDesignator &Sub, SubobjectHandler &handler) {
-  static std::mutex test_lock;
+  static std::mutex arr_lock;
+//  it works here with no error, and is 0m24.144s vs 0m38.228s on the benchmark
+//  very high system costs as the lock is requested often
+  std::lock_guard<std::mutex> locked(arr_lock);
   
   // agozillon: This lock "fixes" the issue, but its not ideal so there are 
   // several race conditions in this function that pose problems, the lock seems
@@ -3387,7 +3392,10 @@ findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
 
     LastField = nullptr;
     if (ObjType->isArrayType()) {
-      std::lock_guard<std::mutex> locked(test_lock);
+    //  it works here with occasional error, and is 0m21.648s vs 0m38.228s on 
+    //  the benchmark, it is significantly lower system time though as the lock 
+    //  is requested far less
+//     std::lock_guard<std::mutex> locked(arr_lock);
       // Next subobject is an array element.
       const ConstantArrayType *CAT = Info.Ctx.getAsConstantArrayType(ObjType);
       assert(CAT && "vla in literal type?");
@@ -4434,7 +4442,9 @@ enum EvalStmtResult {
   /// Hit a 'break' statement.
   ESR_Break,
   /// Still scanning for 'case' or 'default' statement.
-  ESR_CaseNotFound
+  ESR_CaseNotFound,
+  /// A partitioned parallel loop exited early possibly at a break or return
+  ESR_ParEarlySucceeded
 };
 }
 
@@ -4626,6 +4636,36 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
 // moment, does not cover all edge cases
 namespace {
 
+    void PrintEvalInfo(EvalInfo &EI) {
+      llvm::errs() << "Start PrintEvalInfo \n";
+      for (int i = 0; i < EI.CurrentCall->Callee->getNumParams(); ++i) {
+        if (EI.CurrentCall->Arguments[i].isLValue()) { 
+          for (int j = 0; j < EI.CurrentCall->Arguments[i].getLValuePath().size(); ++j) {
+            llvm::errs() << EI.CurrentCall->Arguments[i].getLValuePath()[j].getAsArrayIndex() << "\n";          
+          }
+          llvm::errs() << EI.CurrentCall->Arguments[i].getLValueOffset().getQuantity() << "\n";
+        }
+      
+    }
+    
+    llvm::errs() << "End PrintEvalInfo \n";
+  }
+  
+  
+    void PrintAPValue(APValue &AP) {
+      llvm::errs() << "Start PrintAPValue \n";
+
+      if (AP.isLValue()) { 
+        for (int i = 0; i < AP.getLValuePath().size(); ++i) {
+          llvm::errs() << AP.getLValuePath()[i].getAsArrayIndex() << "\n";
+        }
+        llvm::errs() << AP.getLValueOffset().getQuantity() << "\n";
+      }
+      
+    
+    llvm::errs() << "End PrintAPValue \n";
+  }
+  
   // This is going to search the loop body for variables that are being clearly
   // altered in the loop and that require partitioning across threads and then
   // reduction once complete...
@@ -4957,6 +4997,12 @@ namespace {
               Arg.getInt() = ThreadParitionSize * i;
               ThreadInfo[i].CurrentCall->
                 ThreadArgumentsMap[PVD->getFunctionScopeIndex()] = Arg;
+            } else if (Arg.isAbsent()) {
+              // Unsure how this should technically be handled, the object is 
+              // outside of its lifetime, but is it possible its lifetime will
+              // start later?
+              ThreadInfo[i].CurrentCall->
+                ThreadArgumentsMap[PVD->getFunctionScopeIndex()] = Arg;
             } else {
               llvm_unreachable("Unhandled Loop Dependents Case");
             }
@@ -5040,6 +5086,66 @@ namespace {
       }
     }
   }
+  
+  // TODO: This function is likely going to require some further consideration 
+  // in the future. It's possible we don't want to copy across all arguments 
+  // indiscriminately, we originally only wanted to keep the iterators 
+  // consistent as they may be used later in the algorithm 
+  // (e.g. as return types), making everything consistent may be overkill.
+  // On the other hand we may end up wanting to do the same copy with the 
+  // temporaries as well, which may be used later in the algorithm...
+  // It's worth noting that we currently only assume things in the CurrentCall
+  // will need to be copied, and anticipate that we aren't manipulating anything
+  // from calls higher up the stack for the moment, this goes for the majority 
+  // of the Parallel Constexpr Algorithms for the moment.
+  //
+  // The above statement may be partially incorrect as every APValue in the 
+  // arguements list should in theory be the original copy (and thus shared
+  // for better or worse for now), excluding the iterators which get their own 
+  // copy in the threadargumentsmap
+  void CopyFromThreadArguments(EvalInfo &From, EvalInfo &To) {
+    for (int i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
+      To.CurrentCall->Arguments[i] = *From.CurrentCall->getArguments(i);
+    }
+  }
+  
+  
+  void CopyToThreadArguments(EvalInfo &From, EvalInfo &To) {
+    for (int i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
+      To.CurrentCall->ThreadArgumentsMap[i] = From.CurrentCall->Arguments[i];
+    }
+  }
+
+  // Temporary list of function names we let be parallelized by the compiler at
+  // the moment, those commented out are currently a WIP. This should eventually
+  // be replaced by checking the argument of a function that indicates it should
+  // be parallelized (ExecutionPolicy).
+  bool WhitelistedParallelFunc(const FunctionDecl *F) {
+    return (F->getNameAsString() == "transform" ||
+            F->getNameAsString() == "for_each" ||
+            F->getNameAsString() == "for_each_n" ||
+            F->getNameAsString() == "iota" ||
+            /*F->getNameAsString() == "adjacent_difference" ||
+            F->getNameAsString() == "partial_sum" || */
+            F->getNameAsString() == "any_of" || 
+            F->getNameAsString() == "all_of" || 
+            F->getNameAsString() == "none_of" ||
+            F->getNameAsString() == "count" ||
+            F->getNameAsString() == "count_if" ||
+            F->getNameAsString() == "mismatch" ||
+            F->getNameAsString() == "find" ||
+            F->getNameAsString() == "find_if" ||
+            F->getNameAsString() == "find_if_not" ||
+            /*F->getNameAsString() == "find_end" ||
+            F->getNameAsString() == "__find_end" ||*/
+            F->getNameAsString() == "find_first_of" ||
+            F->getNameAsString() == "__find_first_of_ce" ||
+            /*F->getNameAsString() == "adjacent_find" ||*/
+            F->getNameAsString() == "copy" ||
+            F->getNameAsString() == "__copy_constexpr" ||
+            F->getNameAsString() == "copy_if");
+  }
+
 }
 
 // Evaluate a statement.
@@ -5323,20 +5429,9 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
     // TODO: Put the string comparisons into a function, its getting a bit much
     if (Info.getLangOpts().ExperimentalConstexprParallel &&
         Info.CurrentCall->Callee && 
-        (Info.CurrentCall->Callee->getNameAsString() == "transform" ||
-        Info.CurrentCall->Callee->getNameAsString() == "for_each" ||
-        Info.CurrentCall->Callee->getNameAsString() == "for_each_n" ||
-        Info.CurrentCall->Callee->getNameAsString() == "iota" ||
-        Info.CurrentCall->Callee->getNameAsString() == "adjacent_difference" ||
-        Info.CurrentCall->Callee->getNameAsString() == "partial_sum" ||
-        Info.CurrentCall->Callee->getNameAsString() == "any_of" || 
-        Info.CurrentCall->Callee->getNameAsString() == "all_of" || 
-        Info.CurrentCall->Callee->getNameAsString() == "none_of" ||
-        Info.CurrentCall->Callee->getNameAsString() == "count" ||
-        Info.CurrentCall->Callee->getNameAsString() == "count_if" ||
-        Info.CurrentCall->Callee->getNameAsString() == "mismatch")
-        && !tp.threadsAreActive()
-        && LLVM_ENABLE_THREADS == 1) {
+        WhitelistedParallelFunc(Info.CurrentCall->Callee) && 
+        !tp.threadsAreActive() &&
+        LLVM_ENABLE_THREADS == 1) {
       std::vector<EvalInfo> EvalInfos;
       llvm::SmallVector<std::promise<EvalStmtResult>, 4> EvalPromises;
       llvm::SmallVector<std::future<EvalStmtResult>, 4> EvalFutures;
@@ -5376,8 +5471,18 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
                 p.set_value(ESR_Failed);
                 return;
               }
-              
-              p.set_value(ESR);
+              // The ESR_ParEarlySucceeded is a way to distinguish between the 
+              // regular ESR_Succeeded that simply states we completed our loop
+              // without any error. ESR_ParEarlySucceeded basically states that 
+              // we are returning early but successfully due to encountering 
+              // something like a break or a return. Unforutnately 
+              // EvaluateLoopBody does not seem to return the ESR_Break or 
+              // ESR_Return in every case when encountering these cases so this
+              // sort of works in lieu of those. The main example of this was in
+              // the function mismatch from the libcxx standard library 
+              // implementation, it has a break in it, but ESR_Break isn't 
+              // returned.
+              p.set_value(ESR == ESR_Succeeded ? ESR_ParEarlySucceeded : ESR);
               return;
             }
             
@@ -5405,43 +5510,63 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
                    std::ref(EvalPromises[i]));
       }
 
-      /// TODO/FIXME: Implement check that will check if the ThreadPool is 
-      /// already busy before launching more, we don't want to give more work 
-      /// and then wait because it's likely the pool will lock up if we enter 
-      /// here inside of a threads task
       tp.wait();
       
-      // possibly a better way of structuring this
-      EvalStmtResult ESR_Prev, ESR_Cur; 
-      ESR_Prev = ESR_Cur = EvalFutures[0].get();
-      
-      if (ESR_Cur == ESR_Failed)
-        return ESR_Failed;
+      EvalStmtResult ESR_Ret;
+      for (int i = 0; i < EvalFutures.size(); ++i) {
+        ESR_Ret = EvalFutures[i].get();
         
-      // If any of our futures came back negative we have a problem
-      for (int i = 1; i < EvalFutures.size(); ++i) {
-        ESR_Cur = EvalFutures[i].get();
-       
-        // The case where they do not end uniformly needs to be handled, which 
-        // may be a case of working out a priority list, need to think how to 
-        // handle this
-        if (ESR_Cur != ESR_Prev)
-          llvm_unreachable("ESR_Cur != ESR_Prev");
-        else
-          ESR_Prev = ESR_Cur;
+              
+        if (ESR_Ret == ESR_Failed)
+          return ESR_Failed;
           
-        // Early Exit, at least one segment has failed
-        if (ESR_Cur == ESR_Failed) {
-            return ESR_Failed;
-         }
+        //  TODO/FIXME: This is a little naive at the moment, we are assuming 
+        //  that loops never iterate backwards and assuming the first thing that
+        //  returned early is the one we should select.
+        if (ESR_Ret == ESR_ParEarlySucceeded || ESR_Ret == ESR_Returned) {
+            if (ESR_Ret == ESR_ParEarlySucceeded) 
+              ESR_Ret = ESR_Succeeded;
+            // We want our iterator data stored in the original Info to be 
+            // correct and consistent with our results, they could be used 
+            // elsewhere in the algorithm
+            CopyFromThreadArguments(EvalInfos[i], Info);
+            break;
+        }
+        
+        if (i == EvalFutures.size() - 1) {
+          // We want our iterator data stored in the original Info to be 
+          // correct and consistent with our results, they could be used 
+          // elsewhere in the algorithm
+          CopyFromThreadArguments(EvalInfos[i], Info);
+        }
       }
+      
+      // TODO List:
+      //  1) Find the very rare bug that occurs in mismatch and count_if 
+      //     (likely others)
+      //  2) Test if we can remove the intrusive lock by making copies of all
+      //     things inside of the stack frame's arguments list:
+      //      - I have tested this, but you'd realistically have to make copies
+      //        of everything above the current stack frame that's passed into
+      //        the current stack frame, as there is a possibility of those 
+      //        having conflicts e.g. an array passed into the function may
+      //        have to get resized. Perhaps it's possible just to copy the
+      //        data linked to the arguments. A good start may be to trace 
+      //        what gets passed to expandArray(*O, Index) etc. and causes an 
+      //        assertion.
+      //  3) Create a script that will execute all tests X amount of times to 
+      //     look for problems that may rarely crop up. This is important in 
+      //     detecting multithreaded issues that are introduced due to changes 
+      //     or that persist.
+      //  4) Continue fixing and testing functions... need to fix copy_if, 
+      //     partial_sum etc.
       
       // This idea of a reduce isn't superb it only really handles simple cases
       // what happens if its a complex user defined function?
       ParConstExprReduce(Info, EvalInfos, RedList);
-      
+
       // Destroy ForScope here
-      return ForScope.destroy() ? ESR_Prev : ESR_Failed;
+      return ForScope.destroy() ? ESR_Ret : ESR_Failed;
     }
     
     // sequential implementation

@@ -6,17 +6,9 @@
 
 #include "../helpers/test_helpers.hpp"
 
-// Covers the two basic constexpr overloads at the moment without the
-// Execution Policy:
-//
-// template< class InputIt, class OutputIt >
-//  constexpr OutputIt adjacent_difference( InputIt first, InputIt last,
-//                                          OutputIt d_first );
-//
-//template< class InputIt, class OutputIt, class BinaryOperation >
-//  constexpr OutputIt adjacent_difference( InputIt first, InputIt last,
-//                                          OutputIt d_first, 
-//                                          BinaryOperation op);
+/* Not working at the moment, the underlying issue may be similar to partial 
+  sum, perhaps adjacent elements in the thread argument list need to be
+  copied to prevent overwrites / race conditions */
 
 template <typename T, int N, int Offset, bool ForceRuntime = false>
 constexpr auto adjacency_ov1() {

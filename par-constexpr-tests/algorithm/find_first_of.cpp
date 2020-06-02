@@ -6,34 +6,33 @@
 #include "../helpers/test_helpers.hpp"
 
 template <typename T, int N, bool ForceRuntime = false>
-constexpr auto for_each_ov1() {
+constexpr auto find_first_of_ov1() {
   // this is just here to make sure the runtime iteration is actually executing
   // at runtime
   if constexpr (ForceRuntime) 
     std::cout << "is constant evaluated: " << std::is_constant_evaluated() << "\n";
 
   std::array<T, N> arr {};
+  std::array<T, 4> seq {300, 40, 10, -31};
     
   for (int i = 0; i < arr.size(); ++i)
-    arr[i] = (i + 32);
+    arr[i] = i;
 
-  std::for_each(arr.begin(), arr.end(), 
-                [](auto &i){ i *= 2; });
+  auto found = std::find_first_of(arr.begin(), arr.end(), 
+                                  seq.begin(), seq.end());
   
-  return arr;
+  return std::distance(arr.begin(), found);
 }
 
 int main() {
-  constexpr auto output_ov1 = for_each_ov1<int, 32>();
-  auto runtime_ov1 = for_each_ov1<int, 32, true>();
+  constexpr auto output_ov1 = find_first_of_ov1<int, 32>();
+  auto runtime_ov1 = find_first_of_ov1<int, 32, true>();
 
-  for (auto r : runtime_ov1)
-    std::cout << r << "\n";
+  std::cout << output_ov1 << "\n";
   
   std::cout << "\n\n\n";
   
-  for (auto r : output_ov1)
-    std::cout << r << "\n";
+  std::cout << runtime_ov1 << "\n";
       
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)

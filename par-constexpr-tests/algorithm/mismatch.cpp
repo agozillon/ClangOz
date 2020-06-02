@@ -5,10 +5,6 @@
 
 #include "../helpers/test_helpers.hpp"
 
-
-// This function should in theory be implementable, but it internally requries a 
-// reduction or a lock
-
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto mismatch_ov1() {
   // this is just here to make sure the runtime iteration is actually executing
@@ -24,6 +20,7 @@ constexpr auto mismatch_ov1() {
    arr2[i] = arr[i] = i;
 
   arr2[13] = static_cast<T>(101);
+  arr2[31] = static_cast<T>(111);
   
   auto ret = std::mismatch(arr.begin(), arr.end(), arr2.begin());
   

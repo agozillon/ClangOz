@@ -6,6 +6,10 @@
 
 #include "../helpers/test_helpers.hpp"
 
+/* Not working at the moment, the underlying issue may be similar to adjacent 
+  difference, perhaps adjacent elements in the thread argument list need to be
+  copied to prevent overwrites / race conditions */
+
 template <typename T, int N, int Offset, bool ForceRuntime = false>
 constexpr auto partial_sum_ov1() {
   if constexpr (ForceRuntime)

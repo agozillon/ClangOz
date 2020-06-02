@@ -1,12 +1,13 @@
 #include <array>
-#include <numeric>
+#include <algorithm>
 #include <iostream>
 #include <type_traits>
 
 #include "../helpers/test_helpers.hpp"
 
+  
 template <typename T, int N, bool ForceRuntime = false>
-constexpr auto iota_ov1() {
+constexpr auto find_ov1() {
   // this is just here to make sure the runtime iteration is actually executing
   // at runtime
   if constexpr (ForceRuntime) 
@@ -14,29 +15,27 @@ constexpr auto iota_ov1() {
 
   std::array<T, N> arr {};
     
-  std::iota(arr.begin(), arr.end(), 0);
+  for (int i = 0; i < arr.size(); ++i)
+    arr[i] = i;
 
-  return arr;
+  auto found = std::find(arr.begin(), arr.end(), 27);
+  
+  return *found;
 }
 
-
 int main() {
-  constexpr auto output_ov1 = iota_ov1<int, 32>();
-  auto runtime_ov1 = iota_ov1<int, 32, true>();
-  
-  for (auto arr : output_ov1) {
-    std::cout << arr << "\n";
-  }
+  constexpr auto output_ov1 = find_ov1<int, 32>();
+  auto runtime_ov1 = find_ov1<int, 32, true>();
+
+  std::cout << output_ov1 << "\n";
   
   std::cout << "\n\n\n";
   
-  for (auto arr : runtime_ov1) {
-    std::cout << arr << "\n";
-  }
-  
-    std::cout << "Runtime == Compile Time: " 
+  std::cout << runtime_ov1 << "\n";
+      
+  std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";
-  
+
   return 0;
 }

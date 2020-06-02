@@ -5,6 +5,14 @@
 
 #include "../helpers/test_helpers.hpp"
 
+/*
+  Not working, copies out of/in a random order as they race to write to the 
+  first segment of the array.
+  
+  This and the lock may be removal by creating copies of the writen to array
+  and then "reducing" it. Need to think about this one a bit more. 
+*/
+
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto for_each_ov1() {
   // this is just here to make sure the runtime iteration is actually executing
@@ -13,14 +21,15 @@ constexpr auto for_each_ov1() {
     std::cout << "is constant evaluated: " << std::is_constant_evaluated() << "\n";
 
   std::array<T, N> arr {};
+  std::array<T, N> arr_copy {};
     
   for (int i = 0; i < arr.size(); ++i)
-    arr[i] = (i + 32);
+    arr[i] = i;
 
-  std::for_each(arr.begin(), arr.end(), 
-                [](auto &i){ i *= 2; });
+  std::copy_if(arr.begin(), arr.end(), arr_copy.begin(), 
+               [](auto i) { return i % 2 == 0; });
   
-  return arr;
+  return arr_copy;
 }
 
 int main() {
