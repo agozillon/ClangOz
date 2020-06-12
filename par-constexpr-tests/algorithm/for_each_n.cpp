@@ -5,6 +5,11 @@
 
 #include "../helpers/test_helpers.hpp"
 
+/*
+  This is currently written as a while loop, so not going to work without 
+  extending the compiler to deal with while loops or alternatively rewriting it
+  to work with for loops.
+*/
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto for_each_ov1() {
   // this is just here to make sure the runtime iteration is actually executing

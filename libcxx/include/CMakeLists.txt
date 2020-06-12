@@ -111,6 +111,7 @@ set(files
   list
   locale
   locale.h
+  loop_wrapper.h
   map
   math.h
   memory

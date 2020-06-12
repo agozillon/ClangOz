@@ -649,6 +649,10 @@ template <class BidirectionalIterator, class Compare>
 
 #include <__debug>
 
+#include "loop_wrapper.h"
+
+using namespace cest::loop_wrapper;
+
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
 #pragma GCC system_header
 #endif
@@ -841,6 +845,9 @@ _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 bool
 all_of(_InputIterator __first, _InputIterator __last, _Predicate __pred)
 {
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
     for (; __first != __last; ++__first)
         if (!__pred(*__first))
             return false;
@@ -855,6 +862,9 @@ _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 bool
 any_of(_InputIterator __first, _InputIterator __last, _Predicate __pred)
 {
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
     for (; __first != __last; ++__first)
         if (__pred(*__first))
             return true;
@@ -869,6 +879,9 @@ _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 bool
 none_of(_InputIterator __first, _InputIterator __last, _Predicate __pred)
 {
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
     for (; __first != __last; ++__first)
         if (__pred(*__first))
             return false;
@@ -882,6 +895,9 @@ inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 _Function
 for_each(_InputIterator __first, _InputIterator __last, _Function __f)
 {
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+
     for (; __first != __last; ++__first)
         __f(*__first);
     return __f;
@@ -915,6 +931,9 @@ _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 _InputIterator
 find(_InputIterator __first, _InputIterator __last, const _Tp& __value_)
 {
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
     for (; __first != __last; ++__first)
         if (*__first == __value_)
             break;
@@ -929,6 +948,9 @@ _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 _InputIterator
 find_if(_InputIterator __first, _InputIterator __last, _Predicate __pred)
 {
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
     for (; __first != __last; ++__first)
         if (__pred(*__first))
             break;
@@ -943,6 +965,9 @@ _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 _InputIterator
 find_if_not(_InputIterator __first, _InputIterator __last, _Predicate __pred)
 {
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
     for (; __first != __last; ++__first)
         if (!__pred(*__first))
             break;
@@ -1105,6 +1130,10 @@ _LIBCPP_CONSTEXPR_AFTER_CXX11 _ForwardIterator1
 __find_first_of_ce(_ForwardIterator1 __first1, _ForwardIterator1 __last1,
               _ForwardIterator2 __first2, _ForwardIterator2 __last2, _BinaryPredicate __pred)
 {
+    // only parallelize/partition the outer loop
+    __BeginEndIteratorPair(__first1, __last1);
+    __IteratorLoopStep(__first1, 1);
+        
     for (; __first1 != __last1; ++__first1)
         for (_ForwardIterator2 __j = __first2; __j != __last2; ++__j)
             if (__pred(*__first1, *__j))
@@ -1175,6 +1204,11 @@ typename iterator_traits<_InputIterator>::difference_type
 count(_InputIterator __first, _InputIterator __last, const _Tp& __value_)
 {
     typename iterator_traits<_InputIterator>::difference_type __r(0);
+    
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    __ReduceVariable(__r, ReductionType::Accumulate, OperatorType::PreInc);
+    
     for (; __first != __last; ++__first)
         if (*__first == __value_)
             ++__r;
@@ -1190,6 +1224,11 @@ typename iterator_traits<_InputIterator>::difference_type
 count_if(_InputIterator __first, _InputIterator __last, _Predicate __pred)
 {
     typename iterator_traits<_InputIterator>::difference_type __r(0);
+ 
+     __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    __ReduceVariable(__r, ReductionType::Accumulate, OperatorType::PreInc);
+    
     for (; __first != __last; ++__first)
         if (__pred(*__first))
             ++__r;
@@ -1205,6 +1244,10 @@ pair<_InputIterator1, _InputIterator2>
 mismatch(_InputIterator1 __first1, _InputIterator1 __last1,
          _InputIterator2 __first2, _BinaryPredicate __pred)
 {
+    __BeginEndIteratorPair(__first1, __last1);
+    __IteratorLoopStep(__first1, 1);
+    __IteratorLoopStep(__first2, 1);
+    
     for (; __first1 != __last1; ++__first1, (void) ++__first2)
         if (!__pred(*__first1, *__first2))
             break;
@@ -1697,6 +1740,10 @@ inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 _OutputIterator
 __copy_constexpr(_InputIterator __first, _InputIterator __last, _OutputIterator __result)
 {
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    __IteratorLoopStep(__result, 1);
+      
     for (; __first != __last; ++__first, (void) ++__result)
         *__result = *__first;
     return __result;
@@ -1944,6 +1991,10 @@ inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 _OutputIterator
 transform(_InputIterator __first, _InputIterator __last, _OutputIterator __result, _UnaryOperation __op)
 {
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    __IteratorLoopStep(__result, 1);
+    
     for (; __first != __last; ++__first, (void) ++__result)
         *__result = __op(*__first);
     return __result;
@@ -1955,6 +2006,11 @@ _OutputIterator
 transform(_InputIterator1 __first1, _InputIterator1 __last1, _InputIterator2 __first2,
           _OutputIterator __result, _BinaryOperation __binary_op)
 {
+    __BeginEndIteratorPair(__first1, __last1);
+    __IteratorLoopStep(__first1, 1);
+    __IteratorLoopStep(__first2, 1);
+    __IteratorLoopStep(__result, 1);
+
     for (; __first1 != __last1; ++__first1, (void) ++__first2, ++__result)
         *__result = __binary_op(*__first1, *__first2);
     return __result;
@@ -5428,21 +5484,49 @@ _LIBCPP_CONSTEXPR_AFTER_CXX17 _OutputIterator
 __set_intersection(_InputIterator1 __first1, _InputIterator1 __last1,
                    _InputIterator2 __first2, _InputIterator2 __last2, _OutputIterator __result, _Compare __comp)
 {
-    while (__first1 != __last1 && __first2 != __last2)
-    {
-        if (__comp(*__first1, *__first2))
-            ++__first1;
-        else
-        {
-            if (!__comp(*__first2, *__first1))
-            {
-                *__result = *__first1;
-                ++__result;
-                ++__first1;
-            }
-            ++__first2;
-        }
+/*    while (__first1 != __last1 && __first2 != __last2)*/
+/*    {*/
+/*        if (__comp(*__first1, *__first2))*/
+/*            ++__first1;*/
+/*        else*/
+/*        {*/
+/*            if (!__comp(*__first2, *__first1))*/
+/*            {*/
+/*                *__result = *__first1;*/
+/*                ++__result;*/
+/*                ++__first1;*/
+/*            }*/
+/*            ++__first2;*/
+/*        }*/
+/*    }*/
+    for (; __first1 != __last1;) {
+      if (__first2 == __last2)
+        break;
+        
+      if (__comp(*__first1, *__first2)) {
+        ++__first1;
+      } else {
+          if (!__comp(*__first2, *__first1))
+          {
+              *__result = *__first1;
+              ++__result;
+              ++__first1;
+          }
+          ++__first2;
+      }
     }
+    
+/*    for (auto f1 = __first1; f1 != __last1; ++f1) {*/
+/*      for (auto f2 = __first2; f2 != __last2; ++f2) {*/
+/*          if (!__comp(*f1, *f2) && !__comp(*f2, *f1)) {*/
+/*              *__result = *f1;*/
+/*              ++__result;*/
+
+/*          }*/
+/*      }*/
+/*    }*/
+
+      
     return __result;
 }
 

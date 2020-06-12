@@ -465,6 +465,10 @@ inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 void
 iota(_ForwardIterator __first, _ForwardIterator __last, _Tp __value_)
 {
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    __IteratorLoopStep(__value_, 1);
+    
     for (; __first != __last; ++__first, (void) ++__value_)
         *__first = __value_;
 }

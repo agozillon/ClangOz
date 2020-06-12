@@ -52,6 +52,7 @@
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/FixedPoint.h"
 #include "clang/Basic/TargetInfo.h"
+#include "llvm/ADT/Any.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/Support/Debug.h"
@@ -4638,9 +4639,9 @@ namespace {
 
     void PrintEvalInfo(EvalInfo &EI) {
       llvm::errs() << "Start PrintEvalInfo \n";
-      for (int i = 0; i < EI.CurrentCall->Callee->getNumParams(); ++i) {
+      for (size_t i = 0; i < EI.CurrentCall->Callee->getNumParams(); ++i) {
         if (EI.CurrentCall->Arguments[i].isLValue()) { 
-          for (int j = 0; j < EI.CurrentCall->Arguments[i].getLValuePath().size(); ++j) {
+          for (size_t j = 0; j < EI.CurrentCall->Arguments[i].getLValuePath().size(); ++j) {
             llvm::errs() << EI.CurrentCall->Arguments[i].getLValuePath()[j].getAsArrayIndex() << "\n";          
           }
           llvm::errs() << EI.CurrentCall->Arguments[i].getLValueOffset().getQuantity() << "\n";
@@ -4656,7 +4657,7 @@ namespace {
       llvm::errs() << "Start PrintAPValue \n";
 
       if (AP.isLValue()) { 
-        for (int i = 0; i < AP.getLValuePath().size(); ++i) {
+        for (size_t i = 0; i < AP.getLValuePath().size(); ++i) {
           llvm::errs() << AP.getLValuePath()[i].getAsArrayIndex() << "\n";
         }
         llvm::errs() << AP.getLValueOffset().getQuantity() << "\n";
@@ -4752,6 +4753,235 @@ namespace {
 
   };
 
+  //  Experiment at creating someway to pass information into Clang rather than 
+  //  trying to analyize which can be extremely difficult.
+  //  
+  //  Currently it uses wrapper functions, but ideally these would be builtins, 
+  //  there is likely a non-zero penalty for the constexpr evaluator to compute 
+  //  these as they're not optimized out at this stage. This is likely offset by 
+  //  the simpler analysis they allow.
+  class LoopWrapperGatherer
+    : public ConstStmtVisitor<LoopWrapperGatherer, bool> {
+    EvalInfo Info;
+    std::vector<EvalInfo> &ThreadInfo;
+    std::vector<std::tuple<int, int, llvm::Any>> &RedList;
+    int64_t ThreadParitionSize;
+
+    public:
+      LoopWrapperGatherer(EvalInfo Info,
+                          std::vector<EvalInfo> &ThreadInfo,
+                          std::vector<std::tuple<int, int, llvm::Any>> 
+                            &RedList) :
+                          Info(Info), ThreadInfo(ThreadInfo), RedList(RedList){}
+    
+      bool SearchBody(const Stmt * Body) {
+        for (auto BStmt : Body->children()) {
+          Visit(BStmt);
+        }
+        return true;
+      }
+
+      bool HandleBeginEndIteratorPair(const CallExpr *E) {
+        if (E->getNumArgs() > 2 || E->getNumArgs() < 2)
+          return false;
+          
+        int BeginIndex = -1, EndIndex = -1;
+        APValue APVBegin, APVEnd;
+        QualType QTBegin, QTEnd;
+        
+        // Parameter: T Begin
+        // TODO: Create helper for the nested if's since it's used more than 
+        // once..
+        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(0)))
+          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+              BeginIndex = PVD->getFunctionScopeIndex();
+              APVBegin = Info.CurrentCall->Arguments[BeginIndex];
+              QTBegin = PVD->getOriginalType();
+            }
+
+        // Parameter: T2 End
+        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(1)))
+          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+              EndIndex = PVD->getFunctionScopeIndex();
+              APVEnd = Info.CurrentCall->Arguments[EndIndex];
+              QTEnd = PVD->getOriginalType();
+            }
+
+        if (BeginIndex < 0 || EndIndex < 0)
+          return false;
+        
+        if (APVBegin.isLValue() && APVEnd.isLValue()) {
+          int64_t EndTySz = 
+            Info.Ctx.getTypeSizeInChars(QTEnd->isPointerType() ? 
+                QTEnd->getPointeeType() : QTEnd).getQuantity();
+        
+          int64_t BeginOffset = APVBegin.getLValueOffset().getQuantity();
+          int64_t EndOffset = APVEnd.getLValueOffset().getQuantity();
+
+          int64_t LoopExtent = (EndOffset - BeginOffset) / EndTySz;
+          ThreadParitionSize = LoopExtent / ThreadInfo.size();
+          int64_t ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
+
+          for (size_t i = 0; i < ThreadInfo.size(); ++i) {
+              // Setting End Iterator
+              int64_t endOfThreadLoop 
+                  = (i != ThreadInfo.size() - 1) ? 
+                      EndTySz * ThreadParitionSize * (i + 1)
+                    : EndTySz * ((ThreadParitionSize * (i + 1)) 
+                      + ThreadPartitionOverflow);
+              
+              std::vector<APValue::LValuePathEntry> NewLValPath;
+              for (size_t j = 0; j < APVEnd.getLValuePath().size(); ++j)
+                NewLValPath.push_back((j == 0) ? APVEnd.getLValuePath()[j] :
+                               APVEnd.getLValuePath()[j]
+                                  .ArrayIndex(ThreadParitionSize * (i + 1)));
+              
+              // Only altering a few values, but unfortunately LValue Path has 
+              // no set function and the get returns a const array.
+              APVEnd.setLValue(APVEnd.getLValueBase(), 
+                            CharUnits::fromQuantity(endOfThreadLoop), 
+                            NewLValPath, APVEnd.isLValueOnePastTheEnd(), 
+                            APVEnd.isNullPointer()); 
+
+              ThreadInfo[i].CurrentCall->ThreadArgumentsMap[EndIndex] = APVEnd;
+          }
+        } else {
+          QTEnd.dump();
+          QTBegin.dump();
+        }
+        
+        return true;
+      }
+  
+      bool HandleIteratorLoopStep(const CallExpr *E) {
+        if (E->getNumArgs() > 2 || E->getNumArgs() < 2)
+          return false;
+ 
+        int FuncIndex = -1;
+        APValue APV;
+        QualType QT;
+        
+        // Parameter: T Iter
+        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(0)))
+          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+              FuncIndex = PVD->getFunctionScopeIndex();
+              QT = PVD->getOriginalType();
+              APV = Info.CurrentCall->Arguments[FuncIndex];
+            }
+
+        if (FuncIndex < 0)
+          return false;
+          
+        // Parameter: int StepSize, not sure if it's required just yet
+        llvm::APSInt StepVal(32);
+        if (!E->getArg(1)->isIntegerConstantExpr(StepVal, Info.Ctx))
+          return false;
+        
+        int32_t StepInt = StepVal.getSExtValue();
+
+        for (size_t i = 0; i < ThreadInfo.size(); ++i) {
+          // TODO/FIXME: Change the below to a switch statement and also
+          // abstract into a function if possible similar logic is used a lot
+          if (APV.isLValue()) {
+            int64_t TySz = Info.Ctx.getTypeSizeInChars(QT->isPointerType() ? 
+                QT->getPointeeType() : QT).getQuantity();
+              
+            // Setting Begin Iterator
+            std::vector<APValue::LValuePathEntry> NewLValPath;
+            for (size_t j = 0; j < APV.getLValuePath().size(); ++j) {
+              NewLValPath.push_back((j == 0) ? APV.getLValuePath()[j] : 
+                          APV.getLValuePath()[j]
+                                .ArrayIndex(ThreadParitionSize * i)); 
+            }
+            
+            APV.setLValue(APV.getLValueBase(), 
+                        CharUnits::fromQuantity(TySz * ThreadParitionSize * i), 
+                        NewLValPath, APV.isLValueOnePastTheEnd(), 
+                        APV.isNullPointer()); 
+
+            ThreadInfo[i].CurrentCall
+                ->ThreadArgumentsMap[FuncIndex] = APV; 
+         } else if (APV.isInt()) {
+            APV.getInt() = ThreadParitionSize * i;
+            ThreadInfo[i].CurrentCall->
+              ThreadArgumentsMap[FuncIndex] = APV;
+         } else if (APV.isAbsent()) {
+            // Unsure how this should technically be handled, the object is 
+            // outside of its lifetime, but is it possible its lifetime will
+            // start later?
+            ThreadInfo[i].CurrentCall->
+              ThreadArgumentsMap[FuncIndex] = APV;
+         } else {
+//              llvm::errs() << "APValue Kind: " << APV.getKind() << "\n";
+            llvm_unreachable("Unhandled Loop Dependents Case");
+         }
+            
+       }
+        
+        return true;
+      }
+      
+      bool HandleReduceVariable(const CallExpr *E) {
+        if (E->getNumArgs() > 3 || E->getNumArgs() < 3)
+          return false;
+        
+        llvm::Any ArgOrTemp;
+        // Parameter: T Var
+        // FIXME/TODO: Make this a function, so we can reuse it in the other 
+        // 2 calls and more in the future, its a common idiom at this point
+        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(0)))
+          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+              ArgOrTemp = PVD->getFunctionScopeIndex();
+            } else if (auto VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+              ArgOrTemp = static_cast<const void*>(VD);
+            }
+
+        // Fix the below to get the correct values, almost there...just not 
+        // peeling the nodes right
+        int32_t AccumInt = -1; 
+        if (auto DRE = dyn_cast<DeclRefExpr>(E->getArg(1)))
+          if (auto ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl()))
+            AccumInt = ECD->getInitVal().getSExtValue();
+
+        int32_t OpInt = -1; 
+        if (auto DRE = dyn_cast<DeclRefExpr>(E->getArg(2)))
+          if (auto ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl()))
+            OpInt = ECD->getInitVal().getSExtValue();
+
+        if (OpInt < 0 || AccumInt < 0)
+          return false;
+          
+        RedList.push_back(std::tuple<int, int, llvm::Any>(AccumInt, OpInt, 
+                                                          ArgOrTemp));
+        return true;
+      }
+      
+      bool VisitCallExpr(const CallExpr *E) {
+        if (const FunctionDecl *F = E->getDirectCallee()) {
+          StringRef name = F->getName();
+          
+          // This check should probably also make sure these lie in the correct
+          // namespace even if they technically use the __ prefix which is 
+          // reserved for the C++ implementation
+          if (name == "__BeginEndIteratorPair") {
+            return HandleBeginEndIteratorPair(E);
+          } else if (name == "__IteratorLoopStep") {
+            return HandleIteratorLoopStep(E);
+          } else if (name == "__ReduceVariable") {
+            return HandleReduceVariable(E);
+          }
+
+
+        }
+        
+        return false;
+      }
+  };
+  
   // This perhaps could be split into a Loop Condition and Loop Increment 
   // Evaluator, or perhaps be named something better... or done better...
   class LoopDependentsGatherer
@@ -4850,7 +5080,7 @@ namespace {
           if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(
                 Cond->getRHS()->getReferencedDeclOfCallee())) {
                 
-            for (int i = 0; i < ThreadInfo.size(); ++i) {
+            for (size_t i = 0; i < ThreadInfo.size(); ++i) {
             
                auto Arg = 
                   APValue(
@@ -4866,7 +5096,7 @@ namespace {
               // The first element is an arbitrary looking value, but it appears 
               // to be important, or at least it's avoiding an assertion
               std::vector<APValue::LValuePathEntry> NewLValPath;
-              for (int j = 0; j < Arg.getLValuePath().size(); ++j) {
+              for (size_t j = 0; j < Arg.getLValuePath().size(); ++j) {
                 NewLValPath.push_back((j == 0) ? Arg.getLValuePath()[j] : 
                                Arg.getLValuePath()[j]
                                   .ArrayIndex(ThreadParitionSize * (i + 1))); 
@@ -4957,7 +5187,7 @@ namespace {
         // 3) Store a copy of it based on threadid somewhere in the 
         //    CallStackFrame
         
-        for (int i = 0; i < ThreadInfo.size(); ++i) {
+        for (size_t i = 0; i < ThreadInfo.size(); ++i) {
          APValue Arg = 
            APValue(Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()]);
           
@@ -5014,8 +5244,8 @@ namespace {
       // sort of assuming anything that falls to here is going to be a temporary
       // or global... a ParmVarDecl is a VarDecl, but a VarDecl is not a 
       // ParmVarDecl
-      if (const VarDecl *VD = dyn_cast<VarDecl>(DRE->getFoundDecl())) {
-      }
+//      if (const VarDecl *VD = dyn_cast<VarDecl>(DRE->getFoundDecl())) {
+//      }
       
       return true;
     }
@@ -5031,58 +5261,83 @@ namespace {
     }
   };
   
+  
+  APValue* GetArgOrTemp(llvm::Any ArgOrTemp, CallStackFrame* CSF) {
+    if (llvm::any_isa<const void*>(ArgOrTemp)) {
+      auto *key = llvm::any_cast<const void *>(ArgOrTemp);
+      return CSF->getCurrentTemporary(key);
+    }
+    
+    auto index = llvm::any_cast<unsigned>(ArgOrTemp);
+    return CSF->getArguments(index);
+  }
   // realistically if a lot look like this we can squash them into a macro...
   // likely every simple case will look identical even if this isn't the final
   // implementation
   void IncReduce(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
-                 const void *key) {
-      auto Temp = Info.CurrentCall->getCurrentTemporary(key);
+                 llvm::Any ArgOrTemp) {
+      auto Temp = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
       for (auto EI : ThreadInfo) {
         // only handling int to test for now... there may be a less hacky way to
-        // do this
+        // do this, especially for more complex objects
         if (Temp->isInt())
           Temp->setInt(Temp->getInt() 
-                       + EI.CurrentCall->getCurrentTemporary(key)->getInt());
+                       + GetArgOrTemp(ArgOrTemp, EI.CurrentCall)->getInt());
         
       }
   }
   
   void DecReduce(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
-                 const void *key) {
-      auto Temp = Info.CurrentCall->getCurrentTemporary(key);
+                 llvm::Any ArgOrTemp) {
+      auto Temp = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
       for (auto EI : ThreadInfo) {
         // only handling int to test for now... there may be a less hacky way to
         // do this
         if (Temp->isInt())
           Temp->setInt(Temp->getInt() 
-                       - EI.CurrentCall->getCurrentTemporary(key)->getInt());
+                       - GetArgOrTemp(ArgOrTemp, EI.CurrentCall)->getInt());
         
       }
   }
   
-  // First attempt at something approaching a reduce, likely an abomination
-  void ParConstExprReduce(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
-                          std::vector<std::tuple<bool, int, const void*>> 
-                            &RedList) {
-    for (auto RedVar : RedList) {
-      // Interpret OpCode as a UnaryValue
-      if (!std::get<0>(RedVar)) {
-          // TODO: Perhaps look into a better way to do OperatorKinds 
-          UnaryOperatorKind uok = 
-            static_cast<UnaryOperatorKind>(std::get<1>(RedVar));
-        switch (uok) {
-          case UnaryOperatorKind::UO_PostInc:
-          case UnaryOperatorKind::UO_PreInc:
-              IncReduce(Info, ThreadInfo, std::get<2>(RedVar));
+  void RedTypeAccumulate(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
+                         int OpType, llvm::Any ArgOrTemp) {
+    // FIXME/TODO: Should be made into an Enum internally equivelant to the
+    // one in loop_wrapper.h, could also be made to be equivelant to Clangs on
+    // OpType enum, but there is likely a lot more conditions than we will 
+    // handle and it's not future proof
+    switch (OpType) {
+          case 1: // PostInc
+          case 2: // PreInc
+              IncReduce(Info, ThreadInfo, ArgOrTemp);
             break;
-          case UnaryOperatorKind::UO_PostDec:
-          case UnaryOperatorKind::UO_PreDec:
-              DecReduce(Info, ThreadInfo, std::get<2>(RedVar));
+          case 3: // PostDec 
+          case 4: // PreDec
+              DecReduce(Info, ThreadInfo, ArgOrTemp);
             break;
           default:
-              llvm_unreachable("Unhandled ParConstExprReduce Case");
+              llvm_unreachable("RedTypeAccumulate passed invalid OpType");
             break;
-        }
+      }
+  }
+
+  // First attempt at something approaching a reduce, likely an abomination
+  void ParConstExprReduce(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
+                          std::vector<std::tuple<int, int, llvm::Any>> &RedList)
+  {
+    for (auto RedVar : RedList) {
+      // Interpret first integer as the ReductionType we wish to apply to the 
+      // value after our algorithm has completed
+      // FIXME/TODO: Should be made into an Enum internally equivelant to the
+      // one in loop_wrapper.h
+      switch (std::get<0>(RedVar)) {
+        case 0: // Accumulate
+          RedTypeAccumulate(Info, ThreadInfo, std::get<1>(RedVar), 
+                            std::get<2>(RedVar));
+          break;
+        default:
+          llvm_unreachable("Invald ReductionType passed to ParConstExprReduce");
+          break;
       }
     }
   }
@@ -5436,17 +5691,23 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       llvm::SmallVector<std::promise<EvalStmtResult>, 4> EvalPromises;
       llvm::SmallVector<std::future<EvalStmtResult>, 4> EvalFutures;
 
-      for (int i = 0; i <  tp.getPoolSize(); ++i) {
+      for (size_t i = 0; i <  tp.getPoolSize(); ++i) {
         EvalPromises.push_back(std::promise<EvalStmtResult>());
         EvalFutures.push_back(EvalPromises[i].get_future());
         EvalInfos.push_back(Info);
+        // Copying things to "thread local memory", CopyFromThreadArguments is
+        // the inverse, this currently only works for arguments to functions
+        // not temporaries within the function.
+        CopyToThreadArguments(Info, EvalInfos[i]);
       }
 
-      LoopDependentsGatherer(Info, EvalInfos).Visit(FS);
-      
-      std::vector<std::tuple<bool, int, const void*>> RedList;
-      LoopBodyDependentsGatherer(Info, EvalInfos, RedList).Visit(FS, false, 0);
-      
+      std::vector<std::tuple<int, int, llvm::Any>> RedList;
+      LoopWrapperGatherer(Info, EvalInfos, RedList)
+          .SearchBody(Info.CurrentCall->Callee->getBody());
+
+      // Older Method
+//    LoopDependentsGatherer(Info, EvalInfos).Visit(FS);
+//    LoopBodyDependentsGatherer(Info, EvalInfos, RedList).Visit(FS, false, 0);
       auto ForThreadFunction = [](EvalInfo &Info, BlockScopeRAII &ForScope, 
                                    const ForStmt *FS, StmtResult &Result,
                                    std::promise<EvalStmtResult> &p) {
@@ -5504,7 +5765,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
           p.set_value(ESR_Succeeded);
       };
 
-      for (int i = 0; i < tp.getPoolSize(); ++i) {
+      for (size_t i = 0; i < tp.getPoolSize(); ++i) {
           tp.async(ForThreadFunction, std::ref(EvalInfos[i]), 
                    std::ref(ForScope), FS, std::ref(Result),
                    std::ref(EvalPromises[i]));
@@ -5513,7 +5774,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       tp.wait();
       
       EvalStmtResult ESR_Ret;
-      for (int i = 0; i < EvalFutures.size(); ++i) {
+      for (size_t i = 0; i < EvalFutures.size(); ++i) {
         ESR_Ret = EvalFutures[i].get();
         
               

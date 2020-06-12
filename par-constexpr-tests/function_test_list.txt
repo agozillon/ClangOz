@@ -65,14 +65,15 @@ Working:
 * any_of
 * none_of
 * for_each
-* for_each_n
 * count
 * count_if
+* copy
 * mismatch
 * find
 * find_if
 * find_if_not
 * find_first_of
+* transform
 
 Not Working:
 * copy_if
@@ -82,12 +83,14 @@ Maybe could be made to work with some difficulty:
 * adjacent_find
 * search
 * search_n
+* for_each_n
 
 all_of : works
 any_of : works
 none_of : works
 for_each : works
-for_each_n : works
+for_each_n : won't work in current libc++ implementation without some work as 
+             it's implemented as a while loop.
 count : works
 count_if  : works
 mismatch : works
@@ -191,6 +194,21 @@ prev_permutation :
 
 
 
+---------------------------
 
 
+Functions used in mmverify:
 
+set_intersection - 
+copy - the basic copy currently works, but I have no constexpr vector to test 
+       back_inserter with it in Clang/libcxx 
+find - used once from the algorithms header, it works in the most basic use case
+       in parallel at the moment just as copy does. i.e. on an array of 
+       integers.
+
+low number of constexpr functions in use at the moment, but in theory anything
+that's a for loop could be swapped to a for_each with a lambda
+
+find is also used a lot, but most are the find that's in built into the 
+container rather than the free function from the algorithm header. Perhaps 
+the find or search free function could be used instead in certain locations.
