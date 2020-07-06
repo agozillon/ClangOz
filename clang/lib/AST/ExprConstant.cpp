@@ -4753,6 +4753,16 @@ namespace {
 
   };
 
+    APValue* GetArgOrTemp(llvm::Any ArgOrTemp, CallStackFrame* CSF) {
+      if (llvm::any_isa<const void*>(ArgOrTemp)) {
+        auto *key = llvm::any_cast<const void *>(ArgOrTemp);
+        return CSF->getCurrentTemporary(key);
+      }
+    
+      auto index = llvm::any_cast<unsigned>(ArgOrTemp);
+      return CSF->getArguments(index);
+    }
+
   //  Experiment at creating someway to pass information into Clang rather than 
   //  trying to analyize which can be extremely difficult.
   //  
@@ -4764,13 +4774,34 @@ namespace {
     : public ConstStmtVisitor<LoopWrapperGatherer, bool> {
     EvalInfo Info;
     std::vector<EvalInfo> &ThreadInfo;
-    std::vector<std::tuple<int, int, llvm::Any>> &RedList;
+    std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> &RedList;
     int64_t ThreadParitionSize;
 
+    APValue CopyAPValue(llvm::Any ArgOrTemp) {
+      APValue* CandidateAPV = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
+
+      LValue CandidateLVal;
+      CandidateLVal.setFrom(Info.Ctx, *CandidateAPV);
+      QualType CandidateQt = getType(CandidateAPV->getLValueBase());
+      CompleteObject Obj = findCompleteObject(Info, nullptr, 
+                                          AccessKinds::AK_Read, CandidateLVal, 
+                                          CandidateQt);
+
+      // TODO: This currently assumes its a field, but that isn't always the 
+      // case, it could be an array etc. look into findSubObject to get an idea.
+      if (const FieldDecl *Field = getAsField(CandidateAPV->getLValuePath()[0])){
+        APValue* O = &Obj.Value->getStructField(Field->getFieldIndex());
+        if (O->isArray()) {
+          return APValue(*O);
+        }
+      }
+    }
+    
     public:
       LoopWrapperGatherer(EvalInfo Info,
                           std::vector<EvalInfo> &ThreadInfo,
-                          std::vector<std::tuple<int, int, llvm::Any>> 
+                          std::vector<std::tuple<int, int, llvm::Any, int64_t, 
+                                                 APValue>> 
                             &RedList) :
                           Info(Info), ThreadInfo(ThreadInfo), RedList(RedList){}
     
@@ -4929,19 +4960,29 @@ namespace {
           return false;
         
         llvm::Any ArgOrTemp;
+        int64_t TySz;
+        
         // Parameter: T Var
         // FIXME/TODO: Make this a function, so we can reuse it in the other 
         // 2 calls and more in the future, its a common idiom at this point
         if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(0)))
-          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr())) {
             if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
               ArgOrTemp = PVD->getFunctionScopeIndex();
+              QualType QTy = PVD->getType();
+              TySz = QTy->isPointerType() || QTy->isReferenceType() ?
+                Info.Ctx.getTypeSizeInChars(QTy->getPointeeType()).getQuantity()
+              : Info.Ctx.getTypeSizeInChars(QTy).getQuantity();
             } else if (auto VD = dyn_cast<VarDecl>(DRE->getDecl())) {
               ArgOrTemp = static_cast<const void*>(VD);
+              QualType QTy = VD->getType();
+              TySz = QTy->isPointerType() || QTy->isReferenceType() ?
+                Info.Ctx.getTypeSizeInChars(
+                  QTy->getPointeeType()).getQuantity()
+              : Info.Ctx.getTypeSizeInChars(QTy).getQuantity();
             }
+          }
 
-        // Fix the below to get the correct values, almost there...just not 
-        // peeling the nodes right
         int32_t AccumInt = -1; 
         if (auto DRE = dyn_cast<DeclRefExpr>(E->getArg(1)))
           if (auto ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl()))
@@ -4954,9 +4995,11 @@ namespace {
 
         if (OpInt < 0 || AccumInt < 0)
           return false;
-          
-        RedList.push_back(std::tuple<int, int, llvm::Any>(AccumInt, OpInt, 
-                                                          ArgOrTemp));
+
+                          
+        RedList.push_back(std::tuple<int, int, llvm::Any, int64_t, APValue>(
+                                     AccumInt, OpInt, ArgOrTemp, TySz, 
+                                     CopyAPValue(ArgOrTemp)));
         return true;
       }
       
@@ -5260,17 +5303,7 @@ namespace {
       return true;
     }
   };
-  
-  
-  APValue* GetArgOrTemp(llvm::Any ArgOrTemp, CallStackFrame* CSF) {
-    if (llvm::any_isa<const void*>(ArgOrTemp)) {
-      auto *key = llvm::any_cast<const void *>(ArgOrTemp);
-      return CSF->getCurrentTemporary(key);
-    }
-    
-    auto index = llvm::any_cast<unsigned>(ArgOrTemp);
-    return CSF->getArguments(index);
-  }
+
   // realistically if a lot look like this we can squash them into a macro...
   // likely every simple case will look identical even if this isn't the final
   // implementation
@@ -5291,12 +5324,15 @@ namespace {
                  llvm::Any ArgOrTemp) {
       auto Temp = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
       for (auto EI : ThreadInfo) {
-        // only handling int to test for now... there may be a less hacky way to
-        // do this
-        if (Temp->isInt())
-          Temp->setInt(Temp->getInt() 
-                       - GetArgOrTemp(ArgOrTemp, EI.CurrentCall)->getInt());
-        
+        switch (Temp->getKind()) {
+          case APValue::ValueKind::Int:
+            Temp->setInt(Temp->getInt() 
+             - GetArgOrTemp(ArgOrTemp, EI.CurrentCall)->getInt());
+            break;
+          default:
+            llvm_unreachable("OrderedAssign unhandled APValue Kind");
+            break;
+        }
       }
   }
   
@@ -5321,9 +5357,117 @@ namespace {
       }
   }
 
+  void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
+                     llvm::Any ArgOrTemp, int64_t TySz, APValue APValPrev) { 
+    // TODO: Need to check type its working on before we do this... 
+    // the below code wont work for everything
+    auto ParentAPVal = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
+    
+    // round-about way to get the complete object (e.g. array) the 
+    // iterator/pointer belongs to, perhaps there is a better way I'm unaware 
+    // of though, calling findCompleteObject comes at a fair cost
+    LValue ParentLVal;
+    ParentLVal.setFrom(Info.Ctx, *ParentAPVal);
+    QualType ParentQt = getType(ParentAPVal->getLValueBase());
+    CompleteObject Obj = findCompleteObject(Info, nullptr, 
+                                      AccessKinds::AK_Read, ParentLVal, 
+                                      ParentQt);
+
+    // TODO: This currently assumes its a field, but that isn't always the 
+    // case, it could be an array etc. look into findSubObject to get an idea.
+    if (const FieldDecl *Field = getAsField(ParentAPVal->getLValuePath()[0])) {
+      APValue* O = &Obj.Value->getStructField(Field->getFieldIndex());
+      if (O->isArray()) {
+        // NOTE: In certain cases (like std::array) you can use 
+        // getTypeSizeInChars on the ParentQt QualType to get the correct 
+        // data size. However, I don't know if this will neccessarily hold
+        // true for all object types that contain an array as it's asking the 
+        // size of the struct/class I believe. Which depending on the class 
+        // layout and what it contains could perhaps be off. I've opted for 
+        // the safer option for now, which is carrying over the underlying 
+        // type from the iterator which we get from the gathering phase.
+        int64_t ArrSz = O->getArraySize();
+        int64_t ArrSzChars = ArrSz * TySz;
+        int64_t ThreadPartitionSize = ArrSzChars / ThreadInfo.size();
+        // FIXME: When fixed the below should likely be:
+        //  int64_t ArrStartIndex = 
+        //    ParentAPVal->getLValueOffset().getQuantity() / TySz;
+        int64_t ArrStartIndex = 0;
+
+        for (int i = 0; i < ThreadInfo.size(); ++i) {
+          // In byte offset, not an index
+          int64_t IteratorEndPoint =
+            GetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall)
+                  ->getLValueOffset().getQuantity();
+          int64_t ThreadStartIndex = (ThreadPartitionSize * i) / TySz;
+          int64_t ThreadEndIndex = IteratorEndPoint / TySz;
+
+          for (int j = ThreadStartIndex; j < ThreadEndIndex; ++j) {
+            // Swap the element from its offset into its rightful position 
+            O->getArrayInitializedElt(ArrStartIndex).swap(
+              O->getArrayInitializedElt(j));
+
+            // By sideaffect we may have overwritten some elements that we 
+            // shouldn't have, these need to be replaced using the old copy 
+            // we had, if the old copy hasn't actually been "initialized"
+            // use whatever constitutes as a default value.
+            // FIXME: This is very likely an implementation defect that 
+            // we're bandaiding with this, it will very likely crop up 
+            // again somewhere else. This is likely intrinsically linked to 
+            // the reason we have to have the lock, we may need to make 
+            // copies across threads. 
+            // FIXME: In set_intersection It may also be because we make the
+            // Result iterator start at offsets across the thread partition 
+            // via __IteratorLoopStep 
+            if (j != ArrStartIndex)
+              O->getArrayInitializedElt(j).swap(j >= 
+                APValPrev.getArrayInitializedElts() ? 
+                  APValPrev.getArrayFiller() 
+                : APValPrev.getArrayInitializedElt(j));
+            ArrStartIndex++;
+          }
+        }
+
+        // Make sure the iterator points to the correct place in the array
+        // TODO: I use this segment of code a couple of times, probably can 
+        // push it into a function
+        std::vector<APValue::LValuePathEntry> NewLValPath;
+        for (int j = 0; j < ParentAPVal->getLValuePath().size(); ++j) {
+          NewLValPath.push_back((j == 0) ? ParentAPVal->getLValuePath()[j] : 
+                         ParentAPVal->getLValuePath()[j]
+                            .ArrayIndex(ArrStartIndex)); 
+        }
+
+        ParentAPVal->setLValue(ParentAPVal->getLValueBase(), 
+                      CharUnits::fromQuantity(TySz * ArrStartIndex), 
+                      NewLValPath, ParentAPVal->isLValueOnePastTheEnd(), 
+                      ParentAPVal->isNullPointer());
+      }
+    }
+
+
+
+  }
+  
+  void RedTypeOrdered(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
+                      int OpType, llvm::Any ArgOrTemp, int64_t TySz, 
+                      APValue APValPrev) {
+    switch (OpType) {
+          case 5: // Assign
+              OrderedAssign(Info, ThreadInfo, ArgOrTemp, TySz, APValPrev);
+            break;
+          default:
+              llvm_unreachable("RedTypeAccumulate passed invalid OpType");
+            break;
+      }
+  
+  }
+  
   // First attempt at something approaching a reduce, likely an abomination
   void ParConstExprReduce(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
-                          std::vector<std::tuple<int, int, llvm::Any>> &RedList)
+                          std::vector<std::tuple<int, int, llvm::Any, int64_t,
+                                                 APValue>> 
+                          &RedList)
   {
     for (auto RedVar : RedList) {
       // Interpret first integer as the ReductionType we wish to apply to the 
@@ -5334,6 +5478,11 @@ namespace {
         case 0: // Accumulate
           RedTypeAccumulate(Info, ThreadInfo, std::get<1>(RedVar), 
                             std::get<2>(RedVar));
+          break;
+        case 1: // Ordered
+          RedTypeOrdered(Info, ThreadInfo, std::get<1>(RedVar), 
+                         std::get<2>(RedVar), std::get<3>(RedVar), 
+                         std::get<4>(RedVar));
           break;
         default:
           llvm_unreachable("Invald ReductionType passed to ParConstExprReduce");
@@ -5777,7 +5926,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         CopyToThreadArguments(Info, EvalInfos[i]);
       }
 
-      std::vector<std::tuple<int, int, llvm::Any>> RedList;
+      std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> RedList;
       LoopWrapperGatherer(Info, EvalInfos, RedList)
           .SearchBody(Info.CurrentCall->Callee->getBody());
 
