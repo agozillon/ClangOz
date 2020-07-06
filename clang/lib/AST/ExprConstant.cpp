@@ -5359,14 +5359,14 @@ namespace {
   // for better or worse for now), excluding the iterators which get their own 
   // copy in the threadargumentsmap
   void CopyFromThreadArguments(EvalInfo &From, EvalInfo &To) {
-    for (int i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
+    for (size_t i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
       To.CurrentCall->Arguments[i] = *From.CurrentCall->getArguments(i);
     }
   }
   
   
   void CopyToThreadArguments(EvalInfo &From, EvalInfo &To) {
-    for (int i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
+    for (size_t i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
       To.CurrentCall->ThreadArgumentsMap[i] = From.CurrentCall->Arguments[i];
     }
   }
@@ -5396,9 +5396,86 @@ namespace {
             F->getNameAsString() == "find_first_of" ||
             F->getNameAsString() == "__find_first_of_ce" ||
             /*F->getNameAsString() == "adjacent_find" ||*/
-            F->getNameAsString() == "copy" ||
+            /*F->getNameAsString() == "copy" || */
             F->getNameAsString() == "__copy_constexpr" ||
-            F->getNameAsString() == "copy_if");
+            F->getNameAsString() == "copy_if" ||
+            F->getNameAsString() == "__set_intersection"
+            );
+  }
+
+  // Borrowing from Intel's SemaSYCL.cpp as it's a reasonably elegant way to do 
+  // something not so elegant!
+  bool matchQualifiedTypeName(const QualType &Ty,
+                              ArrayRef<std::pair<clang::Decl::Kind, 
+                                       StringRef>> Scopes) {
+    const CXXRecordDecl *RecTy = Ty->getAsCXXRecordDecl();
+    
+    if (!RecTy)
+      return false;
+
+    const auto *Ctx = cast<DeclContext>(RecTy);
+    StringRef Name = "";
+
+    for (const auto &Scope : llvm::reverse(Scopes)) {
+      clang::Decl::Kind DK = Ctx->getDeclKind();
+
+      if (DK != Scope.first)
+        return false;
+
+      switch (DK) {
+      case clang::Decl::Kind::ClassTemplateSpecialization:
+      case clang::Decl::Kind::CXXRecord:
+        Name = cast<CXXRecordDecl>(Ctx)->getName();
+        break;
+      case clang::Decl::Kind::Namespace:
+        Name = cast<NamespaceDecl>(Ctx)->getName();
+        break;
+      default:
+        llvm_unreachable("matchQualifiedTypeName: decl kind not supported");
+      }
+      if (Name != Scope.second)
+        return false;
+      Ctx = Ctx->getParent();
+    }
+    return Ctx->isTranslationUnit();
+  }
+  
+  bool HasConstexprParExecutor(const FunctionDecl *F) {
+    
+    // 1) Check Function is in the std:: namespace
+    // 2) Check if it has an execution policy argument
+    //    i)  it's named: constexpr_parallel_policy
+    //    ii) it's in the namespace: __cep::experimental::execution::
+    if (F->isInStdNamespace()) {
+      for (FunctionDecl::param_const_iterator I = F->param_begin(),
+           E = F->param_end(); I != E; ++I) {
+        if ((*I)->getDeclContext() && 
+            (*I)->getOriginalType().getBaseTypeIdentifier() && 
+            (*I)->getOriginalType().getBaseTypeIdentifier()
+              ->isStr("constexpr_parallel_policy")) {
+         std::array<std::pair<clang::Decl::Kind, 
+                              StringRef>, 4> Scopes = {
+            std::pair<clang::Decl::Kind, 
+                      StringRef>{clang::Decl::Kind::Namespace, 
+                                 "__cep"},
+            std::pair<clang::Decl::Kind, 
+                      StringRef>{clang::Decl::Kind::Namespace, 
+                                 "experimental"},
+            std::pair<clang::Decl::Kind, 
+                      StringRef>{clang::Decl::Kind::Namespace, 
+                                 "execution"},
+            std::pair<clang::Decl::Kind, 
+                      StringRef>{clang::Decl::Kind::CXXRecord, 
+                                 "constexpr_parallel_policy"}};
+
+         if ((*I)->getOriginalType()->isLValueReferenceType())
+           return matchQualifiedTypeName((*I)->getOriginalType()
+                                          ->getPointeeType(), Scopes);
+        }
+      }
+    }
+     
+     return false;
   }
 
 }
@@ -5684,9 +5761,8 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
     // TODO: Put the string comparisons into a function, its getting a bit much
     if (Info.getLangOpts().ExperimentalConstexprParallel &&
         Info.CurrentCall->Callee && 
-        WhitelistedParallelFunc(Info.CurrentCall->Callee) && 
-        !tp.threadsAreActive() &&
-        LLVM_ENABLE_THREADS == 1) {
+        HasConstexprParExecutor(Info.CurrentCall->Callee) && 
+        !tp.threadsAreActive() && LLVM_ENABLE_THREADS == 1) {
       std::vector<EvalInfo> EvalInfos;
       llvm::SmallVector<std::promise<EvalStmtResult>, 4> EvalPromises;
       llvm::SmallVector<std::future<EvalStmtResult>, 4> EvalFutures;
