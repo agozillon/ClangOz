@@ -1,0 +1,69 @@
+// -*- C++ -*-
+//===---------------------- __cep_execution -------------------------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef _LIBCPP_CEP_EXECUTION
+#define _LIBCPP_CEP_EXECUTION
+
+#include <type_traits>
+
+// based on the pstl's execution policy
+namespace __cep {
+namespace experimental {
+namespace execution {
+
+class constexpr_parallel_policy {};
+
+// TODO: This likely doesn't play nice with the pstl definitions
+// 2.3, Execution policy type trait
+template <class T>
+struct is_execution_policy : std::false_type {};
+
+template <>
+struct is_execution_policy<execution::constexpr_parallel_policy> 
+  : std::true_type {};
+
+template <class T>
+constexpr bool is_execution_policy_v = 
+  execution::is_execution_policy<T>::value;
+
+// obviously a variation not in the std, but useful, perhaps should go in 
+// internal
+template <class T>
+struct is_constexpr_par_execution_policy : std::false_type {};
+
+template <>
+struct is_constexpr_par_execution_policy<execution::constexpr_parallel_policy> 
+  : std::true_type {};
+
+template <class T>
+constexpr bool is_constexpr_par_execution_policy_v = 
+  execution::is_constexpr_par_execution_policy<T>::value;
+  
+// 2.8, Execution policy objects
+constexpr constexpr_parallel_policy ce_par{};
+
+} // namespace execution
+  
+namespace __internal {
+    template <class ExecPolicy, class T>
+    using __enable_if_execution_policy =
+    typename std::enable_if<execution::is_execution_policy<
+                              typename std::decay<ExecPolicy>::type>::value,
+                            T>::type;
+     
+    template <class ExecPolicy, class T>
+    using __enable_if_constexpr_par_execution_policy =
+    typename std::enable_if<execution::is_constexpr_par_execution_policy<
+                              typename std::decay<ExecPolicy>::type>::value,
+                            T>::type;
+} // namespace __internal
+} // namespace experimental
+} // namespace  __cep
+
+#endif // _LIBCPP_CEP_EXECUTION

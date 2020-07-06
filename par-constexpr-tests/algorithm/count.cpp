@@ -2,6 +2,9 @@
 #include <algorithm>
 #include <iostream>
 #include <type_traits>
+#include <execution>
+
+using namespace __cep::experimental;
 
 #include "../helpers/test_helpers.hpp"
 
@@ -11,20 +14,24 @@
 
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto count_ov1() {
-  // this is just here to make sure the runtime iteration is actually executing
-  // at runtime
-  if constexpr (ForceRuntime) 
-    std::cout << "is constant evaluated: " 
-              << std::is_constant_evaluated() << "\n";
 
   std::array<T, N> arr {};
     
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i % 2;
 
-  int target = 1;
-  auto ret = std::count(arr.begin(), arr.end(), target);
-  
+  // this is just here to make sure the runtime iteration is actually executing
+  // at runtime
+  int target = 1, ret;
+  if constexpr (ForceRuntime) {
+    std::cout << "is constant evaluated: " 
+              << std::is_constant_evaluated() << "\n";
+              
+    ret = std::count(arr.begin(), arr.end(), target);
+  } else {
+    ret = std::count(execution::ce_par, arr.begin(), arr.end(), target);
+  }
+
   return ret;
 }
 

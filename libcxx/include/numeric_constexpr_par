@@ -1,0 +1,55 @@
+// -*- C++ -*-
+//===---------------------- numeric_constexpr_par -------------------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef _LIBCPP_NUMERIC_CONSTEXPR_PAR
+#define _LIBCPP_NUMERIC_CONSTEXPR_PAR
+
+#include <__config>
+#include <iterator>
+#include <limits> // for numeric_limits
+#include <functional>
+#include <cmath> // for isnormal
+#include <version>
+
+#include "loop_wrapper.h"
+
+using namespace cest::loop_wrapper;
+
+#if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
+#pragma GCC system_header
+#endif
+
+_LIBCPP_PUSH_MACROS
+#include <__undef_macros>
+
+_LIBCPP_BEGIN_NAMESPACE_STD
+
+// iota 
+
+template <class _ExecutionPolicy, class _ForwardIterator, class _Tp>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              void>
+iota(_ExecutionPolicy&& __exec, _ForwardIterator __first, 
+     _ForwardIterator __last, _Tp __value_)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    __IteratorLoopStep(__value_, 1);
+    
+    for (; __first != __last; ++__first, (void) ++__value_)
+        *__first = __value_;
+}
+
+_LIBCPP_END_NAMESPACE_STD
+
+_LIBCPP_POP_MACROS
+
+#endif // _LIBCPP_NUMERIC_CONSTEXPR_PAR

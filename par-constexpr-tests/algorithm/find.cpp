@@ -2,23 +2,27 @@
 #include <algorithm>
 #include <iostream>
 #include <type_traits>
+#include <execution>
+
+using namespace __cep::experimental;
 
 #include "../helpers/test_helpers.hpp"
 
-  
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto find_ov1() {
-  // this is just here to make sure the runtime iteration is actually executing
-  // at runtime
-  if constexpr (ForceRuntime) 
-    std::cout << "is constant evaluated: " << std::is_constant_evaluated() << "\n";
-
   std::array<T, N> arr {};
     
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i;
 
-  auto found = std::find(arr.begin(), arr.end(), 27);
+  int* found; 
+  if constexpr (ForceRuntime) {
+    std::cout << "is constant evaluated: " 
+              << std::is_constant_evaluated() << "\n";
+    found = std::find(arr.begin(), arr.end(), 27);
+  } else {
+    found = std::find(execution::ce_par, arr.begin(), arr.end(), 27);
+  }
   
   return *found;
 }

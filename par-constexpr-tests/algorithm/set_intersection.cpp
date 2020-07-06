@@ -3,6 +3,9 @@
 #include <iostream>
 #include <type_traits>
 #include <iterator>
+#include <execution>
+
+using namespace __cep::experimental;
 
 #include "../helpers/test_helpers.hpp"
 /*
@@ -69,16 +72,10 @@
 
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto set_intersection_ov1() {
-  // this is just here to make sure the runtime iteration is actually executing
-  // at runtime
-  if constexpr (ForceRuntime) 
-    std::cout << "is constant evaluated: " << std::is_constant_evaluated() << "\n";
-
-
   std::array<T, N> out {}; // would be better as a vector, but no constexpr 
                           // vector yet in the std library
   std::array<T, N> arr {};
-  std::array<T, 4> arr2 {1, 12, 32, 48}; 
+  std::array<T, 6> arr2 {1, 0, 12, 16, 17, 48}; 
     
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i;
@@ -93,9 +90,15 @@ constexpr auto set_intersection_ov1() {
 //  
 //  std::cout << count << "\n";
   // TODO: check if this works with uneven iterators, I think it won't.
-  std::set_intersection_looped(arr.begin(), arr.end(), 
-                               arr2.begin(), arr2.end(),
-                               out.begin());
+  if constexpr (ForceRuntime) {
+    std::cout << "is constant evaluated: " 
+              << std::is_constant_evaluated() << "\n";
+    std::set_intersection(arr.begin(), arr.end(), arr2.begin(), arr2.end(),
+                          out.begin());
+  } else {
+    std::set_intersection(execution::ce_par, arr.begin(), arr.end(), 
+                          arr2.begin(), arr2.end(), out.begin());
+  }
   
    return out; 
 }
@@ -108,6 +111,12 @@ int main() {
     std::cout << output_ov1[i] << " ";
   }
   
+  std::cout << "\n\n\n";
+  
+  for (int i = 0; i < 32; ++i) {
+    std::cout << runtime_ov1[i] << " ";
+  }
+    std::cout << "\n\n\n";
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";

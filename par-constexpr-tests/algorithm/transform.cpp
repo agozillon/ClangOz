@@ -2,6 +2,9 @@
 #include <algorithm>
 #include <iostream>
 #include <type_traits>
+#include <execution>
+
+using namespace __cep::experimental;
 
 #include "../helpers/test_helpers.hpp"
 
@@ -10,22 +13,27 @@
 
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto transform_ov1() {
+  std::array<T, N> a = {0};
+  std::array<T, N> b = {0};
+  std::array<T, N> c = {0};
+  
+  for (int i = 0; i < c.size(); ++i)
+     a[i] = b[i] = (i + 1);
+    
   // this is just here to make sure the runtime iteration is actually executing
   // at runtime
-  if constexpr (ForceRuntime) 
-    std::cout << "is constant evaluated: " << std::is_constant_evaluated() << "\n";
-
-    std::array<T, N> a = {0};
-    std::array<T, N> b = {0};
-    std::array<T, N> c = {0};
-  
-    for (int i = 0; i < c.size(); ++i)
-      a[i] = b[i] = (i + 1);
-    
+  if constexpr (ForceRuntime) {
+    std::cout << "is constant evaluated: " 
+              << std::is_constant_evaluated() << "\n";
     std::transform(std::begin(a), std::end(a), 
                    std::begin(b), std::begin(c), 
                    std::plus<T>());
-
+  } else {
+    std::transform(execution::ce_par, std::begin(a), std::end(a), 
+                   std::begin(b), std::begin(c), 
+                   std::plus<T>());
+  }
+  
    return c; 
 }
 

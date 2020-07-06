@@ -2,17 +2,14 @@
 #include <algorithm>
 #include <iostream>
 #include <type_traits>
+#include <execution>
+
+using namespace __cep::experimental;
 
 #include "../helpers/test_helpers.hpp"
 
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto mismatch_ov1() {
-  // this is just here to make sure the runtime iteration is actually executing
-  // at runtime
-  if constexpr (ForceRuntime) 
-    std::cout << "is constant evaluated: " 
-              << std::is_constant_evaluated() << "\n";
-
   std::array<T, N> arr {};
   std::array<T, N> arr2 {}; 
   
@@ -21,14 +18,28 @@ constexpr auto mismatch_ov1() {
 
   arr2[13] = static_cast<T>(101);
   arr2[31] = static_cast<T>(111);
-  
-  auto ret = std::mismatch(arr.begin(), arr.end(), arr2.begin());
-  
-  // returns an iterator, need to convert it to values to return it from this 
-  // function as we rightfully cannot return a pair of iterators pointing to a
-  // subobject of something created at compile time that dies in the scope of a
-  // constexpr function.
-  return std::pair<T,T>(*ret.first, *ret.second);
+
+  // this is just here to make sure the runtime iteration is actually executing
+  // at runtime
+  if constexpr (ForceRuntime) {
+    std::cout << "is constant evaluated: " 
+              << std::is_constant_evaluated() << "\n";
+
+    auto ret = std::mismatch(arr.begin(), arr.end(), arr2.begin());
+   // returns an iterator, need to convert it to values to return it from this 
+   // function as we rightfully cannot return a pair of iterators pointing to a
+   // subobject of something created at compile time that dies in the scope of a
+   // constexpr function.
+    return std::pair<T,T>(*ret.first, *ret.second);
+  } else {
+    auto ret = std::mismatch(execution::ce_par, arr.begin(), arr.end(), 
+                             arr2.begin());
+   // returns an iterator, need to convert it to values to return it from this 
+   // function as we rightfully cannot return a pair of iterators pointing to a
+   // subobject of something created at compile time that dies in the scope of a
+   // constexpr function.
+    return std::pair<T,T>(*ret.first, *ret.second);
+  }
 }
 
 int main() {

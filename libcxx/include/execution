@@ -16,4 +16,6 @@
 #   include <__pstl_execution>
 #endif
 
+#include <__cep_execution>
+
 #endif // _LIBCPP_EXECUTION

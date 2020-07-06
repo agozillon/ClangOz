@@ -1,0 +1,538 @@
+// -*- C++ -*-
+//===-------------------- algorithm_constexpr_par -------------------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef _LIBCPP_ALGORITHM_CONSTEXPR_PAR
+#define _LIBCPP_ALGORITHM_CONSTEXPR_PAR
+
+#include <__algorithm_support>
+#include <__config>
+#include <execution>
+#include <initializer_list>
+#include <type_traits>
+#include <cstring>
+#include <utility> // needed to provide swap_ranges.
+#include <memory>
+#include <iterator>
+#include <cstddef>
+#include <bit>
+#include <version>
+
+#include <__debug>
+
+#include "loop_wrapper.h"
+
+using namespace cest::loop_wrapper;
+
+#if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
+#pragma GCC system_header
+#endif
+
+_LIBCPP_PUSH_MACROS
+#include <__undef_macros>
+
+_LIBCPP_BEGIN_NAMESPACE_STD
+
+// TODO:
+// 5) Perhaps these should all be made consteval, rather than constexpr as we 
+//    don't really want these to be used outside of compile time, in every case
+//    so far it'll work sequentially but is not guaranteed to be optimal/as 
+//    performant as the true runtime sequential implementation
+// 6) OK, so, the issue with checking for the execution policy in the compiler
+//    as a parameter is that it'll mean that the execution policy cannot be 
+//    passed around as a parameter. It'll pick it up and try parallelize where
+//    it shouldn't.
+//    1) Either we still need to filter by function name or namespace as well
+//    2) Come up with some other indicator, like a wrapper function or function 
+//       attribute to indicate it's in a constexpr parallel scope
+//    3) Some segment of the execution policy that is perhaps switched on inside
+//       of the function when we want to use it in a constexpr fashion
+//    I am pretty sure the second one is the most apt... while I suppose in 
+//    theory you could do the 3rd, it feels like a slightly more hacky solution.
+//    currently number 1) is partially implemented it requires it to be in the
+//    std:: library namespace and have an execution policy parameter
+
+// TODO: Compiler
+// 2) Fix the fact that the APValues actually get changed on the original at the
+//    moment, even if they get set back correctly they really shouldn't be 
+//    altered in the original until the end incase it creates some sideaffects.
+// 3) test removal of:     __IteratorLoopStep(__result, 1); from 
+//    set_intersection, there is a solid chance there will be a problem when 
+//    everything is trying to write to the same point in the array but this 
+//    is likely an issue that needs to be overcoem
+
+
+// all_of
+
+template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
+_LIBCPP_NODISCARD_EXT 
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              bool>
+all_of(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last, 
+      _Predicate __pred)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
+    for (; __first != __last; ++__first)
+        if (!__pred(*__first))
+            return false;
+    return true;
+}
+
+// any_of
+
+template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              bool>
+any_of(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last, 
+       _Predicate __pred)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
+    for (; __first != __last; ++__first)
+        if (__pred(*__first))
+            return true;
+    return false;
+}
+
+// none_of
+
+template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              bool>
+none_of(_ExecutionPolicy&& __exec, _InputIterator __first, 
+        _InputIterator __last, _Predicate __pred)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
+    for (; __first != __last; ++__first)
+        if (__pred(*__first))
+            return false;
+    return true;
+}
+
+
+// for_each
+
+template <class _ExecutionPolicy, class _ForwardIterator, class _Function>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              void>
+for_each(_ExecutionPolicy&& __exec, _ForwardIterator __first, 
+         _ForwardIterator __last, _Function __f)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+
+    for (; __first != __last; ++__first)
+        __f(*__first);
+}
+
+// find
+
+template <class _ExecutionPolicy, class _InputIterator, class _Tp>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _InputIterator>
+find(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last, 
+     const _Tp& __value_)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
+    for (; __first != __last; ++__first)
+        if (*__first == __value_)
+            break;
+    return __first;
+}
+
+// find_if
+
+template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _InputIterator>
+find_if(_ExecutionPolicy&& __exec, _InputIterator __first, 
+        _InputIterator __last, _Predicate __pred)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
+    for (; __first != __last; ++__first)
+        if (__pred(*__first))
+            break;
+    return __first;
+}
+
+// find_if_not
+
+template<class _ExecutionPolicy, class _InputIterator, class _Predicate>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _InputIterator>
+find_if_not(_ExecutionPolicy&& __exec, _InputIterator __first, 
+            _InputIterator __last, _Predicate __pred)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
+    for (; __first != __last; ++__first)
+        if (!__pred(*__first))
+            break;
+    return __first;
+}
+
+// find_first_of
+
+template <class _ExecutionPolicy, class _ForwardIterator1, 
+          class _ForwardIterator2, class _BinaryPredicate>
+_LIBCPP_CONSTEXPR_AFTER_CXX11
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _ForwardIterator1>
+__find_first_of_ce(_ExecutionPolicy&& __exec, _ForwardIterator1 __first1, 
+                   _ForwardIterator1 __last1, _ForwardIterator2 __first2, 
+                   _ForwardIterator2 __last2, _BinaryPredicate __pred)
+{
+    // only parallelize/partition the outer loop
+    __BeginEndIteratorPair(__first1, __last1);
+    __IteratorLoopStep(__first1, 1);
+        
+    for (; __first1 != __last1; ++__first1)
+        for (_ForwardIterator2 __j = __first2; __j != __last2; ++__j)
+            if (__pred(*__first1, *__j))
+                return __first1;
+    return __last1;
+}
+
+
+template <class _ExecutionPolicy, class _ForwardIterator1, 
+          class _ForwardIterator2, class _BinaryPredicate>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _ForwardIterator1>
+find_first_of(_ExecutionPolicy&& __exec, _ForwardIterator1 __first1, 
+              _ForwardIterator1 __last1, _ForwardIterator2 __first2, 
+              _ForwardIterator2 __last2, _BinaryPredicate __pred)
+{
+    return _VSTD::__find_first_of_ce(__exec, __first1, __last1, __first2, 
+                                     __last2, __pred);
+}
+
+template <class _ExecutionPolicy, class _ForwardIterator1, 
+          class _ForwardIterator2>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _ForwardIterator1>
+find_first_of(_ExecutionPolicy&& __exec, _ForwardIterator1 __first1, 
+              _ForwardIterator1 __last1, _ForwardIterator2 __first2, 
+              _ForwardIterator2 __last2)
+{
+    typedef typename iterator_traits<_ForwardIterator1>::value_type __v1;
+    typedef typename iterator_traits<_ForwardIterator2>::value_type __v2;
+    return _VSTD::__find_first_of_ce(__exec, __first1, __last1, __first2, 
+                                     __last2, __equal_to<__v1, __v2>());
+}
+
+// count
+
+template <class _ExecutionPolicy, class _InputIterator, class _Tp>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                      _ExecutionPolicy, 
+                      typename iterator_traits<_InputIterator>::difference_type>
+count(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last, 
+      const _Tp& __value_)
+{
+    typename iterator_traits<_InputIterator>::difference_type __r(0);
+    
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    __ReduceVariable(__r, ReductionType::Accumulate, OperatorType::PreInc);
+    
+    for (; __first != __last; ++__first)
+        if (*__first == __value_)
+            ++__r;
+    return __r;
+}
+
+// count_if
+
+template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                      _ExecutionPolicy, 
+                      typename iterator_traits<_InputIterator>::difference_type>
+count_if(_ExecutionPolicy&& __exec, _InputIterator __first, 
+         _InputIterator __last, _Predicate __pred)
+{
+    typename iterator_traits<_InputIterator>::difference_type __r(0);
+ 
+     __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    __ReduceVariable(__r, ReductionType::Accumulate, OperatorType::PreInc);
+    
+    for (; __first != __last; ++__first)
+        if (__pred(*__first))
+            ++__r;
+    return __r;
+}
+
+
+// mismatch, TODO: Add Mismatch overload added in C++14
+
+template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2, 
+          class _BinaryPredicate>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                         _ExecutionPolicy, 
+                                         pair<_InputIterator1, _InputIterator2>>
+mismatch(_ExecutionPolicy&& __exec, _InputIterator1 __first1, 
+         _InputIterator1 __last1, _InputIterator2 __first2, 
+         _BinaryPredicate __pred)
+{
+    __BeginEndIteratorPair(__first1, __last1);
+    __IteratorLoopStep(__first1, 1);
+    __IteratorLoopStep(__first2, 1);
+    
+    for (; __first1 != __last1; ++__first1, (void) ++__first2)
+        if (!__pred(*__first1, *__first2))
+            break;
+    return pair<_InputIterator1, _InputIterator2>(__first1, __first2);
+}
+
+template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2>
+_LIBCPP_NODISCARD_EXT inline
+_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                         _ExecutionPolicy, 
+                                         pair<_InputIterator1, _InputIterator2>>
+mismatch(_ExecutionPolicy&& __exec, _InputIterator1 __first1, 
+         _InputIterator1 __last1, _InputIterator2 __first2)
+{
+    typedef typename iterator_traits<_InputIterator1>::value_type __v1;
+    typedef typename iterator_traits<_InputIterator2>::value_type __v2;
+    return _VSTD::mismatch(__exec, __first1, __last1, __first2, 
+                           __equal_to<__v1, __v2>());
+}
+
+template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _OutputIterator>
+__copy_constexpr(_ExecutionPolicy&& __exec, _InputIterator __first, 
+                 _InputIterator __last, _OutputIterator __result)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    __IteratorLoopStep(__result, 1);
+      
+    for (; __first != __last; ++__first, (void) ++__result)
+        *__result = *__first;
+    return __result;
+}
+
+template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17_WITH_IS_CONSTANT_EVALUATED
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _OutputIterator>
+copy(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last, 
+     _OutputIterator __result)
+{
+    return _VSTD::__copy_constexpr(__exec,
+        __unwrap_iter(__first), __unwrap_iter(__last), __unwrap_iter(__result));
+}
+
+// copy_if, TODO: not currently working, need to work out a reduce for the 
+//  result, the main issue is the optional increment
+
+template<class _ExecutionPolicy, class _InputIterator, class _OutputIterator, 
+         class _Predicate>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _OutputIterator>
+copy_if(_ExecutionPolicy&& __exec, _InputIterator __first, 
+        _InputIterator __last, _OutputIterator __result, _Predicate __pred)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+/*    __IteratorLoopStep(__result, 1);*/
+    
+    for (; __first != __last; ++__first)
+    {
+        if (__pred(*__first))
+        {
+            *__result = *__first;
+            ++__result;
+        }
+    }
+    return __result;
+}
+
+// transform
+
+template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator, 
+          class _UnaryOperation>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _OutputIterator>
+transform(_ExecutionPolicy&& __exec, _InputIterator __first, 
+          _InputIterator __last, _OutputIterator __result, _UnaryOperation __op)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    __IteratorLoopStep(__result, 1);
+    
+    for (; __first != __last; ++__first, (void) ++__result)
+        *__result = __op(*__first);
+    return __result;
+}
+
+template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2, 
+          class _OutputIterator, class _BinaryOperation>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy, 
+                                                              _OutputIterator>
+transform(_ExecutionPolicy&& __exec, _InputIterator1 __first1, 
+          _InputIterator1 __last1, _InputIterator2 __first2, 
+          _OutputIterator __result, _BinaryOperation __binary_op)
+{
+    __BeginEndIteratorPair(__first1, __last1);
+    __IteratorLoopStep(__first1, 1);
+    __IteratorLoopStep(__first2, 1);
+    __IteratorLoopStep(__result, 1);
+
+    for (; __first1 != __last1; ++__first1, (void) ++__first2, ++__result)
+        *__result = __binary_op(*__first1, *__first2);
+    return __result;
+}
+
+// set_intersection
+
+template <class _Compare, class _InputIterator1, class _InputIterator2, 
+          class _OutputIterator, class _ExecutionPolicy>
+_LIBCPP_CONSTEXPR_AFTER_CXX17 
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                             _ExecutionPolicy, 
+                                                             _OutputIterator>
+__set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1, 
+                   _InputIterator1 __last1, _InputIterator2 __first2, 
+                   _InputIterator2 __last2, _OutputIterator __result, 
+                   _Compare __comp)
+{
+    __BeginEndIteratorPair(__first1, __last1);
+    __IteratorLoopStep(__first1, 1);
+    // Perhaps not correct to make __first2 an iteratorloopstep and if not then
+    // perhaps need a better name for it...
+/*    __IteratorLoopStep(__first2, 1);*/
+
+    // FIXME: try to remove this and remove the temp swap from the reduction 
+    // algorithm, i wonder if the fact that we start at offsets and need to 
+    // do a complex reduction is because of this
+    __IteratorLoopStep(__result, 1);
+    
+    /*The hard part is going to be working out the correct reduce/name for this
+      it should be an "ordered" assignment, e.g. values returned first should
+      go early in the result array, as __result will not be filled with values
+      in the same index location*/
+    __ReduceVariable(__result, 
+                     ReductionType::Ordered, 
+                     OperatorType::Assign);
+    
+    /*Afterwards the iterators should end in the correct location if 
+      possible..*/
+    for (; __first1 != __last1;) {
+      if (__first2 == __last2)
+        break;
+        
+      if (__comp(*__first1, *__first2)) {
+        ++__first1;
+      } else {
+          if (!__comp(*__first2, *__first1))
+          {
+              *__result = *__first1;
+              ++__result;
+              ++__first1;
+          }
+          ++__first2;
+      }
+    }
+    
+
+    return __result;
+}
+
+template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2, 
+          class _OutputIterator, class _Compare>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                             _ExecutionPolicy, 
+                                                             _OutputIterator>
+set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1, 
+                 _InputIterator1 __last1, _InputIterator2 __first2, 
+                 _InputIterator2 __last2, _OutputIterator __result, 
+                 _Compare __comp)
+{
+    typedef typename __comp_ref_type<_Compare>::type _Comp_ref;
+    return __set_intersection<_Comp_ref>(__exec, __first1, __last1, __first2, 
+                                         __last2, __result, __comp);
+}
+
+template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2, 
+         class _OutputIterator>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                             _ExecutionPolicy, 
+                                                             _OutputIterator>
+set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1, 
+                 _InputIterator1 __last1, _InputIterator2 __first2, 
+                 _InputIterator2 __last2, _OutputIterator __result)
+{
+    return _VSTD::set_intersection(__exec, __first1, __last1, __first2, __last2, 
+                                  __result, 
+               __less<typename iterator_traits<_InputIterator1>::value_type,
+                      typename iterator_traits<_InputIterator2>::value_type>());
+}
+
+_LIBCPP_END_NAMESPACE_STD
+
+_LIBCPP_POP_MACROS
+
+#endif  // _LIBCPP_ALGORITHM
+
+

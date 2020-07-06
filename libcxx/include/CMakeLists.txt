@@ -1,7 +1,9 @@
 set(files
+  __algorithm_support
   __bit_reference
   __bsd_locale_defaults.h
   __bsd_locale_fallbacks.h
+  __cep_execution
   __errc
   __debug
   __functional_03
@@ -22,6 +24,7 @@ set(files
   __tuple
   __undef_macros
   algorithm
+  algorithm_constexpr_par
   any
   array
   atomic
@@ -119,6 +122,7 @@ set(files
   mutex
   new
   numeric
+  numeric_constexpr_par
   optional
   ostream
   queue
