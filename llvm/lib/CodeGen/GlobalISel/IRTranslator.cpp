@@ -20,9 +20,9 @@
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/Analysis.h"
-#include "llvm/CodeGen/FunctionLoweringInfo.h"
 #include "llvm/CodeGen/GlobalISel/CallLowering.h"
 #include "llvm/CodeGen/GlobalISel/GISelChangeObserver.h"
+#include "llvm/CodeGen/GlobalISel/InlineAsmLowering.h"
 #include "llvm/CodeGen/LowLevelType.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -48,7 +48,6 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/InlineAsm.h"
-#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
@@ -233,22 +232,16 @@ int IRTranslator::getOrCreateFrameIndex(const AllocaInst &AI) {
   // Always allocate at least one byte.
   Size = std::max<uint64_t>(Size, 1u);
 
-  unsigned Alignment = AI.getAlignment();
-  if (!Alignment)
-    Alignment = DL->getABITypeAlignment(AI.getAllocatedType());
-
   int &FI = FrameIndices[&AI];
-  FI = MF->getFrameInfo().CreateStackObject(Size, Alignment, false, &AI);
+  FI = MF->getFrameInfo().CreateStackObject(Size, AI.getAlign(), false, &AI);
   return FI;
 }
 
 Align IRTranslator::getMemOpAlign(const Instruction &I) {
-  if (const StoreInst *SI = dyn_cast<StoreInst>(&I)) {
-    Type *ValTy = SI->getValueOperand()->getType();
-    return SI->getAlign().getValueOr(DL->getABITypeAlign(ValTy));
-  }
+  if (const StoreInst *SI = dyn_cast<StoreInst>(&I))
+    return SI->getAlign();
   if (const LoadInst *LI = dyn_cast<LoadInst>(&I)) {
-    return DL->getValueOrABITypeAlignment(LI->getAlign(), LI->getType());
+    return LI->getAlign();
   }
   if (const AtomicCmpXchgInst *AI = dyn_cast<AtomicCmpXchgInst>(&I)) {
     // TODO(PR27168): This instruction has no alignment attribute, but unlike
@@ -837,9 +830,16 @@ bool IRTranslator::translateIndirectBr(const User &U,
   MIRBuilder.buildBrIndirect(Tgt);
 
   // Link successors.
+  SmallPtrSet<const BasicBlock *, 32> AddedSuccessors;
   MachineBasicBlock &CurBB = MIRBuilder.getMBB();
-  for (const BasicBlock *Succ : successors(&BrInst))
+  for (const BasicBlock *Succ : successors(&BrInst)) {
+    // It's legal for indirectbr instructions to have duplicate blocks in the
+    // destination list. We don't allow this in MIR. Skip anything that's
+    // already a successor.
+    if (!AddedSuccessors.insert(Succ).second)
+      continue;
     CurBB.addSuccessor(&getMBB(*Succ));
+  }
 
   return true;
 }
@@ -1002,10 +1002,9 @@ bool IRTranslator::translateSelect(const User &U,
   ArrayRef<Register> Op0Regs = getOrCreateVRegs(*U.getOperand(1));
   ArrayRef<Register> Op1Regs = getOrCreateVRegs(*U.getOperand(2));
 
-  const SelectInst &SI = cast<SelectInst>(U);
   uint16_t Flags = 0;
-  if (const CmpInst *Cmp = dyn_cast<CmpInst>(SI.getCondition()))
-    Flags = MachineInstr::copyFlagsFromInstruction(*Cmp);
+  if (const SelectInst *SI = dyn_cast<SelectInst>(&U))
+    Flags = MachineInstr::copyFlagsFromInstruction(*SI);
 
   for (unsigned i = 0; i < ResRegs.size(); ++i) {
     MIRBuilder.buildSelect(ResRegs[i], Tst, Op0Regs[i], Op1Regs[i], Flags);
@@ -1014,23 +1013,28 @@ bool IRTranslator::translateSelect(const User &U,
   return true;
 }
 
+bool IRTranslator::translateCopy(const User &U, const Value &V,
+                                 MachineIRBuilder &MIRBuilder) {
+  Register Src = getOrCreateVReg(V);
+  auto &Regs = *VMap.getVRegs(U);
+  if (Regs.empty()) {
+    Regs.push_back(Src);
+    VMap.getOffsets(U)->push_back(0);
+  } else {
+    // If we already assigned a vreg for this instruction, we can't change that.
+    // Emit a copy to satisfy the users we already emitted.
+    MIRBuilder.buildCopy(Regs[0], Src);
+  }
+  return true;
+}
+
 bool IRTranslator::translateBitCast(const User &U,
                                     MachineIRBuilder &MIRBuilder) {
   // If we're bitcasting to the source type, we can reuse the source vreg.
   if (getLLTForType(*U.getOperand(0)->getType(), *DL) ==
-      getLLTForType(*U.getType(), *DL)) {
-    Register SrcReg = getOrCreateVReg(*U.getOperand(0));
-    auto &Regs = *VMap.getVRegs(U);
-    // If we already assigned a vreg for this bitcast, we can't change that.
-    // Emit a copy to satisfy the users we already emitted.
-    if (!Regs.empty())
-      MIRBuilder.buildCopy(Regs[0], SrcReg);
-    else {
-      Regs.push_back(SrcReg);
-      VMap.getOffsets(U)->push_back(0);
-    }
-    return true;
-  }
+      getLLTForType(*U.getType(), *DL))
+    return translateCopy(U, *U.getOperand(0), MIRBuilder);
+
   return translateCast(TargetOpcode::G_BITCAST, U, MIRBuilder);
 }
 
@@ -1055,7 +1059,7 @@ bool IRTranslator::translateGetElementPtr(const User &U,
   // splat vector.
   unsigned VectorWidth = 0;
   if (auto *VT = dyn_cast<VectorType>(U.getType()))
-    VectorWidth = VT->getNumElements();
+    VectorWidth = cast<FixedVectorType>(VT)->getNumElements();
 
   // We might need to splat the base pointer into a vector if the offsets
   // are vectors.
@@ -1063,7 +1067,7 @@ bool IRTranslator::translateGetElementPtr(const User &U,
     BaseReg =
         MIRBuilder.buildSplatVector(LLT::vector(VectorWidth, PtrTy), BaseReg)
             .getReg(0);
-    PtrIRTy = VectorType::get(PtrIRTy, VectorWidth);
+    PtrIRTy = FixedVectorType::get(PtrIRTy, VectorWidth);
     PtrTy = getLLTForType(*PtrIRTy, *DL);
     OffsetIRTy = DL->getIntPtrType(PtrIRTy);
     OffsetTy = getLLTForType(*OffsetIRTy, *DL);
@@ -1272,6 +1276,8 @@ unsigned IRTranslator::getSimpleIntrinsicOpcode(Intrinsic::ID ID) {
       return TargetOpcode::G_INTRINSIC_TRUNC;
     case Intrinsic::readcyclecounter:
       return TargetOpcode::G_READCYCLECOUNTER;
+    case Intrinsic::ptrmask:
+      return TargetOpcode::G_PTRMASK;
   }
   return Intrinsic::not_intrinsic;
 }
@@ -1293,6 +1299,51 @@ bool IRTranslator::translateSimpleIntrinsic(const CallInst &CI,
 
   MIRBuilder.buildInstr(Op, {getOrCreateVReg(CI)}, VRegs,
                         MachineInstr::copyFlagsFromInstruction(CI));
+  return true;
+}
+
+// TODO: Include ConstainedOps.def when all strict instructions are defined.
+static unsigned getConstrainedOpcode(Intrinsic::ID ID) {
+  switch (ID) {
+  case Intrinsic::experimental_constrained_fadd:
+    return TargetOpcode::G_STRICT_FADD;
+  case Intrinsic::experimental_constrained_fsub:
+    return TargetOpcode::G_STRICT_FSUB;
+  case Intrinsic::experimental_constrained_fmul:
+    return TargetOpcode::G_STRICT_FMUL;
+  case Intrinsic::experimental_constrained_fdiv:
+    return TargetOpcode::G_STRICT_FDIV;
+  case Intrinsic::experimental_constrained_frem:
+    return TargetOpcode::G_STRICT_FREM;
+  case Intrinsic::experimental_constrained_fma:
+    return TargetOpcode::G_STRICT_FMA;
+  case Intrinsic::experimental_constrained_sqrt:
+    return TargetOpcode::G_STRICT_FSQRT;
+  default:
+    return 0;
+  }
+}
+
+bool IRTranslator::translateConstrainedFPIntrinsic(
+  const ConstrainedFPIntrinsic &FPI, MachineIRBuilder &MIRBuilder) {
+  fp::ExceptionBehavior EB = FPI.getExceptionBehavior().getValue();
+
+  unsigned Opcode = getConstrainedOpcode(FPI.getIntrinsicID());
+  if (!Opcode)
+    return false;
+
+  unsigned Flags = MachineInstr::copyFlagsFromInstruction(FPI);
+  if (EB == fp::ExceptionBehavior::ebIgnore)
+    Flags |= MachineInstr::NoFPExcept;
+
+  SmallVector<llvm::SrcOp, 4> VRegs;
+  VRegs.push_back(getOrCreateVReg(*FPI.getArgOperand(0)));
+  if (!FPI.isUnaryOp())
+    VRegs.push_back(getOrCreateVReg(*FPI.getArgOperand(1)));
+  if (FPI.isTernaryOp())
+    VRegs.push_back(getOrCreateVReg(*FPI.getArgOperand(2)));
+
+  MIRBuilder.buildInstr(Opcode, {getOrCreateVReg(FPI)}, VRegs, Flags);
   return true;
 }
 
@@ -1547,6 +1598,7 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
   case Intrinsic::sideeffect:
     // Discard annotate attributes, assumptions, and artificial side-effects.
     return true;
+  case Intrinsic::read_volatile_register:
   case Intrinsic::read_register: {
     Value *Arg = CI.getArgOperand(0);
     MIRBuilder
@@ -1561,41 +1613,29 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
       .addUse(getOrCreateVReg(*CI.getArgOperand(1)));
     return true;
   }
+#define INSTRUCTION(NAME, NARG, ROUND_MODE, INTRINSIC)  \
+  case Intrinsic::INTRINSIC:
+#include "llvm/IR/ConstrainedOps.def"
+    return translateConstrainedFPIntrinsic(cast<ConstrainedFPIntrinsic>(CI),
+                                           MIRBuilder);
+
   }
   return false;
 }
 
-bool IRTranslator::translateInlineAsm(const CallInst &CI,
+bool IRTranslator::translateInlineAsm(const CallBase &CB,
                                       MachineIRBuilder &MIRBuilder) {
-  const InlineAsm &IA = cast<InlineAsm>(*CI.getCalledValue());
-  StringRef ConstraintStr = IA.getConstraintString();
 
-  bool HasOnlyMemoryClobber = false;
-  if (!ConstraintStr.empty()) {
-    // Until we have full inline assembly support, we just try to handle the
-    // very simple case of just "~{memory}" to avoid falling back so often.
-    if (ConstraintStr != "~{memory}")
-      return false;
-    HasOnlyMemoryClobber = true;
+  const InlineAsmLowering *ALI = MF->getSubtarget().getInlineAsmLowering();
+
+  if (!ALI) {
+    LLVM_DEBUG(
+        dbgs() << "Inline asm lowering is not supported for this target yet\n");
+    return false;
   }
 
-  unsigned ExtraInfo = 0;
-  if (IA.hasSideEffects())
-    ExtraInfo |= InlineAsm::Extra_HasSideEffects;
-  if (IA.getDialect() == InlineAsm::AD_Intel)
-    ExtraInfo |= InlineAsm::Extra_AsmDialect;
-
-  // HACK: special casing for ~memory.
-  if (HasOnlyMemoryClobber)
-    ExtraInfo |= (InlineAsm::Extra_MayLoad | InlineAsm::Extra_MayStore);
-
-  auto Inst = MIRBuilder.buildInstr(TargetOpcode::INLINEASM)
-                  .addExternalSymbol(IA.getAsmString().c_str())
-                  .addImm(ExtraInfo);
-  if (const MDNode *SrcLoc = CI.getMetadata("srcloc"))
-    Inst.addMetadata(SrcLoc);
-
-  return true;
+  return ALI->lowerInlineAsm(
+      MIRBuilder, CB, [&](const Value &Val) { return getOrCreateVRegs(Val); });
 }
 
 bool IRTranslator::translateCallBase(const CallBase &CB,
@@ -1625,7 +1665,7 @@ bool IRTranslator::translateCallBase(const CallBase &CB,
   // scan is done to check if any instructions are calls.
   bool Success =
       CLI->lowerCall(MIRBuilder, CB, Res, Args, SwiftErrorVReg,
-                     [&]() { return getOrCreateVReg(*CB.getCalledValue()); });
+                     [&]() { return getOrCreateVReg(*CB.getCalledOperand()); });
 
   // Check if we just inserted a tail call.
   if (Success) {
@@ -1730,9 +1770,8 @@ bool IRTranslator::translateInvoke(const User &U,
   const BasicBlock *ReturnBB = I.getSuccessor(0);
   const BasicBlock *EHPadBB = I.getSuccessor(1);
 
-  const Value *Callee = I.getCalledValue();
-  const Function *Fn = dyn_cast<Function>(Callee);
-  if (isa<InlineAsm>(Callee))
+  const Function *Fn = I.getCalledFunction();
+  if (I.isInlineAsm())
     return false;
 
   // FIXME: support invoking patchpoint and statepoint intrinsics.
@@ -1883,7 +1922,7 @@ bool IRTranslator::translateAlloca(const User &U,
       MIRBuilder.buildConstant(IntPtrTy, ~(uint64_t)(StackAlign.value() - 1));
   auto AlignedAlloc = MIRBuilder.buildAnd(IntPtrTy, AllocAdd, AlignCst);
 
-  Align Alignment = max(AI.getAlign(), DL->getPrefTypeAlign(Ty));
+  Align Alignment = std::max(AI.getAlign(), DL->getPrefTypeAlign(Ty));
   if (Alignment <= StackAlign)
     Alignment = Align(1);
   MIRBuilder.buildDynStackAlloc(getOrCreateVReg(AI), AlignedAlloc, Alignment);
@@ -1900,7 +1939,7 @@ bool IRTranslator::translateVAArg(const User &U, MachineIRBuilder &MIRBuilder) {
   // anyway but that's not guaranteed.
   MIRBuilder.buildInstr(TargetOpcode::G_VAARG, {getOrCreateVReg(U)},
                         {getOrCreateVReg(*U.getOperand(0)),
-                         uint64_t(DL->getABITypeAlignment(U.getType()))});
+                         DL->getABITypeAlign(U.getType()).value()});
   return true;
 }
 
@@ -1908,17 +1947,8 @@ bool IRTranslator::translateInsertElement(const User &U,
                                           MachineIRBuilder &MIRBuilder) {
   // If it is a <1 x Ty> vector, use the scalar as it is
   // not a legal vector type in LLT.
-  if (cast<VectorType>(U.getType())->getNumElements() == 1) {
-    Register Elt = getOrCreateVReg(*U.getOperand(1));
-    auto &Regs = *VMap.getVRegs(U);
-    if (Regs.empty()) {
-      Regs.push_back(Elt);
-      VMap.getOffsets(U)->push_back(0);
-    } else {
-      MIRBuilder.buildCopy(Regs[0], Elt);
-    }
-    return true;
-  }
+  if (cast<FixedVectorType>(U.getType())->getNumElements() == 1)
+    return translateCopy(U, *U.getOperand(1), MIRBuilder);
 
   Register Res = getOrCreateVReg(U);
   Register Val = getOrCreateVReg(*U.getOperand(0));
@@ -1932,17 +1962,9 @@ bool IRTranslator::translateExtractElement(const User &U,
                                            MachineIRBuilder &MIRBuilder) {
   // If it is a <1 x Ty> vector, use the scalar as it is
   // not a legal vector type in LLT.
-  if (cast<VectorType>(U.getOperand(0)->getType())->getNumElements() == 1) {
-    Register Elt = getOrCreateVReg(*U.getOperand(0));
-    auto &Regs = *VMap.getVRegs(U);
-    if (Regs.empty()) {
-      Regs.push_back(Elt);
-      VMap.getOffsets(U)->push_back(0);
-    } else {
-      MIRBuilder.buildCopy(Regs[0], Elt);
-    }
-    return true;
-  }
+  if (cast<FixedVectorType>(U.getOperand(0)->getType())->getNumElements() == 1)
+    return translateCopy(U, *U.getOperand(0), MIRBuilder);
+
   Register Res = getOrCreateVReg(U);
   Register Val = getOrCreateVReg(*U.getOperand(0));
   const auto &TLI = *MF->getSubtarget().getTargetLowering();
@@ -1997,9 +2019,6 @@ bool IRTranslator::translatePHI(const User &U, MachineIRBuilder &MIRBuilder) {
 bool IRTranslator::translateAtomicCmpXchg(const User &U,
                                           MachineIRBuilder &MIRBuilder) {
   const AtomicCmpXchgInst &I = cast<AtomicCmpXchgInst>(U);
-
-  if (I.isWeak())
-    return false;
 
   auto &TLI = *MF->getSubtarget().getTargetLowering();
   auto Flags = TLI.getAtomicMemOperandFlags(I, *DL);
@@ -2170,6 +2189,10 @@ bool IRTranslator::translate(const Instruction &Inst) {
   else
     EntryBuilder->setDebugLoc(DebugLoc());
 
+  auto &TLI = *MF->getSubtarget().getTargetLowering();
+  if (TLI.fallBackToDAGISel(Inst))
+    return false;
+
   switch (Inst.getOpcode()) {
 #define HANDLE_INST(NUM, OPCODE, CLASS)                                        \
   case Instruction::OPCODE:                                                    \
@@ -2196,7 +2219,7 @@ bool IRTranslator::translate(const Constant &C, Register Reg) {
       return false;
     // Return the scalar if it is a <1 x Ty> vector.
     if (CAZ->getNumElements() == 1)
-      return translate(*CAZ->getElementValue(0u), Reg);
+      return translateCopy(C, *CAZ->getElementValue(0u), *EntryBuilder.get());
     SmallVector<Register, 4> Ops;
     for (unsigned i = 0; i < CAZ->getNumElements(); ++i) {
       Constant &Elt = *CAZ->getElementValue(i);
@@ -2206,7 +2229,8 @@ bool IRTranslator::translate(const Constant &C, Register Reg) {
   } else if (auto CV = dyn_cast<ConstantDataVector>(&C)) {
     // Return the scalar if it is a <1 x Ty> vector.
     if (CV->getNumElements() == 1)
-      return translate(*CV->getElementAsConstant(0), Reg);
+      return translateCopy(C, *CV->getElementAsConstant(0),
+                           *EntryBuilder.get());
     SmallVector<Register, 4> Ops;
     for (unsigned i = 0; i < CV->getNumElements(); ++i) {
       Constant &Elt = *CV->getElementAsConstant(i);
@@ -2224,7 +2248,7 @@ bool IRTranslator::translate(const Constant &C, Register Reg) {
     }
   } else if (auto CV = dyn_cast<ConstantVector>(&C)) {
     if (CV->getNumOperands() == 1)
-      return translate(*CV->getOperand(0), Reg);
+      return translateCopy(C, *CV->getOperand(0), *EntryBuilder.get());
     SmallVector<Register, 4> Ops;
     for (unsigned i = 0; i < CV->getNumOperands(); ++i) {
       Ops.push_back(getOrCreateVReg(*CV->getOperand(i)));
@@ -2361,10 +2385,18 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &CurMF) {
   // Make our arguments/constants entry block fallthrough to the IR entry block.
   EntryBB->addSuccessor(&getMBB(F.front()));
 
+  if (CLI->fallBackToDAGISel(F)) {
+    OptimizationRemarkMissed R("gisel-irtranslator", "GISelFailure",
+                               F.getSubprogram(), &F.getEntryBlock());
+    R << "unable to lower function: " << ore::NV("Prototype", F.getType());
+    reportTranslationError(*MF, *TPC, *ORE, R);
+    return false;
+  }
+
   // Lower the actual args into this basic block.
   SmallVector<ArrayRef<Register>, 8> VRegArgs;
   for (const Argument &Arg: F.args()) {
-    if (DL->getTypeStoreSize(Arg.getType()) == 0)
+    if (DL->getTypeStoreSize(Arg.getType()).isZero())
       continue; // Don't handle zero sized types.
     ArrayRef<Register> VRegs = getOrCreateVRegs(Arg);
     VRegArgs.push_back(VRegs);

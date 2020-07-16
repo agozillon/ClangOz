@@ -256,6 +256,24 @@ TEST(TargetParserTest, testARMCPU) {
                          ARM::AEK_HWDIVTHUMB | ARM::AEK_DSP | ARM::AEK_FP16 |
                          ARM::AEK_RAS | ARM::AEK_DOTPROD,
                          "8.2-A"));
+  EXPECT_TRUE(testARMCPU("cortex-a77", "armv8.2-a", "crypto-neon-fp-armv8",
+                         ARM::AEK_CRC | ARM::AEK_SEC | ARM::AEK_MP |
+                         ARM::AEK_VIRT | ARM::AEK_HWDIVARM |
+                         ARM::AEK_HWDIVTHUMB | ARM::AEK_DSP | ARM::AEK_FP16 |
+                         ARM::AEK_RAS | ARM::AEK_DOTPROD,
+                         "8.2-A"));
+  EXPECT_TRUE(testARMCPU("cortex-a78", "armv8.2-a", "crypto-neon-fp-armv8",
+                         ARM::AEK_DOTPROD | ARM::AEK_FP16 |
+                         ARM::AEK_SEC | ARM::AEK_MP | ARM::AEK_VIRT |
+                         ARM::AEK_HWDIVARM | ARM::AEK_HWDIVTHUMB |
+                         ARM::AEK_DSP | ARM::AEK_CRC | ARM::AEK_RAS,
+                         "8.2-A"));
+  EXPECT_TRUE(testARMCPU("cortex-x1", "armv8.2-a", "crypto-neon-fp-armv8",
+                         ARM::AEK_RAS | ARM::AEK_FP16 | ARM::AEK_DOTPROD |
+                         ARM::AEK_SEC | ARM::AEK_MP | ARM::AEK_VIRT |
+                         ARM::AEK_HWDIVARM | ARM::AEK_HWDIVTHUMB |
+                         ARM::AEK_DSP | ARM::AEK_CRC | ARM::AEK_RAS,
+                         "8.2-A"));
   EXPECT_TRUE(testARMCPU("neoverse-n1", "armv8.2-a", "crypto-neon-fp-armv8",
                         ARM::AEK_CRC | ARM::AEK_SEC | ARM::AEK_MP |
                         ARM::AEK_VIRT | ARM::AEK_HWDIVARM |
@@ -304,7 +322,7 @@ TEST(TargetParserTest, testARMCPU) {
                          "7-S"));
 }
 
-static constexpr unsigned NumARMCPUArchs = 86;
+static constexpr unsigned NumARMCPUArchs = 89;
 
 TEST(TargetParserTest, testARMCPUArchList) {
   SmallVector<StringRef, NumARMCPUArchs> List;
@@ -636,6 +654,7 @@ TEST(TargetParserTest, ARMArchExtFeature) {
                               {"maverick", "maverick", nullptr, nullptr},
                               {"xscale", "noxscale", nullptr, nullptr},
                               {"sb", "nosb", "+sb", "-sb"},
+                              {"i8mm", "noi8mm", "+i8mm", "-i8mm"},
                               {"mve", "nomve", "+mve", "-mve"},
                               {"mve.fp", "nomve.fp", "+mve.fp", "-mve.fp"}};
 
@@ -852,6 +871,26 @@ TEST(TargetParserTest, testAArch64CPU) {
       AArch64::AEK_LSE | AArch64::AEK_FP16 | AArch64::AEK_DOTPROD |
       AArch64::AEK_RCPC| AArch64::AEK_SSBS, "8.2-A"));
   EXPECT_TRUE(testAArch64CPU(
+      "cortex-a77", "armv8.2-a", "crypto-neon-fp-armv8",
+      AArch64::AEK_CRC | AArch64::AEK_CRYPTO | AArch64::AEK_FP |
+      AArch64::AEK_RDM | AArch64::AEK_SIMD | AArch64::AEK_RAS |
+      AArch64::AEK_LSE | AArch64::AEK_FP16 | AArch64::AEK_DOTPROD |
+      AArch64::AEK_RCPC | AArch64::AEK_SSBS, "8.2-A"));
+  EXPECT_TRUE(testAArch64CPU(
+      "cortex-a78", "armv8.2-a", "crypto-neon-fp-armv8",
+      AArch64::AEK_CRC | AArch64::AEK_CRYPTO  | AArch64::AEK_FP |
+      AArch64::AEK_RDM | AArch64::AEK_SIMD | AArch64::AEK_RAS |
+      AArch64::AEK_LSE | AArch64::AEK_FP16 | AArch64::AEK_DOTPROD |
+      AArch64::AEK_RCPC | AArch64::AEK_SSBS,
+      "8.2-A"));
+  EXPECT_TRUE(testAArch64CPU(
+      "cortex-x1", "armv8.2-a", "crypto-neon-fp-armv8",
+      AArch64::AEK_CRC | AArch64::AEK_CRYPTO | AArch64::AEK_FP |
+      AArch64::AEK_RDM | AArch64::AEK_SIMD | AArch64::AEK_RAS |
+      AArch64::AEK_LSE | AArch64::AEK_FP16 | AArch64::AEK_DOTPROD |
+      AArch64::AEK_RCPC | AArch64::AEK_SSBS,
+      "8.2-A"));
+  EXPECT_TRUE(testAArch64CPU(
       "cyclone", "armv8-a", "crypto-neon-fp-armv8",
       AArch64::AEK_CRYPTO | AArch64::AEK_FP | AArch64::AEK_SIMD, "8-A"));
   EXPECT_TRUE(testAArch64CPU(
@@ -942,6 +981,13 @@ TEST(TargetParserTest, testAArch64CPU) {
       AArch64::AEK_CRC | AArch64::AEK_CRYPTO | AArch64::AEK_LSE |
       AArch64::AEK_RDM | AArch64::AEK_FP | AArch64::AEK_SIMD, "8.1-A"));
   EXPECT_TRUE(testAArch64CPU(
+      "thunderx3t110", "armv8.3-a", "crypto-neon-fp-armv8",
+      AArch64::AEK_CRC | AArch64::AEK_CRYPTO | AArch64::AEK_LSE |
+          AArch64::AEK_RDM | AArch64::AEK_FP | AArch64::AEK_SIMD |
+          AArch64::AEK_PROFILE | AArch64::AEK_RAS | AArch64::AEK_RAND |
+          AArch64::AEK_RCPC,
+      "8.3-A"));
+  EXPECT_TRUE(testAArch64CPU(
       "thunderx", "armv8-a", "crypto-neon-fp-armv8",
       AArch64::AEK_CRC | AArch64::AEK_CRYPTO | AArch64::AEK_SIMD |
       AArch64::AEK_FP | AArch64::AEK_PROFILE,
@@ -974,9 +1020,15 @@ TEST(TargetParserTest, testAArch64CPU) {
       AArch64::AEK_SIMD | AArch64::AEK_FP16 | AArch64::AEK_RAS |
       AArch64::AEK_LSE | AArch64::AEK_SVE | AArch64::AEK_RDM,
       "8.2-A"));
+  EXPECT_TRUE(testAArch64CPU(
+      "carmel", "armv8.2-a", "crypto-neon-fp-armv8",
+      AArch64::AEK_CRC | AArch64::AEK_CRYPTO | AArch64::AEK_FP |
+      AArch64::AEK_SIMD | AArch64::AEK_FP16 | AArch64::AEK_RAS |
+      AArch64::AEK_LSE | AArch64::AEK_RDM,
+      "8.2-A"));
 }
 
-static constexpr unsigned NumAArch64CPUArchs = 37;
+static constexpr unsigned NumAArch64CPUArchs = 42;
 
 TEST(TargetParserTest, testAArch64CPUArchList) {
   SmallVector<StringRef, NumAArch64CPUArchs> List;
@@ -1125,6 +1177,10 @@ TEST(TargetParserTest, testAArch64Extension) {
                                    AArch64::ArchKind::INVALID, "sve"));
   EXPECT_FALSE(testAArch64Extension("a64fx",
                                    AArch64::ArchKind::INVALID, "sve2"));
+  EXPECT_TRUE(
+      testAArch64Extension("carmel", AArch64::ArchKind::INVALID, "crypto"));
+  EXPECT_TRUE(
+      testAArch64Extension("carmel", AArch64::ArchKind::INVALID, "fp16"));
 
   EXPECT_FALSE(testAArch64Extension(
       "generic", AArch64::ArchKind::ARMV8A, "ras"));
@@ -1230,7 +1286,10 @@ TEST(TargetParserTest, AArch64ArchExtFeature) {
                               {"tme", "notme", "+tme", "-tme"},
                               {"ssbs", "nossbs", "+ssbs", "-ssbs"},
                               {"sb", "nosb", "+sb", "-sb"},
-                              {"predres", "nopredres", "+predres", "-predres"}
+                              {"predres", "nopredres", "+predres", "-predres"},
+                              {"i8mm", "noi8mm", "+i8mm", "-i8mm"},
+                              {"f32mm", "nof32mm", "+f32mm", "-f32mm"},
+                              {"f64mm", "nof64mm", "+f64mm", "-f64mm"},
 };
 
   for (unsigned i = 0; i < array_lengthof(ArchExt); i++) {

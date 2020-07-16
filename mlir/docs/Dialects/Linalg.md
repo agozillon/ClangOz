@@ -29,7 +29,7 @@ performed on the Linalg IR and that have influenced its design:
 1. Tiled Producer-Consumer Fusion with Parametric Tile-And-Fuse.
 1. Map to Parallel and Reduction Loops and Hardware.
 1. Vectorization: Rewrite in Vector Form.
-1. Lower to Loops (Affine, Generic and Parallel).
+1. Lower to Loops (Affine, Generic, and Parallel).
 1. Lower to Library Calls or Special Instructions, Intrinsics or ISA.
 1. Partially Lower to Iterations Over a Finer-Grained Linalg Op.
 
@@ -130,9 +130,9 @@ Consider the following, partially specified, `linalg.generic` example:
   (i, j) -> (j)
 }
 #attrs = {args_in: 1, args_out: 1, indexings: indexing_maps}
-func @example(%A: memref<?xf32, layout1>,
+func @example(%A: memref<8x?xf32, layout1>,
               %B: memref<?xvector<4xf32, layout2>>) {
-  linalg.generic #attrs (%A, %B): memref<?xf32, layout1>,
+  linalg.generic #attrs (%A, %B): memref<8x?xf32, layout1>,
                                   memref<?xvector<4xf32, layout2>>
   return
 }
@@ -142,21 +142,21 @@ The property "*Reversible Mappings Between Control and Data Structures*" is
 materialized by a lowering into a form that will resemble:
 ```
 #attrs = {args_in: 1, args_out: 1, indexings: indexing_maps}
-func @example(%A: memref<?xf32, layout1>,
+func @example(%A: memref<8x?xf32, layout1>,
               %B: memref<?xvector<4xf32, layout2>>) {
   // loop bounds determined from data sizes by “inverting the map”
-  %J = "dim" %2, 0: index
-  %I = "dim" %2, 1: index
-  %J2 = "dim" %3, 0: index
+  %J = "dim" %A, 0: index
+  %I = "dim" %A, 1: index
+  %J2 = "dim" %B, 0: index
   // iteration space is consistent with data + mapping inference
   %eq = "eq" %J, %J2: i1
   "assert" %eq: (i1) -> ()
   for %i = 0 to %I {           // loop order is fully defined by indexing maps
     for %j = 0 to %J {         // arbitrary permutations are possible
-      %a = "load" %2, %j, %i: memref<8x?xf32>
-      %b = "load" %3, %j: memref<?xvector<4xf32>>
+      %a = "load" %A, %j, %i: memref<8x?xf32>
+      %b = "load" %B, %j: memref<?xvector<4xf32>>
       %c = "some_compute"(%a, %b): (f32, vector<4xf32>) -> (vector<4xf32>)
-      "store" %c, %3, %j: memref<?xvector<4xf32>>
+      "store" %c, %B, %j: memref<?xvector<4xf32>>
     }
   }
   return
@@ -531,9 +531,9 @@ llvm::Optional<SmallVector<AffineMap, 8>> batchmatmul::referenceIndexingMaps() {
 void batchmatmul::regionBuilder(ArrayRef<BlockArgument> args) {
   using namespace edsc;
   using namespace intrinsics;
-  ValueHandle _0(args[0]), _1(args[1]), _2(args[2]);
-  ValueHandle _4 = std_mulf(_0, _1);
-  ValueHandle _5 = std_addf(_2, _4);
+  Value _0(args[0]), _1(args[1]), _2(args[2]);
+  Value _4 = std_mulf(_0, _1);
+  Value _5 = std_addf(_2, _4);
   (linalg_yield(ValueRange{ _5 }));
 }
 ```

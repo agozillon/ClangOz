@@ -8,24 +8,23 @@
 
 #include "index/Index.h"
 #include "index/Serialization.h"
-#include "llvm/ADT/Optional.h"
+#include "index/remote/marshalling/Marshalling.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/LineEditor/LineEditor.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Signals.h"
 
-#include "grpcpp/grpcpp.h"
-#include "grpcpp/health_check_service_interface.h"
+#include <grpc++/grpc++.h>
+#include <grpc++/health_check_service_interface.h>
 
 #include "Index.grpc.pb.h"
 
 namespace clang {
 namespace clangd {
+namespace remote {
 namespace {
 
-static const std::string Overview = R"(
+static constexpr char Overview[] = R"(
 This is an experimental remote index implementation. The server opens Dex and
 awaits gRPC lookup requests from the client.
 )";
@@ -33,44 +32,93 @@ awaits gRPC lookup requests from the client.
 llvm::cl::opt<std::string> IndexPath(llvm::cl::desc("<INDEX FILE>"),
                                      llvm::cl::Positional, llvm::cl::Required);
 
-llvm::cl::opt<std::string> ServerAddress("server-address",
-                                         llvm::cl::init("0.0.0.0:50051"));
+llvm::cl::opt<std::string> IndexRoot(llvm::cl::desc("<PROJECT ROOT>"),
+                                     llvm::cl::Positional, llvm::cl::Required);
 
-std::unique_ptr<SymbolIndex> openIndex(llvm::StringRef Index) {
+llvm::cl::opt<std::string> ServerAddress(
+    "server-address", llvm::cl::init("0.0.0.0:50051"),
+    llvm::cl::desc("Address of the invoked server. Defaults to 0.0.0.0:50051"));
+
+std::unique_ptr<clangd::SymbolIndex> openIndex(llvm::StringRef Index) {
   return loadIndex(Index, /*UseIndex=*/true);
 }
 
-class RemoteIndexServer final : public remote::Index::Service {
+class RemoteIndexServer final : public SymbolIndex::Service {
 public:
-  RemoteIndexServer(std::unique_ptr<SymbolIndex> Index)
-      : Index(std::move(Index)) {}
+  RemoteIndexServer(std::unique_ptr<clangd::SymbolIndex> Index,
+                    llvm::StringRef IndexRoot)
+      : Index(std::move(Index)) {
+    llvm::SmallString<256> NativePath = IndexRoot;
+    llvm::sys::path::native(NativePath);
+    IndexedProjectRoot = std::string(NativePath);
+  }
 
 private:
   grpc::Status Lookup(grpc::ServerContext *Context,
-                      const remote::LookupRequest *Request,
-                      grpc::ServerWriter<remote::LookupReply> *Reply) override {
-    llvm::outs() << "Lookup of symbol with ID " << Request->id() << '\n';
-    LookupRequest Req;
-    auto SID = SymbolID::fromStr(Request->id());
-    if (!SID) {
-      llvm::outs() << llvm::toString(SID.takeError()) << "\n";
-      return grpc::Status::CANCELLED;
+                      const LookupRequest *Request,
+                      grpc::ServerWriter<LookupReply> *Reply) override {
+    clangd::LookupRequest Req;
+    for (const auto &ID : Request->ids()) {
+      auto SID = SymbolID::fromStr(StringRef(ID));
+      if (!SID)
+        return grpc::Status::CANCELLED;
+      Req.IDs.insert(*SID);
     }
-    Req.IDs.insert(*SID);
-    Index->lookup(Req, [&](const Symbol &Sym) {
-      remote::LookupReply NextSymbol;
-      NextSymbol.set_symbol_yaml(toYAML(Sym));
-      Reply->Write(NextSymbol);
+    Index->lookup(Req, [&](const clangd::Symbol &Sym) {
+      LookupReply NextMessage;
+      *NextMessage.mutable_stream_result() =
+          toProtobuf(Sym, IndexedProjectRoot);
+      Reply->Write(NextMessage);
     });
+    LookupReply LastMessage;
+    LastMessage.set_final_result(true);
+    Reply->Write(LastMessage);
     return grpc::Status::OK;
   }
 
-  std::unique_ptr<SymbolIndex> Index;
+  grpc::Status FuzzyFind(grpc::ServerContext *Context,
+                         const FuzzyFindRequest *Request,
+                         grpc::ServerWriter<FuzzyFindReply> *Reply) override {
+    const auto Req = fromProtobuf(Request, IndexedProjectRoot);
+    bool HasMore = Index->fuzzyFind(Req, [&](const clangd::Symbol &Sym) {
+      FuzzyFindReply NextMessage;
+      *NextMessage.mutable_stream_result() =
+          toProtobuf(Sym, IndexedProjectRoot);
+      Reply->Write(NextMessage);
+    });
+    FuzzyFindReply LastMessage;
+    LastMessage.set_final_result(HasMore);
+    Reply->Write(LastMessage);
+    return grpc::Status::OK;
+  }
+
+  grpc::Status Refs(grpc::ServerContext *Context, const RefsRequest *Request,
+                    grpc::ServerWriter<RefsReply> *Reply) override {
+    clangd::RefsRequest Req;
+    for (const auto &ID : Request->ids()) {
+      auto SID = SymbolID::fromStr(StringRef(ID));
+      if (!SID)
+        return grpc::Status::CANCELLED;
+      Req.IDs.insert(*SID);
+    }
+    bool HasMore = Index->refs(Req, [&](const clangd::Ref &Reference) {
+      RefsReply NextMessage;
+      *NextMessage.mutable_stream_result() = toProtobuf(Reference, IndexRoot);
+      Reply->Write(NextMessage);
+    });
+    RefsReply LastMessage;
+    LastMessage.set_final_result(HasMore);
+    Reply->Write(LastMessage);
+    return grpc::Status::OK;
+  }
+
+  std::unique_ptr<clangd::SymbolIndex> Index;
+  std::string IndexedProjectRoot;
 };
 
-void runServer(std::unique_ptr<SymbolIndex> Index,
+void runServer(std::unique_ptr<clangd::SymbolIndex> Index,
                const std::string &ServerAddress) {
-  RemoteIndexServer Service(std::move(Index));
+  RemoteIndexServer Service(std::move(Index), IndexRoot);
 
   grpc::EnableDefaultHealthCheckService(true);
   grpc::ServerBuilder Builder;
@@ -83,18 +131,24 @@ void runServer(std::unique_ptr<SymbolIndex> Index,
 }
 
 } // namespace
+} // namespace remote
 } // namespace clangd
 } // namespace clang
 
 int main(int argc, char *argv[]) {
-  using namespace clang::clangd;
-  llvm::cl::ParseCommandLineOptions(argc, argv, clang::clangd::Overview);
+  using namespace clang::clangd::remote;
+  llvm::cl::ParseCommandLineOptions(argc, argv, Overview);
   llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
 
-  std::unique_ptr<SymbolIndex> Index = openIndex(IndexPath);
+  if (!llvm::sys::path::is_absolute(IndexRoot)) {
+    llvm::errs() << "Index root should be an absolute path.\n";
+    return -1;
+  }
+
+  std::unique_ptr<clang::clangd::SymbolIndex> Index = openIndex(IndexPath);
 
   if (!Index) {
-    llvm::outs() << "Failed to open the index.\n";
+    llvm::errs() << "Failed to open the index.\n";
     return -1;
   }
 

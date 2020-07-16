@@ -8,6 +8,11 @@ def StdC : StandardSpec<"stdc"> {
   RestrictedPtrType CharRestrictedPtr = RestrictedPtrType<CharType>;
   ConstType ConstCharRestrictedPtr = ConstType<CharRestrictedPtr>;
 
+  NamedType OnceFlagType = NamedType<"once_flag">;
+  PtrType OnceFlagTypePtr = PtrType<OnceFlagType>;
+  // TODO(sivachandra): Remove this non-standard type when a formal
+  // way to describe callable types is available.
+  NamedType CallOnceFuncType = NamedType<"__call_once_func_t">;
   NamedType MtxTType = NamedType<"mtx_t">;
   PtrType MtxTTypePtr = PtrType<MtxTType>;
   NamedType ThrdStartTType = NamedType<"thrd_start_t">;
@@ -15,6 +20,8 @@ def StdC : StandardSpec<"stdc"> {
   PtrType ThrdTTypePtr = PtrType<ThrdTType>;
 
   PtrType IntPtr = PtrType<IntType>;
+  PtrType FloatPtr = PtrType<FloatType>;
+  PtrType DoublePtr = PtrType<DoubleType>;
 
   NamedType SigHandlerT = NamedType<"__sighandler_t">;
 
@@ -182,10 +189,47 @@ def StdC : StandardSpec<"stdc"> {
       ],
       [], // Enumerations
       [
+          FunctionSpec<"copysign", RetValSpec<DoubleType>, [ArgSpec<DoubleType>, ArgSpec<DoubleType>]>,
+          FunctionSpec<"copysignf", RetValSpec<FloatType>, [ArgSpec<FloatType>, ArgSpec<FloatType>]>,
+          FunctionSpec<"copysignl", RetValSpec<LongDoubleType>, [ArgSpec<LongDoubleType>, ArgSpec<LongDoubleType>]>,
+
+          FunctionSpec<"ceil", RetValSpec<DoubleType>, [ArgSpec<DoubleType>]>,
+          FunctionSpec<"ceilf", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
+          FunctionSpec<"ceill", RetValSpec<LongDoubleType>, [ArgSpec<LongDoubleType>]>,
+
+          FunctionSpec<"fabs", RetValSpec<DoubleType>, [ArgSpec<DoubleType>]>,
+          FunctionSpec<"fabsf", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
+          FunctionSpec<"fabsl", RetValSpec<LongDoubleType>, [ArgSpec<LongDoubleType>]>,
+
+          FunctionSpec<"floor", RetValSpec<DoubleType>, [ArgSpec<DoubleType>]>,
+          FunctionSpec<"floorf", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
+          FunctionSpec<"floorl", RetValSpec<LongDoubleType>, [ArgSpec<LongDoubleType>]>,
+
+          FunctionSpec<"frexp", RetValSpec<DoubleType>, [ArgSpec<DoubleType>, ArgSpec<IntPtr>]>,
+          FunctionSpec<"frexpf", RetValSpec<FloatType>, [ArgSpec<FloatType>, ArgSpec<IntPtr>]>,
+          FunctionSpec<"frexpl", RetValSpec<LongDoubleType>, [ArgSpec<LongDoubleType>, ArgSpec<IntPtr>]>,
+
+          FunctionSpec<"logb", RetValSpec<DoubleType>, [ArgSpec<DoubleType>]>,
+          FunctionSpec<"logbf", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
+          FunctionSpec<"logbl", RetValSpec<LongDoubleType>, [ArgSpec<LongDoubleType>]>,
+
+          FunctionSpec<"modf", RetValSpec<DoubleType>, [ArgSpec<DoubleType>, ArgSpec<DoublePtr>]>,
+          FunctionSpec<"modff", RetValSpec<FloatType>, [ArgSpec<FloatType>, ArgSpec<FloatPtr>]>,
+          FunctionSpec<"modfl", RetValSpec<LongDoubleType>, [ArgSpec<LongDoubleType>, ArgSpec<LongDoublePtr>]>,
+
           FunctionSpec<"cosf", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
           FunctionSpec<"sinf", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
 
+          FunctionSpec<"expf", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
+          FunctionSpec<"exp2f", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
+
           FunctionSpec<"round", RetValSpec<DoubleType>, [ArgSpec<DoubleType>]>,
+          FunctionSpec<"roundf", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
+          FunctionSpec<"roundl", RetValSpec<LongDoubleType>, [ArgSpec<LongDoubleType>]>,
+
+          FunctionSpec<"trunc", RetValSpec<DoubleType>, [ArgSpec<DoubleType>]>,
+          FunctionSpec<"truncf", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
+          FunctionSpec<"truncl", RetValSpec<LongDoubleType>, [ArgSpec<LongDoubleType>]>,
       ]
   >;
 
@@ -261,8 +305,12 @@ def StdC : StandardSpec<"stdc"> {
 
   HeaderSpec Threads = HeaderSpec<
       "threads.h",
-      [], // Macros
       [
+          Macro<"ONCE_FLAG_INIT">,
+      ],
+      [
+          OnceFlagType,
+          CallOnceFuncType,
           MtxTType,
           ThrdStartTType,
           ThrdTType,
@@ -278,6 +326,14 @@ def StdC : StandardSpec<"stdc"> {
           EnumeratedNameValue<"thrd_nomem">,
       ],
       [
+          FunctionSpec<
+              "call_once",
+              RetValSpec<VoidType>,
+              [
+                  ArgSpec<OnceFlagTypePtr>,
+                  ArgSpec<CallOnceFuncType>,
+              ]
+          >,
           FunctionSpec<
               "mtx_init",
               RetValSpec<IntType>,

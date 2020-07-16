@@ -225,42 +225,45 @@ names from both the *Processor* and *Alternative Processor* can be used.
                                                                                  names.
      ``gfx906``                  ``amdgcn``   dGPU  - xnack                   - Radeon Instinct MI50
                                                       [off]                   - Radeon Instinct MI60
+                                                                              - Radeon VII
+                                                                              - Radeon Pro VII
      ``gfx908``                  ``amdgcn``   dGPU  - xnack                   *TBA*
                                                       [off]
                                                       sram-ecc
                                                       [on]
-     ``gfx909``                  ``amdgcn``   APU   - xnack                   *TBA* (Raven Ridge 2)
+                                                                              .. TODO::
+                                                                                 Add product
+                                                                                 names.
+     ``gfx909``                  ``amdgcn``   APU   - xnack                   *TBA*
                                                       [on]
                                                                               .. TODO::
                                                                                  Add product
                                                                                  names.
      **GCN GFX10** [AMD-GCN-GFX10]_
      -----------------------------------------------------------------------------------------------
-     ``gfx1010``                 ``amdgcn``   dGPU  - xnack                   *TBA*
+     ``gfx1010``                 ``amdgcn``   dGPU  - xnack                   - Radeon RX 5700
+                                                      [off]                   - Radeon RX 5700 XT
+                                                    - wavefrontsize64         - Radeon Pro 5600 XT
+                                                      [off]
+                                                    - cumode
+                                                      [off]
+     ``gfx1011``                 ``amdgcn``   dGPU  - xnack                   - Radeon Pro 5600M
                                                       [off]
                                                     - wavefrontsize64
                                                       [off]
                                                     - cumode
                                                       [off]
-                                                                              .. TODO::
-                                                                                 Add product
-                                                                                 names.
-     ``gfx1011``                 ``amdgcn``   dGPU  - xnack                   *TBA*
-                                                      [off]
+     ``gfx1012``                 ``amdgcn``   dGPU  - xnack                   - Radeon RX 5500
+                                                      [off]                   - Radeon RX 5500 XT
                                                     - wavefrontsize64
                                                       [off]
                                                     - cumode
                                                       [off]
-                                                                              .. TODO::
-                                                                                 Add product
-                                                                                 names.
-     ``gfx1012``                 ``amdgcn``   dGPU  - xnack                   *TBA*
-                                                      [off]
-                                                    - wavefrontsize64
+     ``gfx1030``                 ``amdgcn``   dGPU  - wavefrontsize64         *TBA*
                                                       [off]
                                                     - cumode
                                                       [off]
-                                                                              .. TODO::
+                                                                              .. TODO
                                                                                  Add product
                                                                                  names.
      =========== =============== ============ ===== ================= ======= ======================
@@ -356,8 +359,8 @@ supported for the ``amdgcn`` target.
      Region                            2               N/A         GDS              32      *not implemented for AMDHSA*
      Local                             3               group       LDS              32      0xFFFFFFFF
      Constant                          4               constant    *same as global* 64      0x0000000000000000
-     Private                           5               private     scratch          32      0x00000000
-     Constant 32-bit                   6               *TODO*
+     Private                           5               private     scratch          32      0xFFFFFFFF
+     Constant 32-bit                   6               *TODO*                               0x00000000
      Buffer Fat Pointer (experimental) 7               *TODO*
      ================================= =============== =========== ================ ======= ============================
 
@@ -806,6 +809,7 @@ The AMDGPU backend uses the following ELF header:
      ``EF_AMDGPU_MACH_AMDGCN_GFX1010`` 0x033      ``gfx1010``
      ``EF_AMDGPU_MACH_AMDGCN_GFX1011`` 0x034      ``gfx1011``
      ``EF_AMDGPU_MACH_AMDGCN_GFX1012`` 0x035      ``gfx1012``
+     ``EF_AMDGPU_MACH_AMDGCN_GFX1030`` 0x036      ``gfx1030``
      ================================= ========== =============================
 
 Sections
@@ -1095,6 +1099,60 @@ the ``mesa3d`` OS, which does not support ``R_AMDGPU_ABS64``.
 There is no current OS loader support for 32-bit programs and so
 ``R_AMDGPU_ABS32`` is not used.
 
+.. _amdgpu-loaded-code-object-path-uniform-resource-identifier:
+
+Loaded Code Object Path Uniform Resource Identifier (URI)
+---------------------------------------------------------
+
+The AMD GPU code object loader represents the path of the ELF shared object from
+which the code object was loaded as a textual Unifom Resource Identifier (URI).
+Note that the code object is the in memory loaded relocated form of the ELF
+shared object.  Multiple code objects may be loaded at different memory
+addresses in the same process from the same ELF shared object.
+
+The loaded code object path URI syntax is defined by the following BNF syntax:
+
+.. code::
+
+  code_object_uri ::== file_uri | memory_uri
+  file_uri        ::== "file://" file_path [ range_specifier ]
+  memory_uri      ::== "memory://" process_id range_specifier
+  range_specifier ::== [ "#" | "?" ] "offset=" number "&" "size=" number
+  file_path       ::== URI_ENCODED_OS_FILE_PATH
+  process_id      ::== DECIMAL_NUMBER
+  number          ::== HEX_NUMBER | DECIMAL_NUMBER | OCTAL_NUMBER
+
+**number**
+  Is a C integral literal where hexadecimal values are prefixed by "0x" or "0X",
+  and octal values by "0".
+
+**file_path**
+  Is the file's path specified as a URI encoded UTF-8 string. In URI encoding,
+  every character that is not in the regular expression ``[a-zA-Z0-9/_.~-]`` is
+  encoded as two uppercase hexidecimal digits proceeded by "%".  Directories in
+  the path are separated by "/".
+
+**offset**
+  Is a 0-based byte offset to the start of the code object.  For a file URI, it
+  is from the start of the file specified by the ``file_path``, and if omitted
+  defaults to 0. For a memory URI, it is the memory address and is required.
+
+**size**
+  Is the number of bytes in the code object.  For a file URI, if omitted it
+  defaults to the size of the file.  It is required for a memory URI.
+
+**process_id**
+  Is the identity of the process owning the memory.  For Linux it is the C
+  unsigned integral decimal literal for the process ID (PID).
+
+For example:
+
+.. code::
+
+  file:///dir1/dir2/file1
+  file:///dir3/dir4/file2#offset=0x2000&size=3000
+  memory://1234#offset=0x20000&size=3000
+
 .. _amdgpu-dwarf-debug-information:
 
 DWARF Debug Information
@@ -1154,7 +1212,8 @@ mapping.
                                              frame.
    1              EXEC_MASK_32      32       Execution Mask Register when
                                              executing in wavefront 32 mode.
-   2-15           *Reserved*
+   2-15           *Reserved*                 *Reserved for highly accessed
+                                             registers using DWARF shortcut.*
    16             PC_64             64       Program Counter (PC) when
                                              executing in a 64-bit process
                                              address space. Used in the CFI to
@@ -1162,31 +1221,55 @@ mapping.
                                              frame.
    17             EXEC_MASK_64      64       Execution Mask Register when
                                              executing in wavefront 64 mode.
-   18-31          *Reserved*
+   18-31          *Reserved*                 *Reserved for highly accessed
+                                             registers using DWARF shortcut.*
    32-95          SGPR0-SGPR63      32       Scalar General Purpose
                                              Registers.
-   96-127         *Reserved*
-   128-511        *Reserved*
-   512-1023       *Reserved*
-   1024-1087      *Reserved*
-   1088-1129      SGPR64-SGPR105    32       Scalar General Purpose Registers
-   1130-1535      *Reserved*
+   96-127         *Reserved*                 *Reserved for frequently accessed
+                                             registers using DWARF 1-byte ULEB.*
+   128            SCC               32       Scalar Condition Code Register.
+   129-511        *Reserved*                 *Reserved for future Scalar
+                                             Architectural Registers.*
+   512            VCC_32            32       Vector Condition Code Register
+                                             when executing in wavefront 32
+                                             mode.
+   513-1023       *Reserved*                 *Reserved for future Vector
+                                             Architectural Registers when
+                                             executing in wavefront 32 mode.*
+   768            VCC_64            32       Vector Condition Code Register
+                                             when executing in wavefront 64
+                                             mode.
+   769-1023       *Reserved*                 *Reserved for future Vector
+                                             Architectural Registers when
+                                             executing in wavefront 64 mode.*
+   1024-1087      *Reserved*                 *Reserved for padding.*
+   1088-1129      SGPR64-SGPR105    32       Scalar General Purpose Registers.
+   1130-1535      *Reserved*                 *Reserved for future Scalar
+                                             General Purpose Registers.*
    1536-1791      VGPR0-VGPR255     32*32    Vector General Purpose Registers
                                              when executing in wavefront 32
                                              mode.
-   1792-2047      *Reserved*
+   1792-2047      *Reserved*                 *Reserved for future Vector
+                                             General Purpose Registers when
+                                             executing in wavefront 32 mode.*
    2048-2303      AGPR0-AGPR255     32*32    Vector Accumulation Registers
                                              when executing in wavefront 32
-                                             ode.
-   2304-2559      *Reserved*
+                                             mode.
+   2304-2559      *Reserved*                 *Reserved for future Vector
+                                             Accumulation Registers when
+                                             executing in wavefront 32 mode.*
    2560-2815      VGPR0-VGPR255     64*32    Vector General Purpose Registers
                                              when executing in wavefront 64
                                              mode.
-   2816-3071      *Reserved*
+   2816-3071      *Reserved*                 *Reserved for future Vector
+                                             General Purpose Registers when
+                                             executing in wavefront 64 mode.*
    3072-3327      AGPR0-AGPR255     64*32    Vector Accumulation Registers
                                              when executing in wavefront 64
                                              mode.
-   3328-3583      *Reserved*
+   3328-3583      *Reserved*                 *Reserved for future Vector
+                                             Accumulation Registers when
+                                             executing in wavefront 64 mode.*
    ============== ================= ======== ==================================
 
 The vector registers are represented as the full size for the wavefront. They
@@ -1573,7 +1656,7 @@ The following provides an example using pseudo LLVM MIR.
         DW_AT_name = "__divergent_lane_pc_1_then";
         DW_AT_location = DIExpression[
           DW_OP_call_ref %__divergent_lane_pc;
-          DW_OP_xaddr &lex_1_start;
+          DW_OP_addrx &lex_1_start;
           DW_OP_stack_value;
           DW_OP_LLVM_extend 64, 64;
           DW_OP_call_ref %__lex_1_save_exec;
@@ -1596,7 +1679,7 @@ The following provides an example using pseudo LLVM MIR.
           DW_AT_name = "__divergent_lane_pc_1_1_then";
           DW_AT_location = DIExpression[
             DW_OP_call_ref %__divergent_lane_pc_1_then;
-            DW_OP_xaddr &lex_1_1_start;
+            DW_OP_addrx &lex_1_1_start;
             DW_OP_stack_value;
             DW_OP_LLVM_extend 64, 64;
             DW_OP_call_ref %__lex_1_1_save_exec;
@@ -1615,7 +1698,7 @@ The following provides an example using pseudo LLVM MIR.
           DW_AT_name = "__divergent_lane_pc_1_1_else";
           DW_AT_location = DIExpression[
             DW_OP_call_ref %__divergent_lane_pc_1_then;
-            DW_OP_xaddr &lex_1_1_end;
+            DW_OP_addrx &lex_1_1_end;
             DW_OP_stack_value;
             DW_OP_LLVM_extend 64, 64;
             DW_OP_call_ref %__lex_1_1_save_exec;
@@ -1641,7 +1724,7 @@ The following provides an example using pseudo LLVM MIR.
         DW_AT_name = "__divergent_lane_pc_1_else";
         DW_AT_location = DIExpression[
           DW_OP_call_ref %__divergent_lane_pc;
-          DW_OP_xaddr &lex_1_end;
+          DW_OP_addrx &lex_1_end;
           DW_OP_stack_value;
           DW_OP_LLVM_extend 64, 64;
           DW_OP_call_ref %__lex_1_save_exec;
@@ -2235,29 +2318,10 @@ non-AMD key names should be prefixed by "*vendor-name*.".
                                                   multi-grid synchronization is
                                                   passed in the kernarg.
 
-     "ValueType"       string         Required  Kernel argument value type. Only
-                                                present if "ValueKind" is
-                                                "ByValue". For vector data
-                                                types, the value is for the
-                                                element type. Values include:
+     "ValueType"       string                   Unused and deprecated. This should no longer
+                                                be emitted, but is accepted for compatibility.
 
-                                                - "Struct"
-                                                - "I8"
-                                                - "U8"
-                                                - "I16"
-                                                - "U16"
-                                                - "F16"
-                                                - "I32"
-                                                - "U32"
-                                                - "F32"
-                                                - "I64"
-                                                - "U64"
-                                                - "F64"
 
-                                                .. TODO::
-                                                   How can it be determined if a
-                                                   vector type, and what size
-                                                   vector?
      "PointeeAlign"    integer                  Alignment in bytes of pointee
                                                 type for pointer type kernel
                                                 argument. Must be a power
@@ -2734,29 +2798,9 @@ same *vendor-name*.
                                                        multi-grid synchronization is
                                                        passed in the kernarg.
 
-     ".value_type"          string         Required  Kernel argument value type. Only
-                                                     present if ".value_kind" is
-                                                     "by_value". For vector data
-                                                     types, the value is for the
-                                                     element type. Values include:
+     ".value_type"          string                    Unused and deprecated. This should no longer
+                                                      be emitted, but is accepted for compatibility.
 
-                                                     - "struct"
-                                                     - "i8"
-                                                     - "u8"
-                                                     - "i16"
-                                                     - "u16"
-                                                     - "f16"
-                                                     - "i32"
-                                                     - "u32"
-                                                     - "f32"
-                                                     - "i64"
-                                                     - "u64"
-                                                     - "f64"
-
-                                                     .. TODO::
-                                                        How can it be determined if a
-                                                        vector type, and what size
-                                                        vector?
      ".pointee_align"       integer                  Alignment in bytes of pointee
                                                      type for pointer type kernel
                                                      argument. Must be a power
@@ -3797,7 +3841,7 @@ The setting of registers is done by GPU CP/ADC/SPI hardware as follows:
 4. The VGPRs are set by SPI which only supports specifying either (X), (X, Y)
    or (X, Y, Z).
 
-Flat Scratch register pair are adjacent SGRRs so they can be moved as a 64-bit
+Flat Scratch register pair are adjacent SGPRs so they can be moved as a 64-bit
 value to the hardware required SGPRn-3 and SGPRn-4 respectively.
 
 The global segment can be accessed either using buffer instructions (GFX6 which
@@ -6507,11 +6551,28 @@ On exit from a function:
     * FLAT_SCRATCH
     * EXEC
     * GFX6-8: M0
-    * All SGPR and VGPR registers except the clobbered registers of SGPR4-31 and
-      VGPR0-31.
+    * All SGPR registers except the clobbered registers of SGPR4-31.
+    * VGPR40-47
+      VGPR56-63
+      VGPR72-79
+      VGPR88-95
+      VGPR104-111
+      VGPR120-127
+      VGPR136-143
+      VGPR152-159
+      VGPR168-175
+      VGPR184-191
+      VGPR200-207
+      VGPR216-223
+      VGPR232-239
+      VGPR248-255
+
+        *Except the argument registers, the VGPR cloberred and the preserved
+        registers are intermixed at regular intervals in order to
+        get a better occupancy.*
 
       For the AMDGPU backend, an inter-procedural register allocation (IPRA)
-      optimization may mark some of clobbered SGPR4-31 and VGPR0-31 registers as
+      optimization may mark some of clobbered SGPR and VGPR registers as
       preserved if it can be determined that the called function does not change
       their value.
 
@@ -6603,8 +6664,8 @@ after the source language arguments in the following order:
     The values come from the initial kernel execution state. See
     :ref:`amdgpu-amdhsa-vgpr-register-set-up-order-table`.
 
-    .. table:: Work-item implict argument layout
-      :name: amdgpu-amdhsa-workitem-implict-argument-layout-table
+    .. table:: Work-item implicit argument layout
+      :name: amdgpu-amdhsa-workitem-implicit-argument-layout-table
 
       ======= ======= ==============
       Bits    Size    Field Name
@@ -6657,12 +6718,12 @@ after the source language arguments in the following order:
 
 The input and result arguments are assigned in order in the following manner:
 
-..note::
+.. note::
 
   There are likely some errors and omissions in the following description that
   need correction.
 
-  ..TODO::
+  .. TODO::
 
     Check the clang source code to decipher how function arguments and return
     results are handled. Also see the AMDGPU specific values used.
@@ -6701,19 +6762,16 @@ describes how the AMDGPU implements function calls:
 1.  SGPR33 is used as a frame pointer (FP) if necessary. Like the SP it is an
     unswizzled scratch address. It is only needed if runtime sized ``alloca``
     are used, or for the reasons defined in ``SIFrameLowering``.
-2.  Runtime stack alignment is not currently supported.
+2.  Runtime stack alignment is supported. SGPR34 is used as a base pointer (BP)
+    to access the incoming stack arguments in the function. The BP is needed
+    only when the function requires the runtime stack alignment.
 
-    .. TODO::
+3.  Allocating SGPR arguments on the stack are not supported.
 
-      - If runtime stack alignment is supported, then will an extra argument
-        pointer register be used?
-
-2.  Allocating SGPR arguments on the stack are not supported.
-
-3.  No CFI is currently generated. See
+4.  No CFI is currently generated. See
     :ref:`amdgpu-dwarf-call-frame-information`.
 
-    ..note::
+    .. note::
 
       CFI will be generated that defines the CFA as the unswizzled address
       relative to the wave scratch base in the unswizzled private address space
@@ -6729,25 +6787,25 @@ describes how the AMDGPU implements function calls:
       local variables and register spill slots are accessed as positive offsets
       relative to ``DW_AT_frame_base``.
 
-4.  Function argument passing is implemented by copying the input physical
+5.  Function argument passing is implemented by copying the input physical
     registers to virtual registers on entry. The register allocator can spill if
     necessary. These are copied back to physical registers at call sites. The
     net effect is that each function call can have these values in entirely
     distinct locations. The IPRA can help avoid shuffling argument registers.
-5.  Call sites are implemented by setting up the arguments at positive offsets
+6.  Call sites are implemented by setting up the arguments at positive offsets
     from SP. Then SP is incremented to account for the known frame size before
     the call and decremented after the call.
 
-    ..note::
+    .. note::
 
       The CFI will reflect the changed calculation needed to compute the CFA
       from SP.
 
-6.  4 byte spill slots are used in the stack frame. One slot is allocated for an
+7.  4 byte spill slots are used in the stack frame. One slot is allocated for an
     emergency spill slot. Buffer instructions are used for stack accesses and
     not the ``flat_scratch`` instruction.
 
-    ..TODO::
+    .. TODO::
 
       Explain when the emergency spill slot is used.
 

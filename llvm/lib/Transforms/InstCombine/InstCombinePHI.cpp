@@ -554,7 +554,7 @@ Instruction *InstCombiner::FoldPHIArgLoadIntoPHI(PHINode &PN) {
   // visitLoadInst will propagate an alignment onto the load when TD is around,
   // and if TD isn't around, we can't handle the mixed case.
   bool isVolatile = FirstLI->isVolatile();
-  MaybeAlign LoadAlignment(FirstLI->getAlignment());
+  Align LoadAlignment = FirstLI->getAlign();
   unsigned LoadAddrSpace = FirstLI->getPointerAddressSpace();
 
   // We can't sink the load if the loaded value could be modified between the
@@ -584,12 +584,7 @@ Instruction *InstCombiner::FoldPHIArgLoadIntoPHI(PHINode &PN) {
         !isSafeAndProfitableToSinkLoad(LI))
       return nullptr;
 
-    // If some of the loads have an alignment specified but not all of them,
-    // we can't do the transformation.
-    if ((LoadAlignment.hasValue()) != (LI->getAlignment() != 0))
-      return nullptr;
-
-    LoadAlignment = std::min(LoadAlignment, MaybeAlign(LI->getAlignment()));
+    LoadAlignment = std::min(LoadAlignment, Align(LI->getAlign()));
 
     // If the PHI is of volatile loads and the load block has multiple
     // successors, sinking it would remove a load of the volatile value from
@@ -1134,6 +1129,78 @@ Instruction *InstCombiner::SliceUpIllegalIntegerPHI(PHINode &FirstPhi) {
   return replaceInstUsesWith(FirstPhi, Undef);
 }
 
+static Value *SimplifyUsingControlFlow(InstCombiner &Self, PHINode &PN,
+                                       const DominatorTree &DT) {
+  // Simplify the following patterns:
+  //       if (cond)
+  //       /       \
+  //      ...      ...
+  //       \       /
+  //    phi [true] [false]
+  if (!PN.getType()->isIntegerTy(1))
+    return nullptr;
+
+  if (PN.getNumOperands() != 2)
+    return nullptr;
+
+  // Make sure all inputs are constants.
+  if (!all_of(PN.operands(), [](Value *V) { return isa<ConstantInt>(V); }))
+    return nullptr;
+
+  BasicBlock *BB = PN.getParent();
+  // Do not bother with unreachable instructions.
+  if (!DT.isReachableFromEntry(BB))
+    return nullptr;
+
+  // Same inputs.
+  if (PN.getOperand(0) == PN.getOperand(1))
+    return PN.getOperand(0);
+
+  BasicBlock *TruePred = nullptr, *FalsePred = nullptr;
+  for (auto *Pred : predecessors(BB)) {
+    auto *Input = cast<ConstantInt>(PN.getIncomingValueForBlock(Pred));
+    if (Input->isAllOnesValue())
+      TruePred = Pred;
+    else
+      FalsePred = Pred;
+  }
+  assert(TruePred && FalsePred && "Must be!");
+
+  // Check which edge of the dominator dominates the true input. If it is the
+  // false edge, we should invert the condition.
+  auto *IDom = DT.getNode(BB)->getIDom()->getBlock();
+  auto *BI = dyn_cast<BranchInst>(IDom->getTerminator());
+  if (!BI || BI->isUnconditional())
+    return nullptr;
+
+  // Check that edges outgoing from the idom's terminators dominate respective
+  // inputs of the Phi.
+  BasicBlockEdge TrueOutEdge(IDom, BI->getSuccessor(0));
+  BasicBlockEdge FalseOutEdge(IDom, BI->getSuccessor(1));
+
+  BasicBlockEdge TrueIncEdge(TruePred, BB);
+  BasicBlockEdge FalseIncEdge(FalsePred, BB);
+
+  auto *Cond = BI->getCondition();
+  if (DT.dominates(TrueOutEdge, TrueIncEdge) &&
+      DT.dominates(FalseOutEdge, FalseIncEdge))
+    // This Phi is actually equivalent to branching condition of IDom.
+    return Cond;
+  else if (DT.dominates(TrueOutEdge, FalseIncEdge) &&
+           DT.dominates(FalseOutEdge, TrueIncEdge)) {
+    // This Phi is actually opposite to branching condition of IDom. We invert
+    // the condition that will potentially open up some opportunities for
+    // sinking.
+    auto InsertPt = BB->getFirstInsertionPt();
+    if (InsertPt != BB->end()) {
+      Self.Builder.SetInsertPoint(&*InsertPt);
+      return Self.Builder.CreateNot(Cond);
+    }
+  }
+
+  return nullptr;
+}
+
 // PHINode simplification
 //
 Instruction *InstCombiner::visitPHINode(PHINode &PN) {
@@ -1280,6 +1347,10 @@ Instruction *InstCombiner::visitPHINode(PHINode &PN) {
       !DL.isLegalInteger(PN.getType()->getPrimitiveSizeInBits()))
     if (Instruction *Res = SliceUpIllegalIntegerPHI(PN))
       return Res;
+
+  // Ultimately, try to replace this Phi with a dominating condition.
+  if (auto *V = SimplifyUsingControlFlow(*this, PN, DT))
+    return replaceInstUsesWith(PN, V);
 
   return nullptr;
 }

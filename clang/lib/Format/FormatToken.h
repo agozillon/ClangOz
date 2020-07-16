@@ -102,6 +102,7 @@ namespace format {
   TYPE(TrailingUnaryOperator)                                                  \
   TYPE(TypenameMacro)                                                          \
   TYPE(UnaryOperator)                                                          \
+  TYPE(UntouchableMacroFunc)                                                   \
   TYPE(CSharpStringLiteral)                                                    \
   TYPE(CSharpNamedArgumentColon)                                               \
   TYPE(CSharpNullable)                                                         \
@@ -113,6 +114,8 @@ namespace format {
   TYPE(CSharpGenericTypeConstraintComma)                                       \
   TYPE(Unknown)
 
+/// Determines the semantic type of a syntactic token, e.g. whether "<" is a
+/// template opener or binary operator.
 enum TokenType {
 #define TYPE(X) TT_##X,
   LIST_TOKEN_TYPES
@@ -180,6 +183,12 @@ struct FormatToken {
   /// before the token.
   bool MustBreakBefore = false;
 
+  /// Whether to not align across this token
+  ///
+  /// This happens for example when a preprocessor directive ended directly
+  /// before the token, but very rarely otherwise.
+  bool MustBreakAlignBefore = false;
+
   /// The raw text of the token.
   ///
   /// Contains the raw token text without leading whitespace and without leading
@@ -192,7 +201,10 @@ struct FormatToken {
   /// Contains the kind of block if this token is a brace.
   BraceBlockKind BlockKind = BK_Unknown;
 
-  TokenType Type = TT_Unknown;
+  /// Returns the token's type, e.g. whether "<" is a template opener or
+  /// binary operator.
+  TokenType getType() const { return Type; }
+  void setType(TokenType T) { Type = T; }
 
   /// The number of spaces that should be inserted before this token.
   unsigned SpacesRequiredBefore = 0;
@@ -590,6 +602,8 @@ private:
       return Previous->endsSequenceInternal(K1, Tokens...);
     return is(K1) && Previous && Previous->endsSequenceInternal(Tokens...);
   }
+
+  TokenType Type = TT_Unknown;
 };
 
 class ContinuationIndenter;

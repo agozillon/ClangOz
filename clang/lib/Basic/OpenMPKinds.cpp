@@ -163,6 +163,7 @@ unsigned clang::getOpenMPSimpleClauseType(OpenMPClauseKind Kind,
   case OMPC_hint:
   case OMPC_uniform:
   case OMPC_use_device_ptr:
+  case OMPC_use_device_addr:
   case OMPC_is_device_ptr:
   case OMPC_unified_address:
   case OMPC_unified_shared_memory:
@@ -174,6 +175,10 @@ unsigned clang::getOpenMPSimpleClauseType(OpenMPClauseKind Kind,
   case OMPC_detach:
   case OMPC_inclusive:
   case OMPC_exclusive:
+  case OMPC_uses_allocators:
+  case OMPC_affinity:
+    break;
+  default:
     break;
   }
   llvm_unreachable("Invalid OpenMP simple clause kind");
@@ -409,6 +414,7 @@ const char *clang::getOpenMPSimpleClauseTypeName(OpenMPClauseKind Kind,
   case OMPC_hint:
   case OMPC_uniform:
   case OMPC_use_device_ptr:
+  case OMPC_use_device_addr:
   case OMPC_is_device_ptr:
   case OMPC_unified_address:
   case OMPC_unified_shared_memory:
@@ -420,6 +426,10 @@ const char *clang::getOpenMPSimpleClauseTypeName(OpenMPClauseKind Kind,
   case OMPC_detach:
   case OMPC_inclusive:
   case OMPC_exclusive:
+  case OMPC_uses_allocators:
+  case OMPC_affinity:
+    break;
+  default:
     break;
   }
   llvm_unreachable("Invalid OpenMP simple clause kind");
@@ -574,7 +584,7 @@ bool clang::isOpenMPLoopBoundSharingDirective(OpenMPDirectiveKind Kind) {
 void clang::getOpenMPCaptureRegions(
     SmallVectorImpl<OpenMPDirectiveKind> &CaptureRegions,
     OpenMPDirectiveKind DKind) {
-  assert(DKind <= OMPD_unknown);
+  assert(unsigned(DKind) < llvm::omp::Directive_enumSize);
   switch (DKind) {
   case OMPD_parallel:
   case OMPD_parallel_for:
@@ -675,6 +685,7 @@ void clang::getOpenMPCaptureRegions(
   case OMPD_end_declare_variant:
     llvm_unreachable("OpenMP Directive is not allowed");
   case OMPD_unknown:
+  default:
     llvm_unreachable("Unknown OpenMP directive");
   }
 }

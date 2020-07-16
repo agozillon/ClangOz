@@ -61,7 +61,8 @@ public:
       if (!Regs.empty() && Flags.empty())
         this->Flags.push_back(ISD::ArgFlagsTy());
       // FIXME: We should have just one way of saying "no register".
-      assert((Ty->isVoidTy() == (Regs.empty() || Regs[0] == 0)) &&
+      assert(((Ty->isVoidTy() || Ty->isEmptyTy()) ==
+              (Regs.empty() || Regs[0] == 0)) &&
              "only void types should have no register");
     }
 
@@ -141,6 +142,14 @@ public:
                                       uint64_t Size, MachinePointerInfo &MPO,
                                       CCValAssign &VA) = 0;
 
+    /// An overload which takes an ArgInfo if additional information about
+    /// the arg is needed.
+    virtual void assignValueToAddress(const ArgInfo &Arg, Register Addr,
+                                      uint64_t Size, MachinePointerInfo &MPO,
+                                      CCValAssign &VA) {
+      assignValueToAddress(Arg.Regs[0], Addr, Size, MPO, VA);
+    }
+
     /// Handle custom values, which may be passed into one or more of \p VAs.
     /// \return The number of \p VAs that have been assigned after the first
     ///         one, and which should therefore be skipped from further
@@ -152,7 +161,10 @@ public:
       llvm_unreachable("Custom values not supported");
     }
 
-    Register extendRegister(Register ValReg, CCValAssign &VA);
+    /// Extend a register to the location type given in VA, capped at extending
+    /// to at most MaxSize bits. If MaxSizeBits is 0 then no maximum is set.
+    Register extendRegister(Register ValReg, CCValAssign &VA,
+                            unsigned MaxSizeBits = 0);
 
     virtual bool assignArg(unsigned ValNo, MVT ValVT, MVT LocVT,
                            CCValAssign::LocInfo LocInfo, const ArgInfo &Info,
@@ -277,6 +289,8 @@ public:
                            ArrayRef<Register> VRegs) const {
     return false;
   }
+
+  virtual bool fallBackToDAGISel(const Function &F) const { return false; }
 
   /// This hook must be implemented to lower the incoming (formal)
   /// arguments, described by \p VRegs, for GlobalISel. Each argument

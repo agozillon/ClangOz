@@ -553,7 +553,6 @@ define <4 x i64> @insert_v4i64(<4 x i64> %x, i64 %y , i64* %ptr) {
 ; CHECK-LABEL: insert_v4i64:
 ; CHECK:       ## %bb.0:
 ; CHECK-NEXT:    vpinsrq $1, (%rsi), %xmm0, %xmm1
-; CHECK-NEXT:    vpblendd {{.*#+}} ymm1 = ymm1[0,1,2,3],ymm0[4,5,6,7]
 ; CHECK-NEXT:    vextracti128 $1, %ymm0, %xmm0
 ; CHECK-NEXT:    vpinsrq $1, %rdi, %xmm0, %xmm0
 ; CHECK-NEXT:    vinserti128 $1, %xmm0, %ymm1, %ymm0
@@ -595,7 +594,6 @@ define <8 x i32> @insert_v8i32(<8 x i32> %x, i32 %y, i32* %ptr) {
 ; CHECK-LABEL: insert_v8i32:
 ; CHECK:       ## %bb.0:
 ; CHECK-NEXT:    vpinsrd $1, (%rsi), %xmm0, %xmm1
-; CHECK-NEXT:    vpblendd {{.*#+}} ymm1 = ymm1[0,1,2,3],ymm0[4,5,6,7]
 ; CHECK-NEXT:    vextracti128 $1, %ymm0, %xmm0
 ; CHECK-NEXT:    vpinsrd $1, %edi, %xmm0, %xmm0
 ; CHECK-NEXT:    vinserti128 $1, %xmm0, %ymm1, %ymm0
@@ -1770,8 +1768,8 @@ define i96 @test_insertelement_variable_v96i1(<96 x i8> %a, i8 %b, i32 %index) {
 ; KNL-NEXT:    .cfi_offset %rbp, -16
 ; KNL-NEXT:    movq %rsp, %rbp
 ; KNL-NEXT:    .cfi_def_cfa_register %rbp
-; KNL-NEXT:    andq $-128, %rsp
-; KNL-NEXT:    subq $256, %rsp ## imm = 0x100
+; KNL-NEXT:    andq $-64, %rsp
+; KNL-NEXT:    subq $192, %rsp
 ; KNL-NEXT:    movl 744(%rbp), %eax
 ; KNL-NEXT:    andl $127, %eax
 ; KNL-NEXT:    vmovd %edi, %xmm0
@@ -1941,8 +1939,8 @@ define i96 @test_insertelement_variable_v96i1(<96 x i8> %a, i8 %b, i32 %index) {
 ; SKX-NEXT:    .cfi_offset %rbp, -16
 ; SKX-NEXT:    movq %rsp, %rbp
 ; SKX-NEXT:    .cfi_def_cfa_register %rbp
-; SKX-NEXT:    andq $-128, %rsp
-; SKX-NEXT:    subq $256, %rsp ## imm = 0x100
+; SKX-NEXT:    andq $-64, %rsp
+; SKX-NEXT:    subq $192, %rsp
 ; SKX-NEXT:    vmovd {{.*#+}} xmm0 = mem[0],zero,zero,zero
 ; SKX-NEXT:    vpinsrb $1, 232(%rbp), %xmm0, %xmm0
 ; SKX-NEXT:    vpinsrb $2, 240(%rbp), %xmm0, %xmm0
@@ -2078,8 +2076,8 @@ define i128 @test_insertelement_variable_v128i1(<128 x i8> %a, i8 %b, i32 %index
 ; KNL-NEXT:    .cfi_offset %rbp, -16
 ; KNL-NEXT:    movq %rsp, %rbp
 ; KNL-NEXT:    .cfi_def_cfa_register %rbp
-; KNL-NEXT:    andq $-128, %rsp
-; KNL-NEXT:    subq $256, %rsp ## imm = 0x100
+; KNL-NEXT:    andq $-64, %rsp
+; KNL-NEXT:    subq $192, %rsp
 ; KNL-NEXT:    ## kill: def $esi killed $esi def $rsi
 ; KNL-NEXT:    vpxor %xmm2, %xmm2, %xmm2
 ; KNL-NEXT:    vpcmpeqb %ymm2, %ymm0, %ymm3
@@ -2155,8 +2153,8 @@ define i128 @test_insertelement_variable_v128i1(<128 x i8> %a, i8 %b, i32 %index
 ; SKX-NEXT:    .cfi_offset %rbp, -16
 ; SKX-NEXT:    movq %rsp, %rbp
 ; SKX-NEXT:    .cfi_def_cfa_register %rbp
-; SKX-NEXT:    andq $-128, %rsp
-; SKX-NEXT:    subq $256, %rsp ## imm = 0x100
+; SKX-NEXT:    andq $-64, %rsp
+; SKX-NEXT:    subq $192, %rsp
 ; SKX-NEXT:    ## kill: def $esi killed $esi def $rsi
 ; SKX-NEXT:    vptestmb %zmm0, %zmm0, %k0
 ; SKX-NEXT:    vptestmb %zmm1, %zmm1, %k1

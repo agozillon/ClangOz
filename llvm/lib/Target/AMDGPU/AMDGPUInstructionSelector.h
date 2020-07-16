@@ -106,6 +106,8 @@ private:
 
   bool selectInterpP1F16(MachineInstr &MI) const;
   bool selectDivScale(MachineInstr &MI) const;
+  bool selectIntrinsicIcmp(MachineInstr &MI) const;
+  bool selectBallot(MachineInstr &I) const;
   bool selectG_INTRINSIC(MachineInstr &I) const;
 
   bool selectEndCfIntrinsic(MachineInstr &MI) const;
@@ -130,7 +132,7 @@ private:
   bool selectG_SELECT(MachineInstr &I) const;
   bool selectG_BRCOND(MachineInstr &I) const;
   bool selectG_FRAME_INDEX_GLOBAL_VALUE(MachineInstr &I) const;
-  bool selectG_PTR_MASK(MachineInstr &I) const;
+  bool selectG_PTRMASK(MachineInstr &I) const;
   bool selectG_EXTRACT_VECTOR_ELT(MachineInstr &I) const;
   bool selectG_INSERT_VECTOR_ELT(MachineInstr &I) const;
   bool selectG_SHUFFLE_VECTOR(MachineInstr &I) const;

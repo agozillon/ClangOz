@@ -3,7 +3,6 @@
 #include "testing.h"
 #include "../../runtime/descriptor.h"
 #include "../../runtime/io-api.h"
-#include "llvm/Support/raw_ostream.h"
 #include <cstring>
 
 using namespace Fortran::runtime;
@@ -402,6 +401,21 @@ int main() {
       "236903222948165808559332123348274797826204144723168738177180919299881250"
       "4040261841248583680000+306;");
   realTest("(G0,';')", u.d, ".17976931348623157+309;");
+
+  realTest("(F5.3,';')", 25., "*****;");
+  realTest("(F5.3,';')", 2.5, "2.500;");
+  realTest("(F5.3,';')", 0.25, "0.250;");
+  realTest("(F5.3,';')", 0.025, "0.025;");
+  realTest("(F5.3,';')", 0.0025, "0.003;");
+  realTest("(F5.3,';')", 0.00025, "0.000;");
+  realTest("(F5.3,';')", 0.000025, "0.000;");
+  realTest("(F5.3,';')", -25., "*****;");
+  realTest("(F5.3,';')", -2.5, "*****;");
+  realTest("(F5.3,';')", -0.25, "-.250;");
+  realTest("(F5.3,';')", -0.025, "-.025;");
+  realTest("(F5.3,';')", -0.0025, "-.003;");
+  realTest("(F5.3,';')", -0.00025, "-.000;");
+  realTest("(F5.3,';')", -0.000025, "-.000;");
 
   realInTest("(F18.0)", "                 0", 0x0);
   realInTest("(F18.0)", "                  ", 0x0);

@@ -267,10 +267,10 @@ constexpr bool empty(const T &RangeOrContainer) {
   return adl_begin(RangeOrContainer) == adl_end(RangeOrContainer);
 }
 
-/// Returns true of the given range only contains a single element.
-template <typename ContainerTy> bool hasSingleElement(ContainerTy &&c) {
-  auto it = std::begin(c), e = std::end(c);
-  return it != e && std::next(it) == e;
+/// Returns true if the given container only contains a single element.
+template <typename ContainerTy> bool hasSingleElement(ContainerTy &&C) {
+  auto B = std::begin(C), E = std::end(C);
+  return B != E && std::next(B) == E;
 }
 
 /// Return a range covering \p RangeOrContainer with the first N elements
@@ -745,14 +745,14 @@ detail::zippy<detail::zip_first, T, U, Args...> zip_first(T &&t, U &&u,
 
 namespace detail {
 template <typename Iter>
-static Iter next_or_end(const Iter &I, const Iter &End) {
+Iter next_or_end(const Iter &I, const Iter &End) {
   if (I == End)
     return End;
   return std::next(I);
 }
 
 template <typename Iter>
-static auto deref_or_none(const Iter &I, const Iter &End) -> llvm::Optional<
+auto deref_or_none(const Iter &I, const Iter &End) -> llvm::Optional<
     std::remove_const_t<std::remove_reference_t<decltype(*I)>>> {
   if (I == End)
     return None;
@@ -958,7 +958,7 @@ class concat_iterator
   }
 
 public:
-  /// Constructs an iterator from a squence of ranges.
+  /// Constructs an iterator from a sequence of ranges.
   ///
   /// We need the full range to know how to switch between each of the
   /// iterators.
@@ -1108,7 +1108,7 @@ public:
   };
 
   indexed_accessor_range_base(iterator begin, iterator end)
-      : base(DerivedT::offset_base(begin.getBase(), begin.getIndex())),
+      : base(offset_base(begin.getBase(), begin.getIndex())),
         count(end.getIndex() - begin.getIndex()) {}
   indexed_accessor_range_base(const iterator_range<iterator> &range)
       : indexed_accessor_range_base(range.begin(), range.end()) {}
@@ -1121,11 +1121,23 @@ public:
     assert(index < size() && "invalid index for value range");
     return DerivedT::dereference_iterator(base, index);
   }
+  ReferenceT front() const {
+    assert(!empty() && "expected non-empty range");
+    return (*this)[0];
+  }
+  ReferenceT back() const {
+    assert(!empty() && "expected non-empty range");
+    return (*this)[size() - 1];
+  }
 
   /// Compare this range with another.
-  template <typename OtherT> bool operator==(const OtherT &other) {
-    return size() == std::distance(other.begin(), other.end()) &&
+  template <typename OtherT> bool operator==(const OtherT &other) const {
+    return size() ==
+               static_cast<size_t>(std::distance(other.begin(), other.end())) &&
            std::equal(begin(), end(), other.begin());
+  }
+  template <typename OtherT> bool operator!=(const OtherT &other) const {
+    return !(*this == other);
   }
 
   /// Return the size of this range.
@@ -1137,7 +1149,7 @@ public:
   /// Drop the first N elements, and keep M elements.
   DerivedT slice(size_t n, size_t m) const {
     assert(n + m <= size() && "invalid size specifiers");
-    return DerivedT(DerivedT::offset_base(base, n), m);
+    return DerivedT(offset_base(base, n), m);
   }
 
   /// Drop the first n elements.
@@ -1168,6 +1180,15 @@ public:
                                  RangeT, iterator_range<iterator>>::value>>
   operator RangeT() const {
     return RangeT(iterator_range<iterator>(*this));
+  }
+
+  /// Returns the base of this range.
+  const BaseT &getBase() const { return base; }
+
+private:
+  /// Offset the given base by the given amount.
+  static BaseT offset_base(const BaseT &base, size_t n) {
+    return n == 0 ? base : DerivedT::offset_base(base, n);
   }
 
 protected:
@@ -1446,24 +1467,6 @@ inline void sort(Container &&C, Compare Comp) {
 //     Extra additions to <algorithm>
 //===----------------------------------------------------------------------===//
 
-/// For a container of pointers, deletes the pointers and then clears the
-/// container.
-template<typename Container>
-void DeleteContainerPointers(Container &C) {
-  for (auto V : C)
-    delete V;
-  C.clear();
-}
-
-/// In a container of pairs (usually a map) whose second element is a pointer,
-/// deletes the second elements and then clears the container.
-template<typename Container>
-void DeleteContainerSeconds(Container &C) {
-  for (auto &V : C)
-    delete V.second;
-  C.clear();
-}
-
 /// Get the size of a range. This is a wrapper function around std::distance
 /// which is only enabled when the operation is O(1).
 template <typename R>
@@ -1477,9 +1480,9 @@ auto size(R &&Range,
 
 /// Provide wrappers to std::for_each which take ranges instead of having to
 /// pass begin/end explicitly.
-template <typename R, typename UnaryPredicate>
-UnaryPredicate for_each(R &&Range, UnaryPredicate P) {
-  return std::for_each(adl_begin(Range), adl_end(Range), P);
+template <typename R, typename UnaryFunction>
+UnaryFunction for_each(R &&Range, UnaryFunction F) {
+  return std::for_each(adl_begin(Range), adl_end(Range), F);
 }
 
 /// Provide wrappers to std::all_of which take ranges instead of having to pass
@@ -1574,9 +1577,9 @@ auto count_if(R &&Range, UnaryPredicate P) {
 
 /// Wrapper function around std::transform to apply a function to a range and
 /// store the result elsewhere.
-template <typename R, typename OutputIt, typename UnaryPredicate>
-OutputIt transform(R &&Range, OutputIt d_first, UnaryPredicate P) {
-  return std::transform(adl_begin(Range), adl_end(Range), d_first, P);
+template <typename R, typename OutputIt, typename UnaryFunction>
+OutputIt transform(R &&Range, OutputIt d_first, UnaryFunction F) {
+  return std::transform(adl_begin(Range), adl_end(Range), d_first, F);
 }
 
 /// Provide wrappers to std::partition which take ranges instead of having to
@@ -1924,12 +1927,15 @@ bool hasNItems(
       return false; // Too few.
     N -= ShouldBeCounted(*Begin);
   }
-  return Begin == End;
+  for (; Begin != End; ++Begin)
+    if (ShouldBeCounted(*Begin))
+      return false; // Too many.
+  return true;
 }
 
 /// Return true if the sequence [Begin, End) has N or more items. Runs in O(N)
 /// time. Not meant for use with random-access iterators.
-/// Can optionally take a predicate to filter lazily some items.
+/// Can optionally take a predicate to lazily filter some items.
 template<typename IterTy,
          typename Pred = bool (*)(const decltype(*std::declval<IterTy>()) &)>
 bool hasNItemsOrMore(
@@ -1949,10 +1955,40 @@ bool hasNItemsOrMore(
   return true;
 }
 
+/// Returns true if the sequence [Begin, End) has N or less items. Can
+/// optionally take a predicate to lazily filter some items.
+template <typename IterTy,
+          typename Pred = bool (*)(const decltype(*std::declval<IterTy>()) &)>
+bool hasNItemsOrLess(
+    IterTy &&Begin, IterTy &&End, unsigned N,
+    Pred &&ShouldBeCounted = [](const decltype(*std::declval<IterTy>()) &) {
+      return true;
+    }) {
+  assert(N != std::numeric_limits<unsigned>::max());
+  return !hasNItemsOrMore(Begin, End, N + 1, ShouldBeCounted);
+}
+
+/// Returns true if the given container has exactly N items
+template <typename ContainerTy> bool hasNItems(ContainerTy &&C, unsigned N) {
+  return hasNItems(std::begin(C), std::end(C), N);
+}
+
+/// Returns true if the given container has N or more items
+template <typename ContainerTy>
+bool hasNItemsOrMore(ContainerTy &&C, unsigned N) {
+  return hasNItemsOrMore(std::begin(C), std::end(C), N);
+}
+
+/// Returns true if the given container has N or less items
+template <typename ContainerTy>
+bool hasNItemsOrLess(ContainerTy &&C, unsigned N) {
+  return hasNItemsOrLess(std::begin(C), std::end(C), N);
+}
+
 /// Returns a raw pointer that represents the same address as the argument.
 ///
 /// This implementation can be removed once we move to C++20 where it's defined
-/// as std::to_addres().
+/// as std::to_address().
 ///
 /// The std::pointer_traits<>::to_address(p) variations of these overloads has
 /// not been implemented.

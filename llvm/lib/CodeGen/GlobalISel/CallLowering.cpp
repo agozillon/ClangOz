@@ -22,6 +22,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Target/TargetMachine.h"
 
 #define DEBUG_TYPE "call-lowering"
 
@@ -52,7 +53,7 @@ bool CallLowering::lowerCall(MachineIRBuilder &MIRBuilder, const CallBase &CB,
 
   // Try looking through a bitcast from one function type to another.
   // Commonly happens with calls to objc_msgSend().
-  const Value *CalleeV = CB.getCalledValue()->stripPointerCasts();
+  const Value *CalleeV = CB.getCalledOperand()->stripPointerCasts();
   if (const Function *F = dyn_cast<Function>(CalleeV))
     Info.Callee = MachineOperand::CreateGA(F, 0);
   else
@@ -96,10 +97,12 @@ void CallLowering::setArgFlags(CallLowering::ArgInfo &Arg, unsigned OpIdx,
     Flags.setSwiftError();
   if (Attrs.hasAttribute(OpIdx, Attribute::ByVal))
     Flags.setByVal();
+  if (Attrs.hasAttribute(OpIdx, Attribute::Preallocated))
+    Flags.setPreallocated();
   if (Attrs.hasAttribute(OpIdx, Attribute::InAlloca))
     Flags.setInAlloca();
 
-  if (Flags.isByVal() || Flags.isInAlloca()) {
+  if (Flags.isByVal() || Flags.isInAlloca() || Flags.isPreallocated()) {
     Type *ElementTy = cast<PointerType>(Arg.Ty)->getElementType();
 
     auto Ty = Attrs.getAttribute(OpIdx, Attribute::ByVal).getValueAsType();
@@ -116,7 +119,7 @@ void CallLowering::setArgFlags(CallLowering::ArgInfo &Arg, unsigned OpIdx,
   }
   if (Attrs.hasAttribute(OpIdx, Attribute::Nest))
     Flags.setNest();
-  Flags.setOrigAlign(Align(DL.getABITypeAlignment(Arg.Ty)));
+  Flags.setOrigAlign(DL.getABITypeAlign(Arg.Ty));
 }
 
 template void
@@ -191,11 +194,11 @@ bool CallLowering::handleAssignments(CCState &CCInfo,
 
   unsigned NumArgs = Args.size();
   for (unsigned i = 0; i != NumArgs; ++i) {
-    MVT CurVT = MVT::getVT(Args[i].Ty);
-    if (Handler.assignArg(i, CurVT, CurVT, CCValAssign::Full, Args[i],
-                          Args[i].Flags[0], CCInfo)) {
-      if (!CurVT.isValid())
-        return false;
+    EVT CurVT = EVT::getEVT(Args[i].Ty);
+    if (!CurVT.isSimple() ||
+        Handler.assignArg(i, CurVT.getSimpleVT(), CurVT.getSimpleVT(),
+                          CCValAssign::Full, Args[i], Args[i].Flags[0],
+                          CCInfo)) {
       MVT NewVT = TLI->getRegisterTypeForCallingConv(
           F.getContext(), F.getCallingConv(), EVT(CurVT));
 
@@ -295,15 +298,21 @@ bool CallLowering::handleAssignments(CCState &CCInfo,
     assert(VA.getValNo() == i && "Location doesn't correspond to current arg");
 
     if (VA.needsCustom()) {
-      j += Handler.assignCustomValue(Args[i], makeArrayRef(ArgLocs).slice(j));
+      unsigned NumArgRegs =
+          Handler.assignCustomValue(Args[i], makeArrayRef(ArgLocs).slice(j));
+      if (!NumArgRegs)
+        return false;
+      j += NumArgRegs;
       continue;
     }
 
     // FIXME: Pack registers if we have more than one.
     Register ArgReg = Args[i].Regs[0];
 
-    MVT OrigVT = MVT::getVT(Args[i].Ty);
-    MVT VAVT = VA.getValVT();
+    EVT OrigVT = EVT::getEVT(Args[i].Ty);
+    EVT VAVT = VA.getValVT();
+    const LLT OrigTy = getLLTForType(*Args[i].Ty, DL);
+
     if (VA.isRegLoc()) {
       if (Handler.isIncomingArgumentHandler() && VAVT != OrigVT) {
         if (VAVT.getSizeInBits() < OrigVT.getSizeInBits()) {
@@ -325,7 +334,7 @@ bool CallLowering::handleAssignments(CCState &CCInfo,
           MIRBuilder.buildMerge(Args[i].OrigRegs[0], Args[i].Regs);
           continue;
         }
-        const LLT VATy(VAVT);
+        const LLT VATy(VAVT.getSimpleVT());
         Register NewReg =
             MIRBuilder.getMRI()->createGenericVirtualRegister(VATy);
         Handler.assignValueToReg(NewReg, VA.getLocReg(), VA);
@@ -333,7 +342,6 @@ bool CallLowering::handleAssignments(CCState &CCInfo,
         // or do an unmerge to get the lower block of elements.
         if (VATy.isVector() &&
             VATy.getNumElements() > OrigVT.getVectorNumElements()) {
-          const LLT OrigTy(OrigVT);
           // Just handle the case where the VA type is 2 * original type.
           if (VATy.getNumElements() != OrigVT.getVectorNumElements() * 2) {
             LLVM_DEBUG(dbgs()
@@ -373,7 +381,7 @@ bool CallLowering::handleAssignments(CCState &CCInfo,
       unsigned Offset = VA.getLocMemOffset();
       MachinePointerInfo MPO;
       Register StackAddr = Handler.getStackAddress(Size, Offset, MPO);
-      Handler.assignValueToAddress(ArgReg, StackAddr, Size, MPO, VA);
+      Handler.assignValueToAddress(Args[i], StackAddr, Size, MPO, VA);
     } else {
       // FIXME: Support byvals and other weirdness
       return false;
@@ -458,10 +466,19 @@ bool CallLowering::resultsCompatible(CallLoweringInfo &Info,
 }
 
 Register CallLowering::ValueHandler::extendRegister(Register ValReg,
-                                                    CCValAssign &VA) {
+                                                    CCValAssign &VA,
+                                                    unsigned MaxSizeBits) {
   LLT LocTy{VA.getLocVT()};
-  if (LocTy.getSizeInBits() == MRI.getType(ValReg).getSizeInBits())
+  LLT ValTy = MRI.getType(ValReg);
+  if (LocTy.getSizeInBits() == ValTy.getSizeInBits())
     return ValReg;
+
+  if (LocTy.isScalar() && MaxSizeBits && MaxSizeBits < LocTy.getSizeInBits()) {
+    if (MaxSizeBits <= ValTy.getSizeInBits())
+      return ValReg;
+    LocTy = LLT::scalar(MaxSizeBits);
+  }
+
   switch (VA.getLocInfo()) {
   default: break;
   case CCValAssign::Full:

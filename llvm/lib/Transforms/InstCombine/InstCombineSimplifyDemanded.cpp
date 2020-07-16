@@ -88,7 +88,7 @@ bool InstCombiner::SimplifyDemandedBits(Instruction *I, unsigned OpNo,
                                           Depth, I);
   if (!NewVal) return false;
   if (Instruction* OpInst = dyn_cast<Instruction>(U))
-    salvageDebugInfoOrMarkUndef(*OpInst);
+    salvageDebugInfo(*OpInst);
     
   replaceUse(U, NewVal);
   return true;
@@ -1130,24 +1130,20 @@ Value *InstCombiner::simplifyAMDGCNMemoryIntrinsicDemanded(IntrinsicInst *II,
     return nullptr;
   }
 
-  // Determine the overload types of the original intrinsic.
-  auto IID = II->getIntrinsicID();
-  SmallVector<Intrinsic::IITDescriptor, 16> Table;
-  getIntrinsicInfoTableEntries(IID, Table);
-  ArrayRef<Intrinsic::IITDescriptor> TableRef = Table;
-
   // Validate function argument and return types, extracting overloaded types
   // along the way.
-  FunctionType *FTy = II->getCalledFunction()->getFunctionType();
   SmallVector<Type *, 6> OverloadTys;
-  Intrinsic::matchIntrinsicSignature(FTy, TableRef, OverloadTys);
+  if (!Intrinsic::getIntrinsicSignature(II->getCalledFunction(), OverloadTys))
+    return nullptr;
 
   Module *M = II->getParent()->getParent()->getParent();
   Type *EltTy = IIVTy->getElementType();
-  Type *NewTy = (NewNumElts == 1) ? EltTy : VectorType::get(EltTy, NewNumElts);
+  Type *NewTy =
+      (NewNumElts == 1) ? EltTy : FixedVectorType::get(EltTy, NewNumElts);
 
   OverloadTys[0] = NewTy;
-  Function *NewIntrin = Intrinsic::getDeclaration(M, IID, OverloadTys);
+  Function *NewIntrin =
+      Intrinsic::getDeclaration(M, II->getIntrinsicID(), OverloadTys);
 
   CallInst *NewCall = Builder.CreateCall(NewIntrin, Args);
   NewCall->takeName(II);
@@ -1190,7 +1186,12 @@ Value *InstCombiner::SimplifyDemandedVectorElts(Value *V, APInt DemandedElts,
                                                 APInt &UndefElts,
                                                 unsigned Depth,
                                                 bool AllowMultipleUsers) {
-  unsigned VWidth = cast<VectorType>(V->getType())->getNumElements();
+  // Cannot analyze scalable type. The number of vector elements is not a
+  // compile-time constant.
+  if (isa<ScalableVectorType>(V->getType()))
+    return nullptr;
+
+  unsigned VWidth = cast<FixedVectorType>(V->getType())->getNumElements();
   APInt EltMask(APInt::getAllOnesValue(VWidth));
   assert((DemandedElts & ~EltMask) == 0 && "Invalid DemandedElts!");
 

@@ -16,7 +16,6 @@
 #include "lldb/Core/ValueObjectVariable.h"
 #include "lldb/DataFormatters/ValueObjectPrinter.h"
 #include "lldb/Host/OptionParser.h"
-#include "lldb/Host/StringConvert.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
 #include "lldb/Interpreter/CommandReturnObject.h"
 #include "lldb/Interpreter/OptionArgParser.h"
@@ -200,7 +199,9 @@ public:
   LoadDependentFiles m_load_dependent_files;
 
 private:
-  DISALLOW_COPY_AND_ASSIGN(OptionGroupDependents);
+  OptionGroupDependents(const OptionGroupDependents &) = delete;
+  const OptionGroupDependents &
+  operator=(const OptionGroupDependents &) = delete;
 };
 
 #pragma mark CommandObjectTargetCreate
@@ -271,15 +272,13 @@ protected:
     FileSpec remote_file(m_remote_file.GetOptionValue().GetCurrentValue());
 
     if (core_file) {
-      if (!FileSystem::Instance().Exists(core_file)) {
-        result.AppendErrorWithFormat("core file '%s' doesn't exist",
-                                     core_file.GetPath().c_str());
-        result.SetStatus(eReturnStatusFailed);
-        return false;
-      }
-      if (!FileSystem::Instance().Readable(core_file)) {
-        result.AppendErrorWithFormat("core file '%s' is not readable",
-                                     core_file.GetPath().c_str());
+      auto file = FileSystem::Instance().Open(
+          core_file, lldb_private::File::eOpenOptionRead);
+
+      if (!file) {
+        result.AppendErrorWithFormatv("Cannot open '{0}': {1}.",
+                                      core_file.GetPath(),
+                                      llvm::toString(file.takeError()));
         result.SetStatus(eReturnStatusFailed);
         return false;
       }
@@ -288,18 +287,13 @@ protected:
     if (argc == 1 || core_file || remote_file) {
       FileSpec symfile(m_symbol_file.GetOptionValue().GetCurrentValue());
       if (symfile) {
-        if (FileSystem::Instance().Exists(symfile)) {
-          if (!FileSystem::Instance().Readable(symfile)) {
-            result.AppendErrorWithFormat("symbol file '%s' is not readable",
-                                         symfile.GetPath().c_str());
-            result.SetStatus(eReturnStatusFailed);
-            return false;
-          }
-        } else {
-          char symfile_path[PATH_MAX];
-          symfile.GetPath(symfile_path, sizeof(symfile_path));
-          result.AppendErrorWithFormat("invalid symbol file path '%s'",
-                                       symfile_path);
+        auto file = FileSystem::Instance().Open(
+            symfile, lldb_private::File::eOpenOptionRead);
+
+        if (!file) {
+          result.AppendErrorWithFormatv("Cannot open '{0}': {1}.",
+                                        symfile.GetPath(),
+                                        llvm::toString(file.takeError()));
           result.SetStatus(eReturnStatusFailed);
           return false;
         }
@@ -401,48 +395,34 @@ protected:
           if (module_sp)
             module_sp->SetPlatformFileSpec(remote_file);
         }
+
         if (core_file) {
-          char core_path[PATH_MAX];
-          core_file.GetPath(core_path, sizeof(core_path));
-          if (FileSystem::Instance().Exists(core_file)) {
-            if (!FileSystem::Instance().Readable(core_file)) {
-              result.AppendMessageWithFormat(
-                  "Core file '%s' is not readable.\n", core_path);
+          FileSpec core_file_dir;
+          core_file_dir.GetDirectory() = core_file.GetDirectory();
+          target_sp->AppendExecutableSearchPaths(core_file_dir);
+
+          ProcessSP process_sp(target_sp->CreateProcess(
+              GetDebugger().GetListener(), llvm::StringRef(), &core_file));
+
+          if (process_sp) {
+            // Seems weird that we Launch a core file, but that is what we
+            // do!
+            error = process_sp->LoadCore();
+
+            if (error.Fail()) {
+              result.AppendError(
+                  error.AsCString("can't find plug-in for core file"));
               result.SetStatus(eReturnStatusFailed);
               return false;
-            }
-            FileSpec core_file_dir;
-            core_file_dir.GetDirectory() = core_file.GetDirectory();
-            target_sp->AppendExecutableSearchPaths(core_file_dir);
-
-            ProcessSP process_sp(target_sp->CreateProcess(
-                GetDebugger().GetListener(), llvm::StringRef(), &core_file));
-
-            if (process_sp) {
-              // Seems weird that we Launch a core file, but that is what we
-              // do!
-              error = process_sp->LoadCore();
-
-              if (error.Fail()) {
-                result.AppendError(
-                    error.AsCString("can't find plug-in for core file"));
-                result.SetStatus(eReturnStatusFailed);
-                return false;
-              } else {
-                result.AppendMessageWithFormat(
-                    "Core file '%s' (%s) was loaded.\n", core_path,
-                    target_sp->GetArchitecture().GetArchitectureName());
-                result.SetStatus(eReturnStatusSuccessFinishNoResult);
-              }
             } else {
-              result.AppendErrorWithFormat(
-                  "Unable to find process plug-in for core file '%s'\n",
-                  core_path);
-              result.SetStatus(eReturnStatusFailed);
+              result.AppendMessageWithFormatv("Core file '{0}' ({1}) was loaded.\n", core_file.GetPath(),
+                  target_sp->GetArchitecture().GetArchitectureName());
+              result.SetStatus(eReturnStatusSuccessFinishNoResult);
             }
           } else {
-            result.AppendErrorWithFormat("Core file '%s' does not exist\n",
-                                         core_path);
+            result.AppendErrorWithFormatv(
+                "Unable to find process plug-in for core file '{0}'\n",
+                core_file.GetPath());
             result.SetStatus(eReturnStatusFailed);
           }
         } else {
@@ -525,11 +505,9 @@ public:
 protected:
   bool DoExecute(Args &args, CommandReturnObject &result) override {
     if (args.GetArgumentCount() == 1) {
-      bool success = false;
       const char *target_idx_arg = args.GetArgumentAtIndex(0);
-      uint32_t target_idx =
-          StringConvert::ToUInt32(target_idx_arg, UINT32_MAX, 0, &success);
-      if (success) {
+      uint32_t target_idx;
+      if (llvm::to_integer(target_idx_arg, target_idx)) {
         TargetList &target_list = GetDebugger().GetTargetList();
         const uint32_t num_targets = target_list.GetNumTargets();
         if (target_idx < num_targets) {
@@ -1195,12 +1173,9 @@ protected:
     size_t argc = command.GetArgumentCount();
     // check for at least 3 arguments and an odd number of parameters
     if (argc >= 3 && argc & 1) {
-      bool success = false;
+      uint32_t insert_idx;
 
-      uint32_t insert_idx = StringConvert::ToUInt32(
-          command.GetArgumentAtIndex(0), UINT32_MAX, 0, &success);
-
-      if (!success) {
+      if (!llvm::to_integer(command.GetArgumentAtIndex(0), insert_idx)) {
         result.AppendErrorWithFormat(
             "<index> parameter is not an integer: '%s'.\n",
             command.GetArgumentAtIndex(0));
@@ -1463,11 +1438,9 @@ static void DumpModuleSections(CommandInterpreter &interpreter, Stream &strm,
       strm.Printf("Sections for '%s' (%s):\n",
                   module->GetSpecificationDescription().c_str(),
                   module->GetArchitecture().GetArchitectureName());
-      strm.IndentMore();
-      section_list->Dump(&strm,
+      section_list->Dump(strm.AsRawOstream(), strm.GetIndentLevel() + 2,
                          interpreter.GetExecutionContext().GetTargetPtr(), true,
                          UINT32_MAX);
-      strm.IndentLess();
     }
   }
 }
@@ -2769,10 +2742,8 @@ protected:
                   const char *load_addr_cstr = args.GetArgumentAtIndex(i + 1);
                   if (sect_name && load_addr_cstr) {
                     ConstString const_sect_name(sect_name);
-                    bool success = false;
-                    addr_t load_addr = StringConvert::ToUInt64(
-                        load_addr_cstr, LLDB_INVALID_ADDRESS, 0, &success);
-                    if (success) {
+                    addr_t load_addr;
+                    if (llvm::to_integer(load_addr_cstr, load_addr)) {
                       SectionSP section_sp(
                           section_list->FindSectionByName(const_sect_name));
                       if (section_sp) {
@@ -4020,7 +3991,9 @@ public:
 
 private:
   // For CommandObjectTargetModules only
-  DISALLOW_COPY_AND_ASSIGN(CommandObjectTargetModules);
+  CommandObjectTargetModules(const CommandObjectTargetModules &) = delete;
+  const CommandObjectTargetModules &
+  operator=(const CommandObjectTargetModules &) = delete;
 };
 
 class CommandObjectTargetSymbolsAdd : public CommandObjectParsed {
@@ -4418,7 +4391,9 @@ public:
 
 private:
   // For CommandObjectTargetModules only
-  DISALLOW_COPY_AND_ASSIGN(CommandObjectTargetSymbols);
+  CommandObjectTargetSymbols(const CommandObjectTargetSymbols &) = delete;
+  const CommandObjectTargetSymbols &
+  operator=(const CommandObjectTargetSymbols &) = delete;
 };
 
 #pragma mark CommandObjectTargetStopHookAdd
@@ -4639,8 +4614,8 @@ protected:
     //  First step, make the specifier.
     std::unique_ptr<SymbolContextSpecifier> specifier_up;
     if (m_options.m_sym_ctx_specified) {
-      specifier_up.reset(
-          new SymbolContextSpecifier(GetDebugger().GetSelectedTarget()));
+      specifier_up = std::make_unique<SymbolContextSpecifier>(
+          GetDebugger().GetSelectedTarget());
 
       if (!m_options.m_module_name.empty()) {
         specifier_up->AddSpecification(
@@ -4749,18 +4724,15 @@ protected:
         target.RemoveAllStopHooks();
       }
     } else {
-      bool success;
       for (size_t i = 0; i < num_args; i++) {
-        lldb::user_id_t user_id = StringConvert::ToUInt32(
-            command.GetArgumentAtIndex(i), 0, 0, &success);
-        if (!success) {
+        lldb::user_id_t user_id;
+        if (!llvm::to_integer(command.GetArgumentAtIndex(i), user_id)) {
           result.AppendErrorWithFormat("invalid stop hook id: \"%s\".\n",
                                        command.GetArgumentAtIndex(i));
           result.SetStatus(eReturnStatusFailed);
           return false;
         }
-        success = target.RemoveStopHookByID(user_id);
-        if (!success) {
+        if (!target.RemoveStopHookByID(user_id)) {
           result.AppendErrorWithFormat("unknown stop hook id: \"%s\".\n",
                                        command.GetArgumentAtIndex(i));
           result.SetStatus(eReturnStatusFailed);
@@ -4798,9 +4770,8 @@ protected:
       target.SetAllStopHooksActiveState(m_enable);
     } else {
       for (size_t i = 0; i < num_args; i++) {
-        lldb::user_id_t user_id = StringConvert::ToUInt32(
-            command.GetArgumentAtIndex(i), 0, 0, &success);
-        if (!success) {
+        lldb::user_id_t user_id;
+        if (!llvm::to_integer(command.GetArgumentAtIndex(i), user_id)) {
           result.AppendErrorWithFormat("invalid stop hook id: \"%s\".\n",
                                        command.GetArgumentAtIndex(i));
           result.SetStatus(eReturnStatusFailed);

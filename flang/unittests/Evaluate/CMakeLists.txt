@@ -4,6 +4,10 @@ add_library(FortranEvaluateTesting
   fp-testing.cpp
 )
 
+target_link_libraries(FortranEvaluateTesting
+  LLVMSupport
+)
+
 add_executable(leading-zero-bit-count-test
   leading-zero-bit-count.cpp
 )
@@ -41,6 +45,7 @@ add_executable(expression-test
 )
 
 target_link_libraries(expression-test
+  FortranCommon
   FortranEvaluateTesting
   FortranEvaluate
   FortranSemantics
@@ -64,6 +69,7 @@ add_executable(intrinsics-test
 )
 
 target_link_libraries(intrinsics-test
+  FortranCommon
   FortranEvaluateTesting
   FortranEvaluate
   FortranDecimal
@@ -88,10 +94,12 @@ target_link_libraries(logical-test
 # IEEE exception flags (different use of the word "exception")
 # in the actual hardware floating-point status register, so ensure that
 # C++ exceptions are enabled for this test.
-set_source_files_properties(real.cpp PROPERTIES COMPILE_FLAGS -fexceptions)
+set(LLVM_REQUIRES_EH ON)
+set(LLVM_REQUIRES_RTTI ON)
 add_executable(real-test
   real.cpp
 )
+llvm_update_compile_flags(real-test)
 
 target_link_libraries(real-test
   FortranEvaluateTesting
@@ -130,6 +138,7 @@ add_executable(folding-test
 )
 
 target_link_libraries(folding-test
+  FortranCommon
   FortranEvaluateTesting
   FortranEvaluate
   FortranSemantics
