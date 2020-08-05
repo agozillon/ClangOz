@@ -5025,6 +5025,10 @@ namespace {
             Info.Ctx.getTypeSizeInChars(QTEnd->isPointerType() ? 
                 QTEnd->getPointeeType() : QTEnd).getQuantity();
         
+          int64_t BeginTySz = 
+            Info.Ctx.getTypeSizeInChars(QTBegin->isPointerType() ? 
+                QTBegin->getPointeeType() : QTBegin).getQuantity();
+
           int64_t BeginOffset = APVBegin.getLValueOffset().getQuantity();
           int64_t EndOffset = APVEnd.getLValueOffset().getQuantity();
 
@@ -5052,6 +5056,23 @@ namespace {
                             APVEnd.isNullPointer()); 
 
               ThreadInfo[i].CurrentCall->ThreadArgumentsMap[EndIndex] = APVEnd;
+              
+              // Setting Start Iterator
+              int64_t startOfThreadLoop = ThreadPartitionSize * i; 
+              
+              NewLValPath.clear();
+              for (size_t j = 0; j < APVBegin.getLValuePath().size(); ++j)
+                NewLValPath.push_back((j == 0) ? APVBegin.getLValuePath()[j] :
+                               APVBegin.getLValuePath()[j]
+                                  .ArrayIndex(startOfThreadLoop));
+                                  
+              APVBegin.setLValue(APVBegin.getLValueBase(), 
+                  CharUnits::fromQuantity(BeginTySz * startOfThreadLoop), 
+                  NewLValPath, APVBegin.isLValueOnePastTheEnd(), 
+                  APVBegin.isNullPointer());
+              
+              ThreadInfo[i].CurrentCall->ThreadArgumentsMap[BeginIndex] 
+                  = APVBegin;
           }
         } else {
           QTEnd.dump();

@@ -79,7 +79,6 @@ all_of(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
       _Predicate __pred)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
     
     for (; __first != __last; ++__first)
         if (!__pred(*__first))
@@ -99,7 +98,6 @@ any_of(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
        _Predicate __pred)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
     
     for (; __first != __last; ++__first)
         if (__pred(*__first))
@@ -119,7 +117,6 @@ none_of(_ExecutionPolicy&& __exec, _InputIterator __first,
         _InputIterator __last, _Predicate __pred)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
     
     for (; __first != __last; ++__first)
         if (__pred(*__first))
@@ -139,7 +136,6 @@ for_each(_ExecutionPolicy&& __exec, _ForwardIterator __first,
          _ForwardIterator __last, _Function __f)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
 
     for (; __first != __last; ++__first)
         __f(*__first);
@@ -157,7 +153,6 @@ find(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
      const _Tp& __value_)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
 
     for (; __first != __last; ++__first)
         if (*__first == __value_)
@@ -177,7 +172,6 @@ find_if(_ExecutionPolicy&& __exec, _InputIterator __first,
         _InputIterator __last, _Predicate __pred)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
     
     for (; __first != __last; ++__first)
         if (__pred(*__first))
@@ -197,7 +191,6 @@ find_if_not(_ExecutionPolicy&& __exec, _InputIterator __first,
             _InputIterator __last, _Predicate __pred)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
     
     for (; __first != __last; ++__first)
         if (!__pred(*__first))
@@ -219,7 +212,7 @@ __find_first_of_ce(_ExecutionPolicy&& __exec, _ForwardIterator1 __first1,
 {
     // only parallelize/partition the outer loop
     __BeginEndIteratorPair(__first1, __last1);
-    __IteratorLoopStep(__first1, 1);
+/*    __IteratorLoopStep(__first1, 1);*/
         
     for (; __first1 != __last1; ++__first1)
         for (_ForwardIterator2 __j = __first2; __j != __last2; ++__j)
@@ -275,7 +268,6 @@ count(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
     typename iterator_traits<_InputIterator>::difference_type __r(0);
     
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
     __ReduceVariable(__r, ReductionType::Accumulate, OperatorType::PreInc);
     
     for (; __first != __last; ++__first)
@@ -297,8 +289,7 @@ count_if(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     typename iterator_traits<_InputIterator>::difference_type __r(0);
  
-     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
+    __BeginEndIteratorPair(__first, __last);
     __ReduceVariable(__r, ReductionType::Accumulate, OperatorType::PreInc);
     
     for (; __first != __last; ++__first)
@@ -322,7 +313,7 @@ mismatch(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
          _BinaryPredicate __pred)
 {
     __BeginEndIteratorPair(__first1, __last1);
-    __IteratorLoopStep(__first1, 1);
+/*    __IteratorLoopStep(__first1, 1);*/
     __IteratorLoopStep(__first2, 1);
     
     for (; __first1 != __last1; ++__first1, (void) ++__first2)
@@ -355,7 +346,6 @@ __copy_constexpr(_ExecutionPolicy&& __exec, _InputIterator __first,
                  _InputIterator __last, _OutputIterator __result)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
     __IteratorLoopStep(__result, 1);
       
     for (; __first != __last; ++__first, (void) ++__result)
@@ -392,8 +382,7 @@ __copy_backward_constexpr(_ExecutionPolicy&& __exec,
                           _OutputIterator __result)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
-/*    __IteratorLoopStep(__last, 1);*/
+
     __IteratorLoopStep(__result, 1);
     
     for (; __first != __last;)
@@ -442,7 +431,7 @@ copy_if(_ExecutionPolicy&& __exec, _InputIterator __first,
         _InputIterator __last, _OutputIterator __result, _Predicate __pred)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
+/*    __IteratorLoopStep(__first, 1);*/
 /*    __IteratorLoopStep(__result, 1);*/
     
     for (; __first != __last; ++__first)
@@ -527,7 +516,6 @@ transform(_ExecutionPolicy&& __exec, _InputIterator __first,
           _InputIterator __last, _OutputIterator __result, _UnaryOperation __op)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
     __IteratorLoopStep(__result, 1);
     
     for (; __first != __last; ++__first, (void) ++__result)
@@ -546,7 +534,6 @@ transform(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
           _OutputIterator __result, _BinaryOperation __binary_op)
 {
     __BeginEndIteratorPair(__first1, __last1);
-    __IteratorLoopStep(__first1, 1);
     __IteratorLoopStep(__first2, 1);
     __IteratorLoopStep(__result, 1);
 
@@ -647,7 +634,6 @@ __set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
     auto __result_start = __result;
     
     __BeginEndIteratorPair(__first1, __last1);
-    __IteratorLoopStep(__first1, 1);
     __ThreadLocalCopy(__first2);
 
     // TODO/FIXME: This implementation is very unoptimal, perhaps need to 
@@ -783,7 +769,6 @@ __fill(_ExecutionPolicy&& __exec, _ForwardIterator __first,
        _ForwardIterator __last, const _Tp& __value_,  forward_iterator_tag)
 {
     __BeginEndIteratorPair(__first, __last);
-    __IteratorLoopStep(__first, 1);
     
     for (; __first != __last; ++__first)
         *__first = __value_;
