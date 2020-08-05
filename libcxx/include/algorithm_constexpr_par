@@ -375,8 +375,62 @@ copy(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
         __unwrap_iter(__first), __unwrap_iter(__last), __unwrap_iter(__result));
 }
 
-// copy_if, TODO: not currently working, need to work out a reduce for the 
-//  result, the main issue is the optional increment
+
+// copy_backward
+// This doesn't seem to have an execution policy overload but it seems simple to
+// implement for us.
+
+template <class _ExecutionPolicy, class _BidirectionalIterator, 
+          class _OutputIterator>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy,
+                                                              _OutputIterator>
+__copy_backward_constexpr(_ExecutionPolicy&& __exec, 
+                          _BidirectionalIterator __first, 
+                          _BidirectionalIterator __last, 
+                          _OutputIterator __result)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+/*    __IteratorLoopStep(__last, 1);*/
+    __IteratorLoopStep(__result, 1);
+    
+    for (; __first != __last;)
+        *--__result = *--__last;
+/*    while (__first != __last)*/
+/*        *--__result = *--__last;*/
+    return __result;
+}
+
+template <class _ExecutionPolicy, class _BidirectionalIterator, 
+          class _OutputIterator>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17_WITH_IS_CONSTANT_EVALUATED
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                              _ExecutionPolicy,
+                                                              _OutputIterator>
+__copy_backward(_ExecutionPolicy&& __exec, _BidirectionalIterator __first, 
+                _BidirectionalIterator __last, _OutputIterator __result)
+{
+    return __copy_backward_constexpr(__exec, __first, __last, __result);
+}
+
+
+template <class _ExecutionPolicy, class _BidirectionalIterator1, 
+          class _BidirectionalIterator2>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17_WITH_IS_CONSTANT_EVALUATED
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                        _ExecutionPolicy, 
+                                                        _BidirectionalIterator2>
+copy_backward(_ExecutionPolicy&& __exec, _BidirectionalIterator1 __first, 
+              _BidirectionalIterator1 __last, _BidirectionalIterator2 __result)
+{
+    return _VSTD::__copy_backward_constexpr(__exec, __unwrap_iter(__first),
+                                            __unwrap_iter(__last),
+                                            __unwrap_iter(__result));
+}
+
+// copy_if
 
 template<class _ExecutionPolicy, class _InputIterator, class _OutputIterator, 
          class _Predicate>
