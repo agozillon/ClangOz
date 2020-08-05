@@ -72,6 +72,9 @@ using llvm::APInt;
 using llvm::APSInt;
 using llvm::APFloat;
 using llvm::Optional;
+  
+static std::mutex eval_lock;
+static std::mutex eval_lock2;
 
 namespace {
   struct LValue;
@@ -513,6 +516,10 @@ namespace {
     
     /// TODO/FIXME: Convert to vector or array, no real need for this to be a
     /// map anymore
+    /// Similar to temporaries these are created within the current scope a loop
+    /// that's being parallelized is found in and we wish to maintain 
+    /// appropriate ownership of the values. So these essentially "shadow" 
+    /// existing variables on a per thread basis
     typedef std::map<unsigned, APValue> ThreadArgMapTy;
     ThreadArgMapTy ThreadArgumentsMap;
 
@@ -545,7 +552,7 @@ namespace {
     typedef std::map<MapKeyTy, APValue> MapTy;
     /// Temporaries - Temporary lvalues materialized within this stack frame.
     MapTy Temporaries;
-
+    
     /// CallLoc - The location of the call expression for this call.
     SourceLocation CallLoc;
 
@@ -3081,7 +3088,6 @@ static bool HandleLValueComplexElement(EvalInfo &Info, const Expr *E,
 static bool evaluateVarDeclInit(EvalInfo &Info, const Expr *E,
                                 const VarDecl *VD, CallStackFrame *Frame,
                                 APValue *&Result, const LValue *LVal) {
-
   // If this is a parameter to an active constexpr function call, perform
   // argument substitution.
   if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(VD)) {
@@ -3187,6 +3193,7 @@ static bool evaluateVarDeclInit(EvalInfo &Info, const Expr *E,
   }
 
   Result = VD->getEvaluatedValue();
+
   return true;
 }
 
@@ -3456,10 +3463,9 @@ template<typename SubobjectHandler>
 typename SubobjectHandler::result_type
 findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
               const SubobjectDesignator &Sub, SubobjectHandler &handler) {
-  static std::mutex arr_lock;
-//  it works here with no error, and is 0m24.144s vs 0m38.228s on the benchmark
-//  very high system costs as the lock is requested often
-  std::lock_guard<std::mutex> locked(arr_lock);
+  // it works here with no error, and is 0m24.144s vs 0m38.228s on the benchmark
+  // very high system costs as the lock is requested often
+  std::lock_guard<std::mutex> locked(eval_lock2);
   
   // agozillon: This lock "fixes" the issue, but its not ideal so there are 
   // several race conditions in this function that pose problems, the lock seems
@@ -7024,6 +7030,15 @@ static bool HandleFunctionCall(SourceLocation CallLoc,
                                ArrayRef<const Expr*> Args, const Stmt *Body,
                                EvalInfo &Info, APValue &Result,
                                const LValue *ResultSlot) {
+                               
+  if (Info.getLangOpts().ExperimentalConstexprParallel && 
+      Callee->getNameAsString() == "__ThreadLock")
+    eval_lock.lock();
+  
+  if (Info.getLangOpts().ExperimentalConstexprParallel &&
+      Callee->getNameAsString() == "__ThreadUnlock")
+    eval_lock.unlock();
+
   ArgVector ArgValues(Args.size());
   if (!EvaluateArgs(Args, ArgValues, Info, Callee))
     return false;
