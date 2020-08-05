@@ -642,6 +642,93 @@ set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
                       typename iterator_traits<_InputIterator2>::value_type>());
 }
 
+// fill_n
+
+template <class _ExecutionPolicy, class _OutputIterator, class _Size, class _Tp>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                             _ExecutionPolicy, 
+                                                             _OutputIterator>
+__fill_n(_ExecutionPolicy&& __exec, _OutputIterator __first, _Size __n, 
+         const _Tp& __value_)
+{
+   // NOTE/FIXME: We do not handle literals at the moment, it's not 
+    // simple to create thread independent values like it is for 
+    // temproaries and arguments as they are not stored within the 
+    // CallStackFrame. It's also not easily feasible to store them as 
+    // temporaries. As temporaries need a pointer to the Expression or 
+    // Declarator to access the APValue, however a literal has a new 
+    // Expr for every literal i.e. the address of the literal passed to 
+    // the loopwrapper function is not the same as the address of the 
+    // literal in the for loop. The only way I can think of doing this 
+    // for the time being is creating a new type of loop wrapper that will
+    // return the literal value and it'll have to be used at the exact 
+    // location the literal is being used. However, this would look weird,
+    // be a little weird to reason about with the rest of the values and 
+    // come at a performance cost. This can be attempted in the future, 
+    // but for now it's simple to work around by using temporarily declared
+    // variables in place of literals
+    int __end = 0;
+    __PartitionUsingIndex(__n, __end, EqualityType::GT);
+    __IteratorLoopStep(__first, 1);
+        
+    for (; __n > __end; ++__first, (void) --__n)
+        *__first = __value_;
+    return __first;
+}
+
+template <class _ExecutionPolicy, class _OutputIterator, class _Size, class _Tp>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                             _ExecutionPolicy, 
+                                                             _OutputIterator>
+fill_n(_ExecutionPolicy&& __exec, _OutputIterator __first, _Size __n, 
+       const _Tp& __value_)
+{
+   return _VSTD::__fill_n(__exec, __first, __convert_to_integral(__n), __value_);
+}
+
+// fill
+
+template <class _ExecutionPolicy, class _ForwardIterator, class _Tp>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                             _ExecutionPolicy, 
+                                                             void>
+__fill(_ExecutionPolicy&& __exec, _ForwardIterator __first, 
+       _ForwardIterator __last, const _Tp& __value_,  forward_iterator_tag)
+{
+    __BeginEndIteratorPair(__first, __last);
+    __IteratorLoopStep(__first, 1);
+    
+    for (; __first != __last; ++__first)
+        *__first = __value_;
+}
+
+template <class _ExecutionPolicy, class _RandomAccessIterator, class _Tp>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                             _ExecutionPolicy, 
+                                                             void>
+__fill(_ExecutionPolicy&& __exec, _RandomAccessIterator __first, 
+       _RandomAccessIterator __last,const _Tp& __value_, 
+       random_access_iterator_tag)
+{
+    _VSTD::fill_n(__exec, __first, __last - __first, __value_);
+}
+
+template <class _ExecutionPolicy, class _ForwardIterator, class _Tp>
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
+                                                             _ExecutionPolicy, 
+                                                             void>
+fill(_ExecutionPolicy&& __exec, _ForwardIterator __first, 
+     _ForwardIterator __last, const _Tp& __value_)
+{
+    _VSTD::__fill(__exec, __first, __last, __value_, 
+        typename iterator_traits<_ForwardIterator>::iterator_category());
+}
+
 _LIBCPP_END_NAMESPACE_STD
 
 _LIBCPP_POP_MACROS
