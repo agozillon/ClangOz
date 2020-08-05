@@ -4876,91 +4876,10 @@ namespace {
     llvm::errs() << "End PrintAPValue \n";
   }
   
-  // This is going to search the loop body for variables that are being clearly
-  // altered in the loop and that require partitioning across threads and then
-  // reduction once complete...
-  // 
-  // We need to find these as the pointer of the object (e.g. a VarDecl) is 
-  // actually a key into the map of temporaries (for non temporaries its simply
-  // an integer representing the index in the parameter list). It may be 
-  // possible to cut out the middle man if we just assume all temporaries inside 
-  // of a call stack should be reduced or alter the way the map works when used 
-  // in a multithreaded context, but it could perhaps have some side effects.
-  //
-  // It's split up from the other gatherer to simplify things, if it's possible
-  // to merge them together in a simpler way then it should be done.
-  class LoopBodyDependentsGatherer 
-    : public ConstStmtVisitor<LoopBodyDependentsGatherer, bool, 
-                              /*Binary||Unary*/bool, /*Enum Val*/int> {
-      EvalInfo Info;
-      std::vector<EvalInfo> &ThreadInfo;
-      std::vector<std::tuple<bool, int, const void*>> &RedList;
-      
-    public:
-      LoopBodyDependentsGatherer(EvalInfo Info,
-                                 std::vector<EvalInfo> &ThreadInfo,
-                                 std::vector<std::tuple<bool, int, const void*>> 
-                                    &RedList) 
-                                 : Info(Info), ThreadInfo(ThreadInfo), 
-                                   RedList(RedList) {}
-      
-      // This may be a little interesting if it has double nested loops, if it
-      // isn't really functioning, this entry function should be renamed!
-      bool VisitForStmt(const ForStmt *FS, bool BinaryOrUnary, int OpCode) {
-        Visit(FS->getBody(), BinaryOrUnary, OpCode);
-        return true;
-      }
-      
-      bool VisitStmt(const Stmt *S, bool BinaryOrUnary, int OpCode) {
-        for (auto *Child : S->children())
-          Visit(Child, BinaryOrUnary, OpCode);
-        return true;
-      }
-      
-      // not sure there is a valid use for checking/distinguishing for a binary 
-      // operator when trying to look for a reduce
-      bool VisitBinaryOperator(const BinaryOperator *BO, bool BinaryOrUnary, 
-                               int OpCode) {
-//        if (BO->getSubExpr())
-//          Visit(BO->getSubExpr(), true, OpCode);
-        return true;
-      }
   
-      // this may get a little complex, what happens if the Expr the 
-      // UnaryOperator is working on is a large complex expression, you could 
-      // perhaps ask the Expr to evaluate itself, but that may not be possible 
-      // and we're doing a lot of unneccesary work. Otherwise, we can try and 
-      // walk the expression to find what we need..
-      //
-      // The inverse of this whole idea may be to get the pointer key for each
-      // temporary or argument and walk the AST to find any occurences of the 
-      // variable with any operators it comes into contact with. As the 
-      // information we need to perform a "reduce" is basically:
-      //   1) The variable so we can find the correct APValue at the end of each
-      //      parallel invocation
-      //   2) The correct operator we need to reduce things with, this will only
-      //      work with simple operators, a user defined/opaue operator is 
-      //      likely another world of complexity if it's feasible.
-      bool VisitUnaryOperator(const UnaryOperator *UO, bool BinaryOrUnary, 
-                              int OpCode) {
-        if (UO->getSubExpr())
-          Visit(UO->getSubExpr(), false, UO->getOpcode());
-        return true;
-      }
 
-      bool VisitDeclRefExpr(const DeclRefExpr *DRE, bool BinaryOrUnary, 
-                            int OpCode) {
 
-        if (Info.CurrentCall->getCurrentTemporary(DRE->getDecl()) 
-            && OpCode > 0)
-          RedList.push_back(std::tuple<bool, int, const void*>
-                              (BinaryOrUnary, OpCode, 
-                               static_cast<const void*>(DRE->getDecl())));
-        
-        return true;
-      }
 
-  };
 
     APValue* GetArgOrTemp(llvm::Any ArgOrTemp, CallStackFrame* CSF) {
       if (llvm::any_isa<const void*>(ArgOrTemp)) {
