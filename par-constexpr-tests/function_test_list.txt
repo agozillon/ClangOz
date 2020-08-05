@@ -78,6 +78,10 @@ Working:
 Not Working:
 * copy_if
 
+Not Implementable Optimally (or sometimes they can be but the results would be
+not ideal e.g. std::generate):
+* generate
+
 Maybe could be made to work with some difficulty:
 * find_end
 * adjacent_find
@@ -117,16 +121,23 @@ search : won't work for similar reasons to find_end (infinite while loop, with
         better in parallel than any serial implementation.
 search_n : same problems as search/find_end
 copy : works
-copy_if : broken at the moment
-copy_n : 
+copy_if : broken at the moment, fixable but unoptimally with a lock, would be 
+  slower than sequential
+copy_n : works
 copy_backward : 
 move : 
 move_backward :
-fill : 
-fill_n :
-transform :
-generate :
-generate_n :
+fill : works
+fill_n : works
+transform : works
+generate : It's simple to implement this but I am not sure it's worthwhile 
+    doing. The canonical example from cppreference essentially has a function
+    generate the numbers from a shared global value that gets incremented and 
+    returned each invocation. This basically means a lock would be required 
+    on the vast majority of the function, making it slower than it would be 
+    sequentially. Alternatively, you could not lock it but this means the 
+    function has questionable use, as the results would be random... 
+generate_n : same as generate
 remove : 
 remove_if :
 remove_copy :
