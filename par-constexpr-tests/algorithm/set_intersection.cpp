@@ -4,109 +4,77 @@
 #include <type_traits>
 #include <iterator>
 #include <execution>
+#include <random>
 
 using namespace __cep::experimental;
 
 #include "../helpers/test_helpers.hpp"
-/*
-  This is as simple as I can get the set_intersection algorithm with it still 
-  passing the libcxx tests... but it's still not that ideal as ++__first1 is not 
-  really guaranteed to increment
-  
-  OK, I SHOULD LOOK INTO USING PRAGMAS/ATTRs/OR SYCL STYLE FUNTION HACK OR 
-  SOMETHING TO CONVEY INFORMATION, CODE ANALYSIS IS NON-TRIVIAL AND HAS MANY 
-  EDGE CASES e.g: 
-    How do I tell ++result apart from ++__first1 or ++__first2 when I am 
-    looking at the below chunk of code:
-   
-    for (; __first1 != __last1;) {
-      if (__first2 == __last2)
-        break;
-        
-      if (__comp(*__first1, *__first2)) {
-        ++__first1;
-      } else {
-          if (!__comp(*__first2, *__first1))
-          {
-              *__result = *__first1;
-              ++__result;
-              ++__first1;
-          }
-          ++__first2;
-      }
-    }
-  
-   The iterators containing the actual iteration space need to be treated 
-   differently from the result: 
-     1) The compiler needs to move at least __first1 to a different start 
-        location per thread
-     2) It needs to realize that result likely has to be made private across 
-        the threads and then merged into a single result
-     3) It needs to realize that __first2 should neither be set to a new start
-        location per thread (as we only care about the outer loop when 
-        parallelizing), should be privatized but should not be merged into a 
-        single final result
-        
-   Asides from the complexity, the more complex the analyiss the larger the 
-   "startup cost" penalty for making something multithreaded.
-   
-   Coming up with some kind of syntax or semantics for passing information to 
-   the compiler is possibly going to be a nightmare in itself though.. at the 
-   very baseline a simple "can it work" test interface could be done with 
-   noop/id wrapper functions..although likely to come at a non-trivial 
-   compile time cost. A proper interface may be builtins or pragmas/attributes
-   that can convey the information without causing the constexpr code to have an
-   extra non-relevant layer to invoke
-   
-   Saying all that it sort of works with the above function at the moment, minus 
-   the difficulty of working out how to 1)ohandle this particular flavor 
-   of reduction and 2) notify the compiler that it needs to reduce that variable
-   and in what way, it's notable that count_if already does a reduction
-    
-    the redlist is 0 interestingly, so it is possible we could work out the 
-    issue of not knowing what to reduce and how to still, perhaps its because 
-    its an ASSIGNMENT and not an postinc etc. 
-    
-    
-*/
+
 
 template <typename T, int N, bool ForceRuntime = false>
-constexpr auto set_intersection_ov1() {
+constexpr auto set_intersection_ov1(auto intersection_arr) {
   std::array<T, N> out {}; // would be better as a vector, but no constexpr 
                           // vector yet in the std library
   std::array<T, N> arr {};
-  std::array<T, 6> arr2 {1, 0, 12, 16, 17, 48}; 
     
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i;
     
-//  auto first1 = arr.begin(); 
-//  auto first2 = arr2.begin(); 
-//  
-//  int count = 0;
-//  for ( auto f1 = first1; f1 != arr.end(); ++f1)
-//    for ( auto f2 = first2; f2 != arr2.end(); ++f2)
-//      count++;
-//  
-//  std::cout << count << "\n";
-  // TODO: check if this works with uneven iterators, I think it won't.
   if constexpr (ForceRuntime) {
     std::cout << "is constant evaluated: " 
               << std::is_constant_evaluated() << "\n";
-    std::set_intersection(arr.begin(), arr.end(), arr2.begin(), arr2.end(),
-                          out.begin());
+    std::set_intersection(arr.begin(), arr.end(), intersection_arr.begin(), 
+                          intersection_arr.end(), out.begin());
   } else {
     std::set_intersection(execution::ce_par, arr.begin(), arr.end(), 
-                          arr2.begin(), arr2.end(), out.begin());
+                          intersection_arr.begin(), intersection_arr.end(), 
+                          out.begin());
   }
   
    return out; 
 }
 
-int main() {
-  constexpr auto output_ov1 = set_intersection_ov1<int, 32>();
-  auto runtime_ov1 = set_intersection_ov1<int, 32, true>();
+template <typename T, int Sz, int Max>
+consteval auto rnd_arry() {
+  auto tmp = pce::utility::generate_array_within_range<T, Sz>(0, Max);
+  pce::utility::quick_sort(begin(tmp), end(tmp));
+  auto arr = pce::utility::remove_dups_from_sorted<T, Sz>(tmp);
+  return arr;
+}
+
+template <typename T>
+constexpr bool compare_vals(auto arr, auto arr2) {
+  pce::utility::quick_sort(begin(arr), end(arr));
+  pce::utility::quick_sort(begin(arr2), end(arr2));
+  // all this really does is push all 0's to the back, so its not full proof
+  auto tmp = pce::utility::remove_dups_from_sorted<T, arr.size()>(arr);
+  auto tmp2 = pce::utility::remove_dups_from_sorted<T, arr2.size()>(arr2);
+
+  size_t max = (tmp.size() > tmp2.size()) ? tmp2.size() : tmp.size();
+
+  for (int i = 0; i < max; i++) {  
+    if (tmp[i] != tmp2[i])
+      return false;
+  }
   
+  return true;
+}
+
+int main() {
+  constexpr auto intersection_arr = rnd_arry<int, 16, 31>();
+  
+//  for (int i = 0; i < intersection_arr.size(); ++i) {
+//    std::cout << intersection_arr[i] << " ";
+//  }
+  
+  constexpr auto output_ov1 = set_intersection_ov1<int, 32>(intersection_arr);
+  auto runtime_ov1 = set_intersection_ov1<int, 32, true>(intersection_arr);
+
+  constexpr bool b1 = compare_vals<int>(intersection_arr, output_ov1);
+  bool b2 = compare_vals<int>(intersection_arr, runtime_ov1);
+
+  std::cout << "runtime & compile time intersection list equal " << (b1 & b2) << "\n";
+
   for (int i = 0; i < 32; ++i) {
     std::cout << output_ov1[i] << " ";
   }

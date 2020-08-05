@@ -17,12 +17,7 @@ using namespace __cep::experimental;
 */
 
 template <typename T, int N, bool ForceRuntime = false>
-constexpr auto for_each_ov1() {
-  // this is just here to make sure the runtime iteration is actually executing
-  // at runtime
-  if constexpr (ForceRuntime) 
-    std::cout << "is constant evaluated: " << std::is_constant_evaluated() << "\n";
-
+constexpr auto copy_if_ov1() {
   std::array<T, N> arr {};
   std::array<T, N> arr_copy {};
     
@@ -44,8 +39,8 @@ constexpr auto for_each_ov1() {
 }
 
 int main() {
-  constexpr auto output_ov1 = for_each_ov1<int, 32>();
-  auto runtime_ov1 = for_each_ov1<int, 32, true>();
+  constexpr auto output_ov1 = copy_if_ov1<int, 32>();
+  auto runtime_ov1 = copy_if_ov1<int, 32, true>();
 
   for (auto r : runtime_ov1)
     std::cout << r << "\n";
