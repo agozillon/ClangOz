@@ -4876,21 +4876,42 @@ namespace {
     llvm::errs() << "End PrintAPValue \n";
   }
   
-  
-
-
-
-
-    APValue* GetArgOrTemp(llvm::Any ArgOrTemp, CallStackFrame* CSF) {
-      if (llvm::any_isa<const void*>(ArgOrTemp)) {
-        auto *key = llvm::any_cast<const void *>(ArgOrTemp);
-        return CSF->getCurrentTemporary(key);
-      }
-    
-      auto index = llvm::any_cast<unsigned>(ArgOrTemp);
-      return CSF->getArguments(index);
+  APValue* GetArgOrTemp(llvm::Any ArgOrTemp, CallStackFrame* CSF) {
+    if (llvm::any_isa<const void*>(ArgOrTemp)) {
+      auto key = llvm::any_cast<const void *>(ArgOrTemp);
+      return CSF->getCurrentTemporary(key);
     }
+  
+    auto index = llvm::any_cast<unsigned int>(ArgOrTemp);
+    return CSF->getArguments(index);
+  }
 
+  void SetArgOrTemp(llvm::Any ArgOrTemp, CallStackFrame* CSF, APValue SetTo,
+                    bool ThreadLocal=true) {
+    if (llvm::any_isa<const void*>(ArgOrTemp)) {
+      auto key = llvm::any_cast<const void *>(ArgOrTemp);
+
+      if (!CSF->getCurrentTemporary(key))
+        CSF->Temporaries[std::pair<const void *, unsigned>(key, 0)] = SetTo;
+      else
+        *CSF->getCurrentTemporary(key) = SetTo;
+
+      return;
+    }
+    
+
+    // The CallStackFrame maintains a seperate map for ThreadLocal arguments as
+    // the original arguments are not owned by the CallStackFrame and we have to 
+    // shadow them rather than use them directly to make maintianing their 
+    // lifetime easier. This is opposed to the temporarys which are owned by the
+    // CallStackFrame and can be handled simpler.
+    auto index = llvm::any_cast<unsigned int>(ArgOrTemp);
+    if (ThreadLocal)
+      CSF->ThreadArgumentsMap[index] = SetTo;
+    else
+      CSF->Arguments[index] = SetTo;
+  }
+  
   //  Experiment at creating someway to pass information into Clang rather than 
   //  trying to analyize which can be extremely difficult.
   //  
