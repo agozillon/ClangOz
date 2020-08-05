@@ -555,6 +555,82 @@ transform(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
     return __result;
 }
 
+// Taken from: https://tristanbrindle.com/posts/a-more-useful-compile-time-quicksort 
+// libcxx's sort currently isn't constexpr and until I get around to tinkering 
+// with it I thought borrowing this quicksort implementation for the time being
+// is ideal!
+namespace __details {
+
+template <typename RAIt>
+constexpr RAIt next(RAIt it,
+                    typename std::iterator_traits<RAIt>::difference_type n = 1)
+{
+    return it + n;
+}
+
+template <typename RAIt>
+constexpr auto distance(RAIt first, RAIt last) -> long
+{
+    return last - first;
+}
+
+template<class ForwardIt1, class ForwardIt2>
+constexpr void iter_swap(ForwardIt1 a, ForwardIt2 b)
+{
+    auto temp = std::move(*a);
+    *a = std::move(*b);
+    *b = std::move(temp);
+}
+
+template<class InputIt, class UnaryPredicate>
+constexpr InputIt find_if_not(InputIt first, InputIt last, UnaryPredicate q)
+{
+    for (; first != last; ++first) {
+        if (!q(*first)) {
+            return first;
+        }
+    }
+    return last;
+}
+
+template<class ForwardIt, class UnaryPredicate>
+constexpr ForwardIt partition(ForwardIt first, ForwardIt last, UnaryPredicate p)
+{
+    first = __details::find_if_not(first, last, p);
+    if (first == last) return first;
+
+    for(ForwardIt i = __details::next(first); i != last; ++i){
+        if(p(*i)){
+            __details::iter_swap(i, first);
+            ++first;
+        }
+    }
+    return first;
+}
+
+template<class RAIt, class Compare = std::less<typename std::iterator_traits<RAIt>::value_type>>
+constexpr void quick_sort(RAIt first, RAIt last, Compare cmp = Compare{})
+{
+    using ElemType = typename std::iterator_traits<RAIt>::value_type;
+    
+    auto const N = __details::distance(first, last);
+    if (N <= 1) return;
+    auto const pivot = *__details::next(first, N / 2);
+
+    auto const middle1 = __details::partition(first, last, 
+      [=](ElemType const& elem){
+        return cmp(elem, pivot);
+    });
+    auto const middle2 = __details::partition(middle1, last, 
+      [=](ElemType const& elem){
+        return !cmp(pivot, elem);
+    });
+    quick_sort(first, middle1, cmp); // assert(std::is_sorted(first, middle1, cmp));
+    quick_sort(middle2, last, cmp);  // assert(std::is_sorted(middle2, last, cmp));
+}
+
+}
+
 // set_intersection
 
 template <class _Compare, class _InputIterator1, class _InputIterator2, 
@@ -568,27 +644,31 @@ __set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
                    _InputIterator2 __last2, _OutputIterator __result, 
                    _Compare __comp)
 {
+    auto __result_start = __result;
+    
     __BeginEndIteratorPair(__first1, __last1);
     __IteratorLoopStep(__first1, 1);
-    // Perhaps not correct to make __first2 an iteratorloopstep and if not then
-    // perhaps need a better name for it...
-/*    __IteratorLoopStep(__first2, 1);*/
+    __ThreadLocalCopy(__first2);
 
-    // FIXME: try to remove this and remove the temp swap from the reduction 
-    // algorithm, i wonder if the fact that we start at offsets and need to 
-    // do a complex reduction is because of this
-    __IteratorLoopStep(__result, 1);
-    
-    /*The hard part is going to be working out the correct reduce/name for this
-      it should be an "ordered" assignment, e.g. values returned first should
-      go early in the result array, as __result will not be filled with values
-      in the same index location*/
-    __ReduceVariable(__result, 
-                     ReductionType::Ordered, 
-                     OperatorType::Assign);
-    
-    /*Afterwards the iterators should end in the correct location if 
-      possible..*/
+    // TODO/FIXME: This implementation is very unoptimal, perhaps need to 
+    // rollback to the much faster, but perhaps less "correct" implementation.
+    //
+    // While this implementation creates the correct results it's not incredibly
+    // optimal as it makes use of a lock and then has to sort the results again
+    // and the sorting algorithm is not parallelized at the moment. 
+    //
+    // Implementing the sort segment inside of the compiler as a reduction 
+    // step via one of the wrapper functions like __ReduceVariable isn't simple 
+    // as it requires invoking the equality operation within the compiler on 
+    // each element to reorder the components. As for example having to reorder
+    // an object with an overloaded equality operator of arbitrary complexity 
+    // isn't feasible with a regular equality check (you could easily implement
+    // a sort inside the compielr for base types like int, float etc.).
+    //
+    // The lock basically makes this run around the same speed as the normal 
+    // set_intersection over a large set of values. The quick_sort algorithm
+    // makes it run a fair chunk slower. The previous more incorrect 
+    // implementation that worked without locks was quicker, but I'd have to
     for (; __first1 != __last1;) {
       if (__first2 == __last2)
         break;
@@ -598,14 +678,18 @@ __set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
       } else {
           if (!__comp(*__first2, *__first1))
           {
+              __ThreadLock();
               *__result = *__first1;
               ++__result;
+              __ThreadUnlock();
               ++__first1;
+      
           }
           ++__first2;
       }
     }
-    
+
+    __details::quick_sort(__result_start, __result);
 
     return __result;
 }
