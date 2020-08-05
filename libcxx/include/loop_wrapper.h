@@ -19,7 +19,7 @@ namespace cest::loop_wrapper {
   };
   
   enum OperatorType { 
-    None = 0,
+    OperatorNone = 0,
     PostInc = 1,
     PreInc = 2,
     PostDec = 3,
@@ -27,14 +27,24 @@ namespace cest::loop_wrapper {
     Assign = 5,
   };
   
+  enum EqualityType {
+    EqualityNone = 0,
+    LT = 1,   // <
+    GT = 2,   // >
+    LTEq = 3, // <=
+    GTEq = 4, // >=
+    NEq = 5,  // !=
+    Eq = 6,   // ==
+  };
+  
   /*
      Takes the Argument Iter which is the variable we are trying to say has a 
      step size of StepSize.
   */
   template <typename T>
-  constexpr void __IteratorLoopStep(T Iter, int StepSize) {}
+  constexpr void __IteratorLoopStep(T Iter, int StepSize){}
   
-    /*
+  /*
      Used by the compiler to calculate the loops extent and helps it work out
      how to partition the loop across cores by allowing the calculation of 
      begining and end segments of the partitions. 
@@ -44,9 +54,42 @@ namespace cest::loop_wrapper {
      iterators and the != is the end condition of the loop.
   */
   template <typename T, typename T2>
-  constexpr void __BeginEndIteratorPair(T Begin, T2 End) {}
+  constexpr void __BeginEndIteratorPair(T Begin, T2 End){}
 
+  /*
+    Asks the compiler to create a copy of the variable per thread which can be 
+    modified seperately, on it's own there's no semantics for unifying the data.
+    
+    A lot of the other wrappers in here will create thread local copies by 
+    default. For example, IteratorLoopStep will create local copies of the 
+    iterator set at certain offsets for each thread, in such cases there is no
+    requirement for this wrapper.
+  */
+  template <typename T>
+  constexpr void __ThreadLocalCopy(T Var){}
 
+  /*
+    This will aquire a lock stopping the segments until the 
+    __ThreadUnlock call from being run in parallel. It's incorrect to call this
+    multiple times in a row without invoking a __ThreadUnlock call, it will 
+    cause a compiler assertion.
+  */
+  constexpr bool __ThreadLock(){ return true; }
+  
+  /*
+    Releases the lock that __ThreadLock has aquired.
+  */
+  constexpr bool __ThreadUnlock(){ return true; }
+  
+  /*
+    Equivelant of __IteratorLoopStep/__BeginEndIteratorPair for normal loops 
+    that make use of integers indexes rather than iterators
+  */
+  template <typename T, typename T2>
+  constexpr void __PartitionUsingIndex(T LHS, T2 RHS, 
+                                       EqualityType EqTy = 
+                                         EqualityType::EqualityNone){}
+  
   /*
     Indicates that a variable needs to be reduced into a single value or single 
     set of values (e.g. an array) at the end of a parallelized loop. This is 
@@ -66,7 +109,8 @@ namespace cest::loop_wrapper {
   */
   template <typename T>
   constexpr void __ReduceVariable(T Var, ReductionType RedTy, 
-                                  OperatorType OpTy = OperatorType::None) {}
+                                  OperatorType OpTy = 
+                                    OperatorType::OperatorNone){}
 
 
 }
