@@ -4924,25 +4924,36 @@ namespace {
     EvalInfo Info;
     std::vector<EvalInfo> &ThreadInfo;
     std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> &RedList;
-    int64_t ThreadParitionSize;
+    int64_t ThreadPartitionSize;
+    int64_t ThreadPartitionOverflow;
 
+    // Note: This function needs a fair bit of work if its to stay in use, it
+    // was mainly built to duplicate an array that's part of a struct.
     APValue CopyAPValue(llvm::Any ArgOrTemp) {
       APValue* CandidateAPV = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
 
-      LValue CandidateLVal;
-      CandidateLVal.setFrom(Info.Ctx, *CandidateAPV);
-      QualType CandidateQt = getType(CandidateAPV->getLValueBase());
-      CompleteObject Obj = findCompleteObject(Info, nullptr, 
-                                          AccessKinds::AK_Read, CandidateLVal, 
-                                          CandidateQt);
+      if (!CandidateAPV) {
+        return APValue();
+      }
+      
+      if (CandidateAPV->isLValue()) {
+        LValue CandidateLVal;
+        CandidateLVal.setFrom(Info.Ctx, *CandidateAPV);
+        QualType CandidateQt = getType(CandidateAPV->getLValueBase());
+        CompleteObject Obj = findCompleteObject(Info, nullptr, 
+                                            AccessKinds::AK_Read, CandidateLVal, 
+                                            CandidateQt);
 
-      // TODO: This currently assumes its a field, but that isn't always the 
-      // case, it could be an array etc. look into findSubObject to get an idea.
-      if (const FieldDecl *Field = getAsField(CandidateAPV->getLValuePath()[0])){
-        APValue* O = &Obj.Value->getStructField(Field->getFieldIndex());
-        if (O->isArray()) {
-          return APValue(*O);
+        // TODO: This currently assumes its a field, but that isn't always the 
+        // case, it could be an array etc. look into findSubObject to get an idea.
+        if (const FieldDecl *Field = getAsField(CandidateAPV->getLValuePath()[0])){
+          APValue* O = &Obj.Value->getStructField(Field->getFieldIndex());
+          if (O->isArray()) {
+            return APValue(*O);
+          }
         }
+      } else {
+        return APValue(*CandidateAPV);
       }
     }
     
@@ -4954,13 +4965,30 @@ namespace {
                             &RedList) :
                           Info(Info), ThreadInfo(ThreadInfo), RedList(RedList){}
     
-      bool SearchBody(const Stmt * Body) {
-        for (auto BStmt : Body->children()) {
-          Visit(BStmt);
+      bool SearchBody(const Stmt* Body) {
+        for (auto Stmt : Body->children()) {
+          Visit(Stmt);
         }
+
+        return true;
+      }
+      
+      bool VisitIfStmt(const IfStmt* IfS) {
+        for (auto Stmt : IfS->children()) {
+          Visit(Stmt);
+        }
+
         return true;
       }
 
+      bool VisitCompoundStmt(const CompoundStmt* CompoundS) {
+        for (auto Stmt : CompoundS->children()) {
+          Visit(Stmt);
+        }
+
+        return true;
+      }
+      
       bool HandleBeginEndIteratorPair(const CallExpr *E) {
         if (E->getNumArgs() > 2 || E->getNumArgs() < 2)
           return false;
@@ -5001,27 +5029,25 @@ namespace {
           int64_t EndOffset = APVEnd.getLValueOffset().getQuantity();
 
           int64_t LoopExtent = (EndOffset - BeginOffset) / EndTySz;
-          ThreadParitionSize = LoopExtent / ThreadInfo.size();
-          int64_t ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
+          ThreadPartitionSize = LoopExtent / ThreadInfo.size();
+          ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
 
           for (size_t i = 0; i < ThreadInfo.size(); ++i) {
               // Setting End Iterator
               int64_t endOfThreadLoop 
                   = (i != ThreadInfo.size() - 1) ? 
-                      EndTySz * ThreadParitionSize * (i + 1)
-                    : EndTySz * ((ThreadParitionSize * (i + 1)) 
-                      + ThreadPartitionOverflow);
-              
+                      ThreadPartitionSize * (i + 1)
+                    : (ThreadPartitionSize * (i + 1)) + ThreadPartitionOverflow;
               std::vector<APValue::LValuePathEntry> NewLValPath;
               for (size_t j = 0; j < APVEnd.getLValuePath().size(); ++j)
                 NewLValPath.push_back((j == 0) ? APVEnd.getLValuePath()[j] :
                                APVEnd.getLValuePath()[j]
-                                  .ArrayIndex(ThreadParitionSize * (i + 1)));
+                                  .ArrayIndex(endOfThreadLoop));
               
               // Only altering a few values, but unfortunately LValue Path has 
               // no set function and the get returns a const array.
               APVEnd.setLValue(APVEnd.getLValueBase(), 
-                            CharUnits::fromQuantity(endOfThreadLoop), 
+                            CharUnits::fromQuantity(EndTySz * endOfThreadLoop), 
                             NewLValPath, APVEnd.isLValueOnePastTheEnd(), 
                             APVEnd.isNullPointer()); 
 
@@ -5063,6 +5089,8 @@ namespace {
         int32_t StepInt = StepVal.getSExtValue();
 
         for (size_t i = 0; i < ThreadInfo.size(); ++i) {
+           APV = Info.CurrentCall->Arguments[FuncIndex];
+                        
           // TODO/FIXME: Change the below to a switch statement and also
           // abstract into a function if possible similar logic is used a lot
           if (APV.isLValue()) {
@@ -5074,18 +5102,20 @@ namespace {
             for (size_t j = 0; j < APV.getLValuePath().size(); ++j) {
               NewLValPath.push_back((j == 0) ? APV.getLValuePath()[j] : 
                           APV.getLValuePath()[j]
-                                .ArrayIndex(ThreadParitionSize * i)); 
+                                .ArrayIndex(APV.getLValuePath()[j].getAsArrayIndex() + 
+                                              (ThreadPartitionSize * i))); 
             }
             
             APV.setLValue(APV.getLValueBase(), 
-                        CharUnits::fromQuantity(TySz * ThreadParitionSize * i), 
-                        NewLValPath, APV.isLValueOnePastTheEnd(), 
-                        APV.isNullPointer()); 
+                          APV.getLValueOffset() + 
+                          CharUnits::fromQuantity(TySz * ThreadPartitionSize * i), 
+                          NewLValPath, APV.isLValueOnePastTheEnd(), 
+                          APV.isNullPointer()); 
 
             ThreadInfo[i].CurrentCall
                 ->ThreadArgumentsMap[FuncIndex] = APV; 
          } else if (APV.isInt()) {
-            APV.getInt() = ThreadParitionSize * i;
+            APV.getInt() = ThreadPartitionSize * i;
             ThreadInfo[i].CurrentCall->
               ThreadArgumentsMap[FuncIndex] = APV;
          } else if (APV.isAbsent()) {
@@ -5152,6 +5182,194 @@ namespace {
         return true;
       }
       
+      bool HandleThreadLocalCopy(const CallExpr *E) {
+        if (E->getNumArgs() != 1)
+          return false;
+      
+        llvm::Any ArgOrTemp;
+    
+        // Parameter: T Var
+        // TODO: Create helper for the nested if's since it's used more than 
+        // once..
+        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(0)))
+          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+              ArgOrTemp = PVD->getFunctionScopeIndex();
+            } else if (auto VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+              ArgOrTemp = static_cast<const void*>(VD);
+            }
+
+        // need to make sure i don't assign the real value and assign a copy 
+        // as im using pointers
+        for (int i = 0; i < ThreadInfo.size(); ++i)
+          SetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall, 
+                       *GetArgOrTemp(ArgOrTemp, Info.CurrentCall));
+
+        return true;
+      }
+      
+      // This only really handles simple cases where the expressions aren't 
+      // anything complex e.g. _n+1 > 0, isn't going to work at the moment 
+      // because we'd have to ask the compiler to calculate the LHS first
+      bool HandlePartitionUsingIndex(const CallExpr *E) {
+        if (E->getNumArgs() != 3)
+          return false;
+
+        // T From, these technically should be restricted by the wrapper to 
+        // numeric types in the future. The intent is for it explain the bounds
+        // of a simple numeric loop, i.e. 'for (int i = 0; i < n; ++i)'
+        llvm::Any ArgOrTempLHS, ArgOrTempRHS;
+        int64_t LHS, RHS;
+        APValue LHSAPV, RHSAPV;
+        bool LHSIsInt = false, RHSIsInt = false;
+        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(0))) {
+          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+              ArgOrTempLHS = PVD->getFunctionScopeIndex();
+              LHSAPV = *GetArgOrTemp(ArgOrTempLHS, Info.CurrentCall);
+              if (LHSAPV.isInt()) {
+                LHSIsInt = true;
+                LHS = LHSAPV.getInt().getExtValue();
+              }
+            } else if (auto VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+              ArgOrTempLHS = static_cast<const void*>(VD);
+              LHSAPV = *GetArgOrTemp(ArgOrTempLHS, Info.CurrentCall);
+              if (LHSAPV.isInt()) {
+                LHSIsInt = true;
+                LHS = LHSAPV.getInt().getExtValue();
+              }
+            }
+        } else if (auto IL = dyn_cast<IntegerLiteral>(E->getArg(0))) {
+          // NOTE/FIXME: We do not handle literals at the moment, it's not 
+          // simple to create thread independent values like it is for 
+          // temproaries and arguments as they are not stored within the 
+          // CallStackFrame. It's also not easily feasible to store them as 
+          // temporaries. As temporaries need a pointer to the Expression or 
+          // Declarator to access the APValue, however a literal has a new 
+          // Expr for every literal i.e. the address of the literal passed to 
+          // the loopwrapper function is not the same as the address of the 
+          // literal in the for loop. The only way I can think of doing this 
+          // for the time being is creating a new type of loop wrapper that will
+          // return the literal value and it'll have to be used at the exact 
+          // location the literal is being used. However, this would look weird,
+          // be a little weird to reason about with the rest of the values and 
+          // come at a performance cost. This can be attempted in the future, 
+          // but for now it's simple to work around by using temporarily declared
+          // variables in place of literals
+          ArgOrTempLHS = static_cast<const void*>(IL);
+          LHSIsInt = true;
+          LHSAPV = APValue(APSInt(IL->getValue(),
+                                  !IL->getValue().isSignBitSet()));
+          LHS = IL->getValue().getSExtValue();
+        }
+
+        // T2 To, should be restricted similarly to the above
+        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(1))) {
+          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+              ArgOrTempRHS = PVD->getFunctionScopeIndex();
+              RHSAPV = *GetArgOrTemp(ArgOrTempRHS, Info.CurrentCall);
+              if (RHSAPV.isInt()) {
+                RHSIsInt = true;
+                RHS = RHSAPV.getInt().getExtValue();
+              }
+            } else if (auto VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+              ArgOrTempRHS = static_cast<const void*>(VD);
+              RHSAPV = *GetArgOrTemp(ArgOrTempRHS, Info.CurrentCall);
+              if (RHSAPV.isInt()) {
+                RHSIsInt = true;
+                RHS = RHSAPV.getInt().getExtValue();
+              }
+            }
+        } else if (auto IL = dyn_cast<IntegerLiteral>(E->getArg(1))) {
+          // NOTE/FIXME: We do not handle literals at the moment, it's not 
+          // simple to create thread independent values like it is for 
+          // temproaries and arguments as they are not stored within the 
+          // CallStackFrame. It's also not easily feasible to store them as 
+          // temporaries. As temporaries need a pointer to the Expression or 
+          // Declarator to access the APValue, however a literal has a new 
+          // Expr for every literal i.e. the address of the literal passed to 
+          // the loopwrapper function is not the same as the address of the 
+          // literal in the for loop. The only way I can think of doing this 
+          // for the time being is creating a new type of loop wrapper that will
+          // return the literal value and it'll have to be used at the exact 
+          // location the literal is being used. However, this would look weird,
+          // be a little weird to reason about with the rest of the values and 
+          // come at a performance cost. This can be attempted in the future, 
+          // but for now it's simple to work around by using temporarily declared
+          // variables in place of literals
+          ArgOrTempRHS = static_cast<const void*>(IL);
+          RHSIsInt = true;
+          RHSAPV = APValue(APSInt(IL->getValue(), 
+                                  !IL->getValue().isSignBitSet()));
+          RHS = IL->getValue().getSExtValue();
+        }
+
+        // EqualityType EqTy 
+        int32_t OperatorInUse = -1; 
+        if (auto DRE = dyn_cast<DeclRefExpr>(E->getArg(2)))
+          if (auto ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl()))
+            OperatorInUse = ECD->getInitVal().getSExtValue();
+
+        if (OperatorInUse < 0)
+          return false;
+
+        switch (OperatorInUse) {
+          case 1: // LT
+            llvm_unreachable("Unhandled LT case in PartitionUsingIndex"); 
+            break;
+          case 2: { // GT
+            int64_t LoopExtent = (LHS - RHS);
+            ThreadPartitionSize = LoopExtent / ThreadInfo.size();
+            ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
+          
+            // NOTE: This may actually be inverted
+            for (size_t i = 0; i < ThreadInfo.size(); ++i) {
+                int64_t LHSLoopIncrement = ThreadPartitionSize * i;
+                
+                int64_t RHSLoopIncrement 
+                    = (i != ThreadInfo.size() - 1) ? 
+                        ThreadPartitionSize * (ThreadInfo.size() - (i + 1)) 
+                          + ThreadPartitionOverflow : 
+                        ThreadPartitionSize * (ThreadInfo.size() - (i + 1));
+
+                if (LHSIsInt)
+                  SetArgOrTemp(ArgOrTempLHS, ThreadInfo[i].CurrentCall, 
+                         APValue(APSInt(LHSAPV.getInt() - LHSLoopIncrement, 
+                                        LHSAPV.getInt().isUnsigned())));
+                else 
+                  llvm_unreachable("Unhandled type in GT PartitionUsingIndex");
+                    
+                if (RHSIsInt) {
+                  SetArgOrTemp(ArgOrTempRHS, ThreadInfo[i].CurrentCall, 
+                         APValue(APSInt(RHSAPV.getInt() + RHSLoopIncrement, 
+                                        RHSAPV.getInt().isUnsigned())));
+                } else
+                  llvm_unreachable("Unhandled type in GT PartitionUsingIndex");
+              }
+              break;
+            }
+          case 3: // LTEq
+            llvm_unreachable("Unhandled LTEq case in PartitionUsingIndex");
+            break;
+          case 4: // GTEq
+            llvm_unreachable("Unhandled GTEq case in PartitionUsingIndex");
+            break;
+          case 5: // NEq
+            llvm_unreachable("Unhandled NEq case in PartitionUsingIndex");
+            break;
+          case 6: // Eq
+            llvm_unreachable("Unhandled Eq case in PartitionUsingIndex");
+            break;
+          default:
+            llvm_unreachable("Invalid Operator passed to PartitionUsingIndex");
+          break;
+        }
+        
+        return true;
+      }
+
+
       bool VisitCallExpr(const CallExpr *E) {
         if (const FunctionDecl *F = E->getDirectCallee()) {
           StringRef name = F->getName();
@@ -5165,6 +5383,10 @@ namespace {
             return HandleIteratorLoopStep(E);
           } else if (name == "__ReduceVariable") {
             return HandleReduceVariable(E);
+          } else if (name == "__ThreadLocalCopy") {
+            return HandleThreadLocalCopy(E);
+          } else if (name == "__PartitionUsingIndex") {
+            return HandlePartitionUsingIndex(E);
           }
 
 
