@@ -17,7 +17,7 @@ namespace cest::loop_wrapper {
     Accumulate = 0,
     Ordered = 1,
   };
-  
+
   enum OperatorType { 
     OperatorNone = 0,
     PostInc = 1,
@@ -26,7 +26,7 @@ namespace cest::loop_wrapper {
     PreDec = 4,
     Assign = 5,
   };
-  
+
   enum EqualityType {
     EqualityNone = 0,
     LT = 1,   // <
@@ -36,13 +36,25 @@ namespace cest::loop_wrapper {
     NEq = 5,  // !=
     Eq = 6,   // ==
   };
-  
+
   /*
-     Takes the Argument Iter which is the variable we are trying to say has a 
-     step size of StepSize.
+    Takes the Argument Iter which is the variable and offsets it in relation to
+    the last invoked __BeginEndIteratorPair within the function body, this only
+    really offsets based on the starting point of the iterator pair rather than
+    the end point.
+
+    Note: The parameters are references to simplify the Clang AST that needs 
+    walked to get the information we want, one example is that if a user for 
+    some reason uses an inline constructor to create a parameter to one of the 
+    std:: functions we'll avoid having to deal with a constructor node, which
+    can be difficult to deal with (it can have multiple parameters and we'd 
+    have to diagnose which one is correct).
   */
   template <typename T>
-  constexpr void __IteratorLoopStep(T Iter, int StepSize){}
+  constexpr void __IteratorLoopStep(T& StartIter, int StepSize, 
+                                    OperatorType OpTy = 
+                                    OperatorType::PreInc, 
+                                    const T& BoundIter=std::nullptr_t{}){}
   
   /*
      Used by the compiler to calculate the loops extent and helps it work out
@@ -52,9 +64,16 @@ namespace cest::loop_wrapper {
      Takes the Argument Begin and End, begin being the beginning of the loop
      and end being the end of the loop. e.g. _first != _last when both are 
      iterators and the != is the end condition of the loop.
+  
+    Note: The parameters are references to simplify the Clang AST that needs 
+    walked to get the information we want, one example is that if a user for 
+    some reason uses an inline constructor to create a parameter to one of the 
+    std:: functions we'll avoid having to deal with a constructor node, which
+    can be difficult to deal with (it can have multiple parameters and we'd 
+    have to diagnose which one is correct).
   */
   template <typename T, typename T2>
-  constexpr void __BeginEndIteratorPair(T Begin, T2 End){}
+  constexpr void __BeginEndIteratorPair(T& Begin, T2& End){}
 
   /*
     Asks the compiler to create a copy of the variable per thread which can be 
@@ -67,7 +86,15 @@ namespace cest::loop_wrapper {
   */
   template <typename T>
   constexpr void __ThreadLocalCopy(T Var){}
-
+  
+  /*
+    Inidicates that a variable should be unmutated and remain unchanged at the 
+    end of the loop body. This largelly means we will not update it's data
+    at the end of the threads completion.
+  */
+  template <typename T>
+  constexpr void __ImmutableVariable(T Var){}
+  
   /*
     This will aquire a lock stopping the segments until the 
     __ThreadUnlock call from being run in parallel. It's incorrect to call this
