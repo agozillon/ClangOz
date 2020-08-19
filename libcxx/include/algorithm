@@ -3106,7 +3106,7 @@ is_partitioned(_InputIterator __first, _InputIterator __last, _Predicate __pred)
 // partition
 
 template <class _Predicate, class _ForwardIterator>
-_ForwardIterator
+_LIBCPP_CONSTEXPR_AFTER_CXX17 _ForwardIterator
 __partition(_ForwardIterator __first, _ForwardIterator __last, _Predicate __pred, forward_iterator_tag)
 {
     while (true)
@@ -3129,7 +3129,7 @@ __partition(_ForwardIterator __first, _ForwardIterator __last, _Predicate __pred
 }
 
 template <class _Predicate, class _BidirectionalIterator>
-_BidirectionalIterator
+_LIBCPP_CONSTEXPR_AFTER_CXX17 _BidirectionalIterator
 __partition(_BidirectionalIterator __first, _BidirectionalIterator __last, _Predicate __pred,
             bidirectional_iterator_tag)
 {
@@ -3154,7 +3154,7 @@ __partition(_BidirectionalIterator __first, _BidirectionalIterator __last, _Pred
 }
 
 template <class _ForwardIterator, class _Predicate>
-inline _LIBCPP_INLINE_VISIBILITY
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
 _ForwardIterator
 partition(_ForwardIterator __first, _ForwardIterator __last, _Predicate __pred)
 {
