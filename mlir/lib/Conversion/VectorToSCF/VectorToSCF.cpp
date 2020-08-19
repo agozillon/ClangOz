@@ -224,7 +224,10 @@ static Value setAllocAtFunctionEntry(MemRefType memRefMinorVectorType,
                                      Operation *op) {
   auto &b = ScopedContext::getBuilderRef();
   OpBuilder::InsertionGuard guard(b);
-  b.setInsertionPointToStart(&op->getParentOfType<FuncOp>().front());
+  Operation *scope =
+      op->getParentWithTrait<OpTrait::AutomaticAllocationScope>();
+  assert(scope && "Expected op to be inside automatic allocation scope");
+  b.setInsertionPointToStart(&scope->getRegion(0).front());
   Value res =
       std_alloca(memRefMinorVectorType, ValueRange{}, b.getI64IntegerAttr(128));
   return res;
@@ -249,12 +252,12 @@ LogicalResult NDTransferOpHelper<TransferReadOp>::doReplace() {
       indexing.append(majorIvsPlusOffsets.begin(), majorIvsPlusOffsets.end());
       indexing.append(minorOffsets.begin(), minorOffsets.end());
       Value memref = xferOp.memref();
-      auto map = TransferReadOp::getTransferMinorIdentityMap(
-          xferOp.getMemRefType(), minorVectorType);
+      auto map =
+          getTransferMinorIdentityMap(xferOp.getMemRefType(), minorVectorType);
       ArrayAttr masked;
-      if (xferOp.isMaskedDim(xferOp.getVectorType().getRank() - 1)) {
+      if (!xferOp.isMaskedDim(xferOp.getVectorType().getRank() - 1)) {
         OpBuilder &b = ScopedContext::getBuilderRef();
-        masked = b.getBoolArrayAttr({true});
+        masked = b.getBoolArrayAttr({false});
       }
       return vector_transfer_read(minorVectorType, memref, indexing,
                                   AffineMapAttr::get(map), xferOp.padding(),
@@ -353,12 +356,12 @@ LogicalResult NDTransferOpHelper<TransferWriteOp>::doReplace() {
         result = vector_extract(xferOp.vector(), majorIvs);
       else
         result = std_load(alloc, majorIvs);
-      auto map = TransferWriteOp::getTransferMinorIdentityMap(
-          xferOp.getMemRefType(), minorVectorType);
+      auto map =
+          getTransferMinorIdentityMap(xferOp.getMemRefType(), minorVectorType);
       ArrayAttr masked;
-      if (xferOp.isMaskedDim(xferOp.getVectorType().getRank() - 1)) {
+      if (!xferOp.isMaskedDim(xferOp.getVectorType().getRank() - 1)) {
         OpBuilder &b = ScopedContext::getBuilderRef();
-        masked = b.getBoolArrayAttr({true});
+        masked = b.getBoolArrayAttr({false});
       }
       vector_transfer_write(result, xferOp.memref(), indexing,
                             AffineMapAttr::get(map), masked);

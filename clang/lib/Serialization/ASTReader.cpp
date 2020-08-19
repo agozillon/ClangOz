@@ -2747,7 +2747,7 @@ ASTReader::ReadControlBlock(ModuleFile &F,
         return VersionMismatch;
       }
 
-      bool hasErrors = Record[7];
+      bool hasErrors = Record[6];
       if (hasErrors && !DisableValidation && !AllowASTWithCompilerErrors) {
         Diag(diag::err_pch_with_compiler_errors);
         return HadErrors;
@@ -2764,8 +2764,6 @@ ASTReader::ReadControlBlock(ModuleFile &F,
         F.BaseDirectory = isysroot.empty() ? "/" : isysroot;
 
       F.HasTimestamps = Record[5];
-
-      F.PCHHasObjectFile = Record[6];
 
       const std::string &CurBranch = getClangFullRepositoryVersion();
       StringRef ASTBranch = Blob;
@@ -3792,7 +3790,7 @@ ASTReader::ReadASTBlock(ModuleFile &F, unsigned ClientLoadCapabilities) {
         Error("invalid pragma pack record");
         return Failure;
       }
-      FpPragmaCurrentValue = Record[0];
+      FpPragmaCurrentValue = FPOptionsOverride::getFromOpaqueInt(Record[0]);
       FpPragmaCurrentLocation = ReadSourceLocation(F, Record[1]);
       unsigned NumStackEntries = Record[2];
       unsigned Idx = 3;
@@ -3800,7 +3798,7 @@ ASTReader::ReadASTBlock(ModuleFile &F, unsigned ClientLoadCapabilities) {
       FpPragmaStack.clear();
       for (unsigned I = 0; I < NumStackEntries; ++I) {
         FpPragmaStackEntry Entry;
-        Entry.Value = Record[Idx++];
+        Entry.Value = FPOptionsOverride::getFromOpaqueInt(Record[Idx++]);
         Entry.Location = ReadSourceLocation(F, Record[Idx++]);
         Entry.PushLocation = ReadSourceLocation(F, Record[Idx++]);
         FpPragmaStrings.push_back(ReadString(Record, Idx));
@@ -7844,7 +7842,8 @@ void ASTReader::InitializeSema(Sema &S) {
   // FIXME: What happens if these are changed by a module import?
   if (!FPPragmaOptions.empty()) {
     assert(FPPragmaOptions.size() == 1 && "Wrong number of FP_PRAGMA_OPTIONS");
-    FPOptionsOverride NewOverrides(FPPragmaOptions[0]);
+    FPOptionsOverride NewOverrides =
+        FPOptionsOverride::getFromOpaqueInt(FPPragmaOptions[0]);
     SemaObj->CurFPFeatures =
         NewOverrides.applyOverrides(SemaObj->getLangOpts());
   }
@@ -8588,11 +8587,6 @@ Module *ASTReader::getSubmodule(SubmoduleID GlobalID) {
 
 Module *ASTReader::getModule(unsigned ID) {
   return getSubmodule(ID);
-}
-
-bool ASTReader::DeclIsFromPCHWithObjectFile(const Decl *D) {
-  ModuleFile *MF = getOwningModuleFile(D);
-  return MF && MF->PCHHasObjectFile;
 }
 
 ModuleFile *ASTReader::getLocalModuleFile(ModuleFile &F, unsigned ID) {
@@ -12608,8 +12602,14 @@ void OMPClauseReader::VisitOMPDefaultmapClause(OMPDefaultmapClause *C) {
 
 void OMPClauseReader::VisitOMPToClause(OMPToClause *C) {
   C->setLParenLoc(Record.readSourceLocation());
+  for (unsigned I = 0; I < NumberOfOMPMotionModifiers; ++I) {
+    C->setMotionModifier(
+        I, static_cast<OpenMPMotionModifierKind>(Record.readInt()));
+    C->setMotionModifierLoc(I, Record.readSourceLocation());
+  }
   C->setMapperQualifierLoc(Record.readNestedNameSpecifierLoc());
   C->setMapperIdInfo(Record.readDeclarationNameInfo());
+  C->setColonLoc(Record.readSourceLocation());
   auto NumVars = C->varlist_size();
   auto UniqueDecls = C->getUniqueDeclarationsNum();
   auto TotalLists = C->getTotalComponentListNum();
@@ -12658,8 +12658,14 @@ void OMPClauseReader::VisitOMPToClause(OMPToClause *C) {
 
 void OMPClauseReader::VisitOMPFromClause(OMPFromClause *C) {
   C->setLParenLoc(Record.readSourceLocation());
+  for (unsigned I = 0; I < NumberOfOMPMotionModifiers; ++I) {
+    C->setMotionModifier(
+        I, static_cast<OpenMPMotionModifierKind>(Record.readInt()));
+    C->setMotionModifierLoc(I, Record.readSourceLocation());
+  }
   C->setMapperQualifierLoc(Record.readNestedNameSpecifierLoc());
   C->setMapperIdInfo(Record.readDeclarationNameInfo());
+  C->setColonLoc(Record.readSourceLocation());
   auto NumVars = C->varlist_size();
   auto UniqueDecls = C->getUniqueDeclarationsNum();
   auto TotalLists = C->getTotalComponentListNum();
@@ -12926,4 +12932,21 @@ OMPTraitInfo *ASTRecordReader::readOMPTraitInfo() {
     }
   }
   return &TI;
+}
+
+void ASTRecordReader::readOMPChildren(OMPChildren *Data) {
+  if (!Data)
+    return;
+  if (Reader->ReadingKind == ASTReader::Read_Stmt) {
+    // Skip NumClauses, NumChildren and HasAssociatedStmt fields.
+    skipInts(3);
+  }
+  SmallVector<OMPClause *, 4> Clauses(Data->getNumClauses());
+  for (unsigned I = 0, E = Data->getNumClauses(); I < E; ++I)
+    Clauses[I] = readOMPClause();
+  Data->setClauses(Clauses);
+  if (Data->hasAssociatedStmt())
+    Data->setAssociatedStmt(readStmt());
+  for (unsigned I = 0, E = Data->getNumChildren(); I < E; ++I)
+    Data->getChildren()[I] = readStmt();
 }

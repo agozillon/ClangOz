@@ -17,7 +17,9 @@ include "llvm/CodeGen/SDNodeProperties.td"
 //  Properties we keep track of for intrinsics.
 //===----------------------------------------------------------------------===//
 
-class IntrinsicProperty;
+class IntrinsicProperty<bit is_default = 0> {
+  bit IsDefault = is_default;
+}
 
 // Intr*Mem - Memory properties.  If no property is set, the worst case
 // is assumed (it may read and write any memory it can get access to and it may
@@ -331,13 +333,18 @@ class Intrinsic<list<LLVMType> ret_types,
                 list<LLVMType> param_types = [],
                 list<IntrinsicProperty> intr_properties = [],
                 string name = "",
-                list<SDNodeProperty> sd_properties = []> : SDPatternOperator {
+                list<SDNodeProperty> sd_properties = [],
+                bit disable_default_attributes = 0> : SDPatternOperator {
   string LLVMName = name;
   string TargetPrefix = "";   // Set to a prefix for target-specific intrinsics.
   list<LLVMType> RetTypes = ret_types;
   list<LLVMType> ParamTypes = param_types;
   list<IntrinsicProperty> IntrProperties = intr_properties;
   let Properties = sd_properties;
+
+  // Disable applying IntrinsicProperties that are marked default with
+  // IntrinsicProperty<1>
+  bit DisableDefaultAttributes = disable_default_attributes;
 
   bit isTarget = 0;
 }
@@ -999,6 +1006,12 @@ def int_ssub_sat : Intrinsic<[llvm_anyint_ty],
 def int_usub_sat : Intrinsic<[llvm_anyint_ty],
                              [LLVMMatchType<0>, LLVMMatchType<0>],
                              [IntrNoMem, IntrSpeculatable, IntrWillReturn]>;
+def int_sshl_sat : Intrinsic<[llvm_anyint_ty],
+                             [LLVMMatchType<0>, LLVMMatchType<0>],
+                             [IntrNoMem, IntrSpeculatable, IntrWillReturn]>;
+def int_ushl_sat : Intrinsic<[llvm_anyint_ty],
+                             [LLVMMatchType<0>, LLVMMatchType<0>],
+                             [IntrNoMem, IntrSpeculatable, IntrWillReturn]>;
 
 //===------------------------- Fixed Point Arithmetic Intrinsics ---------------------===//
 //
@@ -1038,6 +1051,25 @@ def int_sdiv_fix_sat : Intrinsic<[llvm_anyint_ty],
 def int_udiv_fix_sat : Intrinsic<[llvm_anyint_ty],
                                  [LLVMMatchType<0>, LLVMMatchType<0>, llvm_i32_ty],
                                  [IntrNoMem, ImmArg<ArgIndex<2>>]>;
+
+//===------------------ Integer Min/Max/Abs Intrinsics --------------------===//
+//
+def int_abs : Intrinsic<
+    [llvm_anyint_ty], [LLVMMatchType<0>, llvm_i1_ty],
+    [IntrNoMem, IntrSpeculatable, IntrWillReturn, ImmArg<ArgIndex<1>>]>;
+
+def int_smax : Intrinsic<
+    [llvm_anyint_ty], [LLVMMatchType<0>, LLVMMatchType<0>],
+    [IntrNoMem, IntrSpeculatable, IntrWillReturn]>;
+def int_smin : Intrinsic<
+    [llvm_anyint_ty], [LLVMMatchType<0>, LLVMMatchType<0>],
+    [IntrNoMem, IntrSpeculatable, IntrWillReturn]>;
+def int_umax : Intrinsic<
+    [llvm_anyint_ty], [LLVMMatchType<0>, LLVMMatchType<0>],
+    [IntrNoMem, IntrSpeculatable, IntrWillReturn]>;
+def int_umin : Intrinsic<
+    [llvm_anyint_ty], [LLVMMatchType<0>, LLVMMatchType<0>],
+    [IntrNoMem, IntrSpeculatable, IntrWillReturn]>;
 
 //===------------------------- Memory Use Markers -------------------------===//
 //

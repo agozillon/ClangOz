@@ -100,8 +100,8 @@ struct TransferrableTargetInfo {
   unsigned char MinGlobalAlign;
 
   unsigned short NewAlign;
-  unsigned short MaxVectorAlign;
-  unsigned short MaxTLSAlign;
+  unsigned MaxVectorAlign;
+  unsigned MaxTLSAlign;
 
   const llvm::fltSemantics *HalfFormat, *BFloat16Format, *FloatFormat,
     *DoubleFormat, *LongDoubleFormat, *Float128Format;
@@ -1061,6 +1061,9 @@ public:
     return Triple;
   }
 
+  /// Returns the target ID if supported.
+  virtual llvm::Optional<std::string> getTargetID() const { return llvm::None; }
+
   const llvm::DataLayout &getDataLayout() const {
     assert(DataLayout && "Uninitialized DataLayout!");
     return *DataLayout;
@@ -1271,9 +1274,7 @@ public:
   ///
   /// Gets the maximum alignment (in bits) of a TLS variable on this target.
   /// Returns zero if there is no such constraint.
-  unsigned short getMaxTLSAlign() const {
-    return MaxTLSAlign;
-  }
+  unsigned getMaxTLSAlign() const { return MaxTLSAlign; }
 
   /// Whether target supports variable-length arrays.
   bool isVLASupported() const { return VLASupported; }
@@ -1400,6 +1401,9 @@ public:
 
   /// Whether target allows to overalign ABI-specified preferred alignment
   virtual bool allowsLargerPreferedTypeAlignment() const { return true; }
+
+  /// Whether target defaults to the `power` alignment rules of AIX.
+  virtual bool defaultsToAIXPowerAlignment() const { return false; }
 
   /// Set supported OpenCL extensions and optional core features.
   virtual void setSupportedOpenCLOpts() {}

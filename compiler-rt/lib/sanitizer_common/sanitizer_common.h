@@ -121,15 +121,16 @@ bool MprotectReadOnly(uptr addr, uptr size);
 
 void MprotectMallocZones(void *addr, int prot);
 
-// Get the max address, taking into account alignment due to the mmap
-// granularity and shadow size.
-uptr GetHighMemEnd(uptr shadow_scale);
+#if SANITIZER_LINUX
+// Unmap memory. Currently only used on Linux.
+void UnmapFromTo(uptr from, uptr to);
+#endif
 
 // Maps shadow_size_bytes of shadow memory and returns shadow address. It will
 // be aligned to the mmap granularity * 2^shadow_scale, or to
 // 2^min_shadow_base_alignment if that is larger. The returned address will
 // have max(2^min_shadow_base_alignment, mmap granularity) on the left, and
-// shadow_size_bytes bytes on the right, mapped no access.
+// shadow_size_bytes bytes on the right, which on linux is mapped no access.
 // The high_mem_end may be updated if the original shadow size doesn't fit.
 uptr MapDynamicShadow(uptr shadow_size_bytes, uptr shadow_scale,
                       uptr min_shadow_base_alignment, uptr &high_mem_end);

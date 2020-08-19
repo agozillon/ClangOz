@@ -2000,6 +2000,21 @@ merge:
   ret i32 %s
 }
 
+define i32 @select_dominating_cond_same_labels(i1 %cond) {
+; CHECK-LABEL: @select_dominating_cond_same_labels(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br i1 false, label [[EXIT:%.*]], label [[EXIT]]
+; CHECK:       exit:
+; CHECK-NEXT:    [[RESULT:%.*]] = select i1 [[COND:%.*]], i32 123, i32 456
+; CHECK-NEXT:    ret i32 [[RESULT]]
+;
+entry:
+  %result = select i1 %cond, i32 123, i32 456
+  br i1 %cond, label %exit, label %exit
+exit:
+  ret i32 %result
+}
+
 define i32 @select_phi_same_condition(i1 %cond, i32 %x, i32 %y, i32 %z) {
 ; CHECK-LABEL: @select_phi_same_condition(
 ; CHECK-NEXT:  entry:
@@ -2437,13 +2452,14 @@ exit:
   ret i32 %sel
 }
 
-; FIXME: We shouldn't remove selects with undef true/false values.
+; Negative tests to ensure we don't remove selects with undef true/false values.
 ; See https://bugs.llvm.org/show_bug.cgi?id=31633
 ; https://lists.llvm.org/pipermail/llvm-dev/2016-October/106182.html
 ; https://reviews.llvm.org/D83360
 define i32 @false_undef(i1 %cond, i32 %x) {
 ; CHECK-LABEL: @false_undef(
-; CHECK-NEXT:    ret i32 [[X:%.*]]
+; CHECK-NEXT:    [[S:%.*]] = select i1 [[COND:%.*]], i32 [[X:%.*]], i32 undef
+; CHECK-NEXT:    ret i32 [[S]]
 ;
   %s = select i1 %cond, i32 %x, i32 undef
   ret i32 %s
@@ -2451,7 +2467,8 @@ define i32 @false_undef(i1 %cond, i32 %x) {
 
 define i32 @true_undef(i1 %cond, i32 %x) {
 ; CHECK-LABEL: @true_undef(
-; CHECK-NEXT:    ret i32 [[X:%.*]]
+; CHECK-NEXT:    [[S:%.*]] = select i1 [[COND:%.*]], i32 undef, i32 [[X:%.*]]
+; CHECK-NEXT:    ret i32 [[S]]
 ;
   %s = select i1 %cond, i32 undef, i32 %x
   ret i32 %s
@@ -2459,7 +2476,8 @@ define i32 @true_undef(i1 %cond, i32 %x) {
 
 define <2 x i32> @false_undef_vec(i1 %cond, <2 x i32> %x) {
 ; CHECK-LABEL: @false_undef_vec(
-; CHECK-NEXT:    ret <2 x i32> [[X:%.*]]
+; CHECK-NEXT:    [[S:%.*]] = select i1 [[COND:%.*]], <2 x i32> [[X:%.*]], <2 x i32> undef
+; CHECK-NEXT:    ret <2 x i32> [[S]]
 ;
   %s = select i1 %cond, <2 x i32> %x, <2 x i32> undef
   ret <2 x i32> %s
@@ -2467,8 +2485,109 @@ define <2 x i32> @false_undef_vec(i1 %cond, <2 x i32> %x) {
 
 define <2 x i32> @true_undef_vec(i1 %cond, <2 x i32> %x) {
 ; CHECK-LABEL: @true_undef_vec(
-; CHECK-NEXT:    ret <2 x i32> [[X:%.*]]
+; CHECK-NEXT:    [[S:%.*]] = select i1 [[COND:%.*]], <2 x i32> undef, <2 x i32> [[X:%.*]]
+; CHECK-NEXT:    ret <2 x i32> [[S]]
 ;
   %s = select i1 %cond, <2 x i32> undef, <2 x i32> %x
   ret <2 x i32> %s
+}
+
+define i8 @cond_freeze(i8 %x, i8 %y) {
+; CHECK-LABEL: @cond_freeze(
+; CHECK-NEXT:    ret i8 [[X:%.*]]
+;
+  %cond.fr = freeze i1 undef
+  %s = select i1 %cond.fr, i8 %x, i8 %y
+  ret i8 %s
+}
+
+define i8 @cond_freeze2(i8 %x, i8 %y) {
+; CHECK-LABEL: @cond_freeze2(
+; CHECK-NEXT:    ret i8 1
+;
+  %cond.fr = freeze i1 undef
+  %s = select i1 %cond.fr, i8 %x, i8 1
+  ret i8 %s
+}
+
+define i8 @cond_freeze3(i8 %x) {
+; CHECK-LABEL: @cond_freeze3(
+; CHECK-NEXT:    ret i8 1
+;
+  %cond.fr = freeze i1 undef
+  %s = select i1 %cond.fr, i8 1, i8 %x
+  ret i8 %s
+}
+
+define <2 x i8> @cond_freeze_vec(<2 x i8> %x) {
+; CHECK-LABEL: @cond_freeze_vec(
+; CHECK-NEXT:    ret <2 x i8> <i8 1, i8 2>
+;
+  %cond.fr = freeze <2 x i1> <i1 undef, i1 undef>
+  %s = select <2 x i1> %cond.fr, <2 x i8> <i8 1, i8 2>, <2 x i8> %x
+  ret <2 x i8> %s
+}
+
+declare void @foo2(i8, i8)
+
+define void @cond_freeze_multipleuses(i8 %x, i8 %y) {
+; CHECK-LABEL: @cond_freeze_multipleuses(
+; CHECK-NEXT:    call void @foo2(i8 [[X:%.*]], i8 [[Y:%.*]])
+; CHECK-NEXT:    ret void
+;
+  %cond.fr = freeze i1 undef
+  %s = select i1 %cond.fr, i8 %x, i8 %y
+  %s2 = select i1 %cond.fr, i8 %y, i8 %x
+  call void @foo2(i8 %s, i8 %s2)
+  ret void
+}
+
+define i32 @select_freeze_icmp_eq(i32 %x, i32 %y) {
+; CHECK-LABEL: @select_freeze_icmp_eq(
+; CHECK-NEXT:    ret i32 [[Y:%.*]]
+;
+  %c = icmp eq i32 %x, %y
+  %c.fr = freeze i1 %c
+  %v = select i1 %c.fr, i32 %x, i32 %y
+  ret i32 %v
+}
+
+define i32 @select_freeze_icmp_ne(i32 %x, i32 %y) {
+; CHECK-LABEL: @select_freeze_icmp_ne(
+; CHECK-NEXT:    ret i32 [[X:%.*]]
+;
+  %c = icmp ne i32 %x, %y
+  %c.fr = freeze i1 %c
+  %v = select i1 %c.fr, i32 %x, i32 %y
+  ret i32 %v
+}
+
+define i32 @select_freeze_icmp_else(i32 %x, i32 %y) {
+; CHECK-LABEL: @select_freeze_icmp_else(
+; CHECK-NEXT:    [[C:%.*]] = icmp ult i32 [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[C_FR:%.*]] = freeze i1 [[C]]
+; CHECK-NEXT:    [[V:%.*]] = select i1 [[C_FR]], i32 [[X]], i32 [[Y]]
+; CHECK-NEXT:    ret i32 [[V]]
+;
+  %c = icmp ult i32 %x, %y
+  %c.fr = freeze i1 %c
+  %v = select i1 %c.fr, i32 %x, i32 %y
+  ret i32 %v
+}
+
+declare void @use_i1_i32(i1, i32)
+
+define void @select_freeze_icmp_multuses(i32 %x, i32 %y) {
+; CHECK-LABEL: @select_freeze_icmp_multuses(
+; CHECK-NEXT:    [[C:%.*]] = icmp ne i32 [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[C_FR:%.*]] = freeze i1 [[C]]
+; CHECK-NEXT:    [[V:%.*]] = select i1 [[C_FR]], i32 [[X]], i32 [[Y]]
+; CHECK-NEXT:    call void @use_i1_i32(i1 [[C_FR]], i32 [[V]])
+; CHECK-NEXT:    ret void
+;
+  %c = icmp ne i32 %x, %y
+  %c.fr = freeze i1 %c
+  %v = select i1 %c.fr, i32 %x, i32 %y
+  call void @use_i1_i32(i1 %c.fr, i32 %v)
+  ret void
 }

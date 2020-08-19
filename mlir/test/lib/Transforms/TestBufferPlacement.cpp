@@ -77,7 +77,8 @@ struct TestBufferPlacementPreparationPass
       auto linalgOp = rewriter.create<linalg::GenericOp>(
           loc, llvm::None, newArgs, rewriter.getI64IntegerAttr(operands.size()),
           rewriter.getI64IntegerAttr(results.size()), op.indexing_maps(),
-          op.iterator_types(), op.docAttr(), op.library_callAttr());
+          op.iterator_types(), op.docAttr(), op.library_callAttr(),
+          op.symbol_sourceAttr());
 
       // Create a new block in the region of the new Generic Op.
       Block &oldBlock = op.getRegion().front();
@@ -113,6 +114,10 @@ struct TestBufferPlacementPreparationPass
         mlir::ReturnOp, mlir::ReturnOp, linalg::CopyOp,
         allowMemrefFunctionResults>(context, placer, converter, patterns);
     patterns->insert<GenericOpConverter>(context, placer, converter);
+  }
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<linalg::LinalgDialect>();
   }
 
   void runOnOperation() override {

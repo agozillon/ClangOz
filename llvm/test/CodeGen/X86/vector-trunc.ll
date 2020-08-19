@@ -1581,10 +1581,11 @@ define <8 x i16> @trunc2x4i32_8i16(<4 x i32> %a, <4 x i32> %b) {
 ;
 ; AVX512F-LABEL: trunc2x4i32_8i16:
 ; AVX512F:       # %bb.0: # %entry
-; AVX512F-NEXT:    vpxor %xmm2, %xmm2, %xmm2
-; AVX512F-NEXT:    vpblendw {{.*#+}} xmm1 = xmm1[0],xmm2[1],xmm1[2],xmm2[3],xmm1[4],xmm2[5],xmm1[6],xmm2[7]
-; AVX512F-NEXT:    vpblendw {{.*#+}} xmm0 = xmm0[0],xmm2[1],xmm0[2],xmm2[3],xmm0[4],xmm2[5],xmm0[6],xmm2[7]
-; AVX512F-NEXT:    vpackusdw %xmm1, %xmm0, %xmm0
+; AVX512F-NEXT:    # kill: def $xmm0 killed $xmm0 def $ymm0
+; AVX512F-NEXT:    vinserti128 $1, %xmm1, %ymm0, %ymm0
+; AVX512F-NEXT:    vpmovdw %zmm0, %ymm0
+; AVX512F-NEXT:    # kill: def $xmm0 killed $xmm0 killed $ymm0
+; AVX512F-NEXT:    vzeroupper
 ; AVX512F-NEXT:    retq
 ;
 ; AVX512VL-LABEL: trunc2x4i32_8i16:
@@ -1597,10 +1598,11 @@ define <8 x i16> @trunc2x4i32_8i16(<4 x i32> %a, <4 x i32> %b) {
 ;
 ; AVX512BW-LABEL: trunc2x4i32_8i16:
 ; AVX512BW:       # %bb.0: # %entry
-; AVX512BW-NEXT:    vpxor %xmm2, %xmm2, %xmm2
-; AVX512BW-NEXT:    vpblendw {{.*#+}} xmm1 = xmm1[0],xmm2[1],xmm1[2],xmm2[3],xmm1[4],xmm2[5],xmm1[6],xmm2[7]
-; AVX512BW-NEXT:    vpblendw {{.*#+}} xmm0 = xmm0[0],xmm2[1],xmm0[2],xmm2[3],xmm0[4],xmm2[5],xmm0[6],xmm2[7]
-; AVX512BW-NEXT:    vpackusdw %xmm1, %xmm0, %xmm0
+; AVX512BW-NEXT:    # kill: def $xmm0 killed $xmm0 def $ymm0
+; AVX512BW-NEXT:    vinserti128 $1, %xmm1, %ymm0, %ymm0
+; AVX512BW-NEXT:    vpmovdw %zmm0, %ymm0
+; AVX512BW-NEXT:    # kill: def $xmm0 killed $xmm0 killed $ymm0
+; AVX512BW-NEXT:    vzeroupper
 ; AVX512BW-NEXT:    retq
 ;
 ; AVX512BWVL-LABEL: trunc2x4i32_8i16:
@@ -1709,10 +1711,11 @@ define <16 x i8> @trunc2x8i16_16i8(<8 x i16> %a, <8 x i16> %b) {
 ;
 ; AVX512BW-LABEL: trunc2x8i16_16i8:
 ; AVX512BW:       # %bb.0: # %entry
-; AVX512BW-NEXT:    vmovdqa {{.*#+}} xmm2 = [255,255,255,255,255,255,255,255]
-; AVX512BW-NEXT:    vpand %xmm2, %xmm1, %xmm1
-; AVX512BW-NEXT:    vpand %xmm2, %xmm0, %xmm0
-; AVX512BW-NEXT:    vpackuswb %xmm1, %xmm0, %xmm0
+; AVX512BW-NEXT:    # kill: def $xmm0 killed $xmm0 def $ymm0
+; AVX512BW-NEXT:    vinserti128 $1, %xmm1, %ymm0, %ymm0
+; AVX512BW-NEXT:    vpmovwb %zmm0, %ymm0
+; AVX512BW-NEXT:    # kill: def $xmm0 killed $xmm0 killed $ymm0
+; AVX512BW-NEXT:    vzeroupper
 ; AVX512BW-NEXT:    retq
 ;
 ; AVX512BWVL-LABEL: trunc2x8i16_16i8:
@@ -1810,7 +1813,7 @@ entry:
 define <8 x i16> @PR32160(<8 x i32> %x) {
 ; SSE-LABEL: PR32160:
 ; SSE:       # %bb.0:
-; SSE-NEXT:    pshufhw {{.*#+}} xmm0 = xmm0[0,1,2,3,4,4,6,7]
+; SSE-NEXT:    pshufhw {{.*#+}} xmm0 = xmm0[0,1,2,3,4,4,4,4]
 ; SSE-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[2,2,2,2]
 ; SSE-NEXT:    retq
 ;
@@ -1822,8 +1825,8 @@ define <8 x i16> @PR32160(<8 x i32> %x) {
 ;
 ; AVX2-SLOW-LABEL: PR32160:
 ; AVX2-SLOW:       # %bb.0:
-; AVX2-SLOW-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[0,2,2,3]
-; AVX2-SLOW-NEXT:    vpshuflw {{.*#+}} xmm0 = xmm0[2,2,2,3,4,5,6,7]
+; AVX2-SLOW-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[2,2,2,2]
+; AVX2-SLOW-NEXT:    vpshuflw {{.*#+}} xmm0 = xmm0[2,2,2,2,4,5,6,7]
 ; AVX2-SLOW-NEXT:    vpbroadcastd %xmm0, %xmm0
 ; AVX2-SLOW-NEXT:    vzeroupper
 ; AVX2-SLOW-NEXT:    retq
@@ -1838,7 +1841,7 @@ define <8 x i16> @PR32160(<8 x i32> %x) {
 ; AVX512F:       # %bb.0:
 ; AVX512F-NEXT:    # kill: def $ymm0 killed $ymm0 def $zmm0
 ; AVX512F-NEXT:    vpmovdw %zmm0, %ymm0
-; AVX512F-NEXT:    vpshuflw {{.*#+}} xmm0 = xmm0[2,2,2,3,4,5,6,7]
+; AVX512F-NEXT:    vpshuflw {{.*#+}} xmm0 = xmm0[2,2,2,2,4,5,6,7]
 ; AVX512F-NEXT:    vpbroadcastd %xmm0, %xmm0
 ; AVX512F-NEXT:    vzeroupper
 ; AVX512F-NEXT:    retq

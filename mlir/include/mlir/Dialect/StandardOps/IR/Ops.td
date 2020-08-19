@@ -18,7 +18,7 @@ include "mlir/IR/OpAsmInterface.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
-include "mlir/Interfaces/VectorUnrollInterface.td"
+include "mlir/Interfaces/VectorInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
 
 def StandardOps_Dialect : Dialect {
@@ -815,6 +815,39 @@ def CeilFOp : FloatUnaryOp<"ceilf"> {
 }
 
 //===----------------------------------------------------------------------===//
+// FloorFOp
+//===----------------------------------------------------------------------===//
+
+def FloorFOp : FloatUnaryOp<"floorf"> {
+  let summary = "floor of the specified value";
+  let description = [{
+    Syntax:
+
+    ```
+    operation ::= ssa-id `=` `std.floorf` ssa-use `:` type
+    ```
+
+    The `floorf` operation computes the floor of a given value. It takes one
+    operand and returns one result of the same type. This type may be a float
+    scalar type, a vector whose element type is float, or a tensor of floats.
+    It has no standard attributes.
+
+    Example:
+
+    ```mlir
+    // Scalar floor value.
+    %a = floorf %b : f64
+
+    // SIMD vector element-wise floor value.
+    %f = floorf %g : vector<4xf32>
+
+    // Tensor element-wise floor value.
+    %x = floorf %y : tensor<4x?xf8>
+    ```
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // CmpFOp
 //===----------------------------------------------------------------------===//
 
@@ -1409,7 +1442,7 @@ def DimOp : Std_Op<"dim", [NoSideEffect]> {
     ```
   }];
 
-  let arguments = (ins AnyTypeOf<[AnyMemRef, AnyTensor],
+  let arguments = (ins AnyTypeOf<[AnyRankedOrUnrankedMemRef, AnyTensor],
                                  "any tensor or memref type">:$memrefOrTensor,
                        Index:$index);
   let results = (outs Index:$result);
@@ -1700,7 +1733,7 @@ def LoadOp : Std_Op<"load",
 
     In an `affine.if` or `affine.for` body, the indices of a load are restricted
     to SSA values bound to surrounding loop induction variables,
-    [symbols](../Affine.md#dimensions-and-symbols), results of a
+    [symbols](Affine.md#dimensions-and-symbols), results of a
     [`constant` operation](#stdconstant-constantop), or the result of an
     `affine.apply` operation that can in turn take as arguments all of the
     aforementioned SSA values or the recursively result of such an
@@ -2024,16 +2057,18 @@ def PrefetchOp : Std_Op<"prefetch"> {
 def RankOp : Std_Op<"rank", [NoSideEffect]> {
   let summary = "rank operation";
   let description = [{
-    The `rank` operation takes a tensor operand and returns its rank.
+    The `rank` operation takes a memref/tensor operand and returns its rank.
 
     Example:
 
     ```mlir
-    %1 = rank %0 : tensor<*xf32>
+    %1 = rank %arg0 : tensor<*xf32>
+    %2 = rank %arg1 : memref<*xf32>
     ```
   }];
 
-  let arguments = (ins AnyTensor);
+  let arguments = (ins AnyTypeOf<[AnyRankedOrUnrankedMemRef, AnyTensor],
+                                 "any tensor or memref type">:$memrefOrTensor);
   let results = (outs Index);
   let verifier = ?;
 
@@ -2044,7 +2079,7 @@ def RankOp : Std_Op<"rank", [NoSideEffect]> {
     }]>];
 
   let hasFolder = 1;
-  let assemblyFormat = "operands attr-dict `:` type(operands)";
+  let assemblyFormat = "$memrefOrTensor attr-dict `:` type($memrefOrTensor)";
 }
 
 //===----------------------------------------------------------------------===//
@@ -2567,15 +2602,16 @@ def SubViewOp : Std_Op<"subview", [
     the operation's offsets, sizes and strides arguments.
 
     The SubView operation supports the following arguments:
-    *) Memref: the "base" memref on which to create a "view" memref.
-    *) Offsets: memref-rank number of dynamic offsets or static integer
-                attributes into the "base" memref at which to create the "view"
-                memref.
-    *) Sizes: memref-rank number of dynamic sizes or static integer attributes
-              which specify the sizes of the result "view" memref type.
-    *) Strides: memref-rank number of dynamic strides or static integer
-                attributes multiplicatively to the base memref strides in each
-                dimension.
+
+    * Memref: the "base" memref on which to create a "view" memref.
+    * Offsets: memref-rank number of dynamic offsets or static integer
+               attributes into the "base" memref at which to create the "view"
+               memref.
+    * Sizes: memref-rank number of dynamic sizes or static integer attributes
+             which specify the sizes of the result "view" memref type.
+    * Strides: memref-rank number of dynamic strides or static integer
+               attributes multiplicatively to the base memref strides in each
+               dimension.
 
     Example 1:
 
@@ -2931,24 +2967,26 @@ def TensorLoadOp : Std_Op<"tensor_load",
     ```
   }];
 
-  let arguments = (ins Arg<AnyMemRef, "the reference to load from",
-                           [MemRead]>:$memref);
+  let arguments = (ins Arg<AnyRankedOrUnrankedMemRef,
+                       "the reference to load from", [MemRead]>:$memref);
   let results = (outs AnyTensor:$result);
   // TensorLoadOp is fully verified by traits.
   let verifier = ?;
 
   let builders = [OpBuilder<
     "OpBuilder &builder, OperationState &result, Value memref", [{
-      auto memrefType = memref.getType().cast<MemRefType>();
-      auto resultType = RankedTensorType::get(memrefType.getShape(),
-                                              memrefType.getElementType());
       result.addOperands(memref);
-      result.addTypes(resultType);
+      result.addTypes(getTensorTypeFromMemRefType(memref.getType()));
   }]>];
 
   let extraClassDeclaration = [{
     /// The result of a tensor_load is always a tensor.
-    TensorType getType() { return getResult().getType().cast<TensorType>(); }
+    TensorType getType() { 
+      Type resultType = getResult().getType();
+      if (resultType.isa<TensorType>())
+        return resultType.cast<TensorType>();
+      return {};
+    }
   }];
 
   let assemblyFormat = "$memref attr-dict `:` type($memref)";
@@ -2978,9 +3016,8 @@ def TensorStoreOp : Std_Op<"tensor_store",
     ```
   }];
 
-  let arguments = (ins AnyTensor:$tensor,
-                       Arg<AnyMemRef, "the reference to store to",
-                           [MemWrite]>:$memref);
+  let arguments = (ins AnyTensor:$tensor, Arg<AnyRankedOrUnrankedMemRef,
+                       "the reference to store to", [MemWrite]>:$memref);
   // TensorStoreOp is fully verified by traits.
   let verifier = ?;
 
@@ -3129,21 +3166,23 @@ def ViewOp : Std_Op<"view", [
     The "view" operation extracts an N-D contiguous memref with empty layout map
     with arbitrary element type from a 1-D contiguous memref with empty layout
     map of i8 element  type. The ViewOp supports the following arguments:
-    *) A single dynamic byte-shift operand must be specified which represents a
-       a shift of the base 1-D memref pointer from which to create the resulting
-       contiguous memref view with identity layout.
-    *) A dynamic size operand that must be specified for each dynamic dimension
-       in the resulting view memref type.
+
+    * A single dynamic byte-shift operand must be specified which represents a
+      a shift of the base 1-D memref pointer from which to create the resulting
+      contiguous memref view with identity layout.
+    * A dynamic size operand that must be specified for each dynamic dimension
+      in the resulting view memref type.
 
     The "view" operation gives a structured indexing form to a flat 1-D buffer.
     Unlike "subview" it can perform a type change. The type change behavior
     requires the op to have special semantics because, e.g. a byte shift of 3
     cannot be represented as an offset on f64.
     For now, a "view" op:
-      1) Only takes a contiguous source memref with 0 offset and empty layout.
-      2) Must specify a byte_shift operand (in the future, a special integer
-      attribute may be added to support the folded case).
-      3) Returns a contiguous memref with 0 offset and empty layout.
+
+    1. Only takes a contiguous source memref with 0 offset and empty layout.
+    2. Must specify a byte_shift operand (in the future, a special integer
+       attribute may be added to support the folded case).
+    3. Returns a contiguous memref with 0 offset and empty layout.
 
     Example:
 

@@ -149,9 +149,9 @@ cl::opt<bool> EnableOrderFileInstrumentation(
     "enable-order-file-instrumentation", cl::init(false), cl::Hidden,
     cl::desc("Enable order file instrumentation (default = off)"));
 
-static cl::opt<bool>
-    EnableMatrix("enable-matrix", cl::init(false), cl::Hidden,
-                 cl::desc("Enable lowering of the matrix intrinsics"));
+cl::opt<bool> EnableMatrix(
+    "enable-matrix", cl::init(false), cl::Hidden,
+    cl::desc("Enable lowering of the matrix intrinsics"));
 
 cl::opt<AttributorRunOption> AttributorRun(
     "attributor-enable", cl::Hidden, cl::init(AttributorRunOption::NONE),
@@ -298,8 +298,8 @@ void PassManagerBuilder::populateFunctionPassManager(
   // Make sure they are also lowered in O0.
   // FIXME: A lightweight version of the pass should run in the backend
   //        pipeline on demand.
-  if (EnableMatrix)
-    FPM.add(createLowerMatrixIntrinsicsPass());
+  if (EnableMatrix && OptLevel == 0)
+    FPM.add(createLowerMatrixIntrinsicsMinimalPass());
 
   if (OptLevel == 0) return;
 
@@ -784,10 +784,13 @@ void PassManagerBuilder::populateModulePassManager(
   // convert to more optimized IR using more aggressive simplify CFG options.
   // The extra sinking transform can create larger basic blocks, so do this
   // before SLP vectorization.
+  // FIXME: study whether hoisting and/or sinking of common instructions should
+  //        be delayed until after SLP vectorizer.
   MPM.add(createCFGSimplificationPass(SimplifyCFGOptions()
                                           .forwardSwitchCondToPhi(true)
                                           .convertSwitchToLookupTable(true)
                                           .needCanonicalLoops(false)
+                                          .hoistCommonInsts(true)
                                           .sinkCommonInsts(true)));
 
   if (SLPVectorize) {

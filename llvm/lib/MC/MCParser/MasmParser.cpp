@@ -810,9 +810,6 @@ private:
                              const StructInitializer &Initializer);
 
   // User-defined types (structs, unions):
-  bool emitStructValue(const StructInfo &Structure,
-                       const StructInitializer &Initializer,
-                       size_t InitialOffset = 0, size_t InitialField = 0);
   bool emitStructValues(const StructInfo &Structure);
   bool addStructField(StringRef Name, const StructInfo &Structure);
   bool parseDirectiveStructValue(const StructInfo &Structure,
@@ -1723,8 +1720,6 @@ static unsigned getGNUBinOpPrecedence(AsmToken::TokenKind K,
     return 4;
 
   // High Intermediate Precedence: |, &, ^
-  //
-  // FIXME: gas seems to support '!' as an infix operator?
   case AsmToken::Pipe:
     Kind = MCBinaryExpr::Or;
     return 5;

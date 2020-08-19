@@ -39,6 +39,7 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Compression.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Host.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/TargetParser.h"
@@ -365,7 +366,7 @@ static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     break;
   case llvm::Triple::r600:
   case llvm::Triple::amdgcn:
-    amdgpu::getAMDGPUTargetFeatures(D, Args, Features);
+    amdgpu::getAMDGPUTargetFeatures(D, Triple, Args, Features);
     break;
   case llvm::Triple::msp430:
     msp430::getMSP430TargetFeatures(D, Args, Features);
@@ -498,7 +499,7 @@ static codegenoptions::DebugInfoKind DebugLevelToInfoKind(const Arg &A) {
     return codegenoptions::DebugLineTablesOnly;
   if (A.getOption().matches(options::OPT_gline_directives_only))
     return codegenoptions::DebugDirectivesOnly;
-  return codegenoptions::DebugInfoConstructor;
+  return codegenoptions::LimitedDebugInfo;
 }
 
 static bool mustUseNonLeafFramePointerForTarget(const llvm::Triple &Triple) {
@@ -975,6 +976,9 @@ static void RenderDebugEnablingArgs(const ArgList &Args, ArgStringList &CmdArgs,
     break;
   case codegenoptions::FullDebugInfo:
     CmdArgs.push_back("-debug-info-kind=standalone");
+    break;
+  case codegenoptions::UnusedTypeInfo:
+    CmdArgs.push_back("-debug-info-kind=unused-types");
     break;
   default:
     break;
@@ -1715,6 +1719,21 @@ void Clang::AddAArch64TargetArgs(const ArgList &Args,
     if (IndirectBranches)
       CmdArgs.push_back("-mbranch-target-enforce");
   }
+
+  // Handle -msve_vector_bits=<bits>
+  if (Arg *A = Args.getLastArg(options::OPT_msve_vector_bits_EQ)) {
+    StringRef Val = A->getValue();
+    const Driver &D = getToolChain().getDriver();
+    if (Val.equals("128") || Val.equals("256") || Val.equals("512") ||
+        Val.equals("1024") || Val.equals("2048"))
+      CmdArgs.push_back(
+          Args.MakeArgString(llvm::Twine("-msve-vector-bits=") + Val));
+    // Silently drop requests for vector-length agnostic code as it's implied.
+    else if (!Val.equals("scalable"))
+      // Handle the unsupported values passed to msve-vector-bits.
+      D.Diag(diag::err_drv_unsupported_option_argument)
+          << A->getOption().getName() << Val;
+  }
 }
 
 void Clang::AddMIPSTargetArgs(const ArgList &Args,
@@ -1868,19 +1887,8 @@ void Clang::AddPPCTargetArgs(const ArgList &Args,
   if (T.isOSBinFormatELF()) {
     switch (getToolChain().getArch()) {
     case llvm::Triple::ppc64: {
-      // When targeting a processor that supports QPX, or if QPX is
-      // specifically enabled, default to using the ABI that supports QPX (so
-      // long as it is not specifically disabled).
-      bool HasQPX = false;
-      if (Arg *A = Args.getLastArg(options::OPT_mcpu_EQ))
-        HasQPX = A->getValue() == StringRef("a2q");
-      HasQPX = Args.hasFlag(options::OPT_mqpx, options::OPT_mno_qpx, HasQPX);
-      if (HasQPX) {
-        ABIName = "elfv1-qpx";
-        break;
-      }
-
-      if (T.isMusl() || (T.isOSFreeBSD() && T.getOSMajorVersion() >= 13))
+      if ((T.isOSFreeBSD() && T.getOSMajorVersion() >= 13) ||
+          T.isOSOpenBSD() || T.isMusl())
         ABIName = "elfv2";
       else
         ABIName = "elfv1";
@@ -2063,6 +2071,18 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
     CmdArgs.push_back("-mfloat-abi");
     CmdArgs.push_back("soft");
     CmdArgs.push_back("-mstack-alignment=4");
+  }
+
+  // Handle -mtune.
+  // FIXME: We should default to "generic" unless -march is set to match gcc.
+  if (const Arg *A = Args.getLastArg(clang::driver::options::OPT_mtune_EQ)) {
+    StringRef Name = A->getValue();
+
+    if (Name == "native")
+      Name = llvm::sys::getHostCPUName();
+
+    CmdArgs.push_back("-tune-cpu");
+    CmdArgs.push_back(Args.MakeArgString(Name));
   }
 }
 
@@ -2380,7 +2400,7 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
           CmdArgs.push_back(Value.data());
         } else {
           RenderDebugEnablingArgs(Args, CmdArgs,
-                                  codegenoptions::DebugInfoConstructor,
+                                  codegenoptions::LimitedDebugInfo,
                                   DwarfVersion, llvm::DebuggerKind::Default);
         }
       } else if (Value.startswith("-mcpu") || Value.startswith("-mfpu") ||
@@ -2971,7 +2991,7 @@ static void RenderSCPOptions(const ToolChain &TC, const ArgList &Args,
     return;
 
   if (Args.hasFlag(options::OPT_fstack_clash_protection,
-                   options::OPT_fnostack_clash_protection, false))
+                   options::OPT_fno_stack_clash_protection, false))
     CmdArgs.push_back("-fstack-clash-protection");
 }
 
@@ -3653,7 +3673,7 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
   if (const Arg *A =
           Args.getLastArg(options::OPT_g_Group, options::OPT_gsplit_dwarf,
                           options::OPT_gsplit_dwarf_EQ)) {
-    DebugInfoKind = codegenoptions::DebugInfoConstructor;
+    DebugInfoKind = codegenoptions::LimitedDebugInfo;
 
     // If the last option explicitly specified a debug-info level, use it.
     if (checkDebugInfoOption(A, Args, D, TC) &&
@@ -3758,7 +3778,7 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
     if (checkDebugInfoOption(A, Args, D, TC)) {
       if (DebugInfoKind != codegenoptions::DebugLineTablesOnly &&
           DebugInfoKind != codegenoptions::DebugDirectivesOnly) {
-        DebugInfoKind = codegenoptions::DebugInfoConstructor;
+        DebugInfoKind = codegenoptions::LimitedDebugInfo;
         CmdArgs.push_back("-dwarf-ext-refs");
         CmdArgs.push_back("-fmodule-format=obj");
       }
@@ -3778,10 +3798,14 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
           TC.GetDefaultStandaloneDebug());
   if (const Arg *A = Args.getLastArg(options::OPT_fstandalone_debug))
     (void)checkDebugInfoOption(A, Args, D, TC);
-  if ((DebugInfoKind == codegenoptions::LimitedDebugInfo ||
-       DebugInfoKind == codegenoptions::DebugInfoConstructor) &&
-      NeedFullDebug)
-    DebugInfoKind = codegenoptions::FullDebugInfo;
+
+  if (DebugInfoKind == codegenoptions::LimitedDebugInfo) {
+    if (Args.hasFlag(options::OPT_fno_eliminate_unused_debug_types,
+                     options::OPT_feliminate_unused_debug_types, false))
+      DebugInfoKind = codegenoptions::UnusedTypeInfo;
+    else if (NeedFullDebug)
+      DebugInfoKind = codegenoptions::FullDebugInfo;
+  }
 
   if (Args.hasFlag(options::OPT_gembed_source, options::OPT_gno_embed_source,
                    false)) {
@@ -5631,6 +5655,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasFlag(options::OPT_fpch_instantiate_templates,
                    options::OPT_fno_pch_instantiate_templates, false))
     CmdArgs.push_back("-fpch-instantiate-templates");
+  if (Args.hasFlag(options::OPT_fpch_codegen, options::OPT_fno_pch_codegen,
+                   false))
+    CmdArgs.push_back("-fmodules-codegen");
+  if (Args.hasFlag(options::OPT_fpch_debuginfo, options::OPT_fno_pch_debuginfo,
+                   false))
+    CmdArgs.push_back("-fmodules-debuginfo");
 
   Args.AddLastArg(CmdArgs, options::OPT_fexperimental_new_pass_manager,
                   options::OPT_fno_experimental_new_pass_manager);
@@ -6564,7 +6594,7 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
                           options::OPT_gline_tables_only)) {
     *EmitCodeView = true;
     if (DebugInfoArg->getOption().matches(options::OPT__SLASH_Z7))
-      *DebugInfoKind = codegenoptions::DebugInfoConstructor;
+      *DebugInfoKind = codegenoptions::LimitedDebugInfo;
     else
       *DebugInfoKind = codegenoptions::DebugLineTablesOnly;
   } else {
@@ -6861,7 +6891,7 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
     // the guard for source type, however there is a test which asserts
     // that some assembler invocation receives no -debug-info-kind,
     // and it's not clear whether that test is just overly restrictive.
-    DebugInfoKind = (WantDebug ? codegenoptions::DebugInfoConstructor
+    DebugInfoKind = (WantDebug ? codegenoptions::LimitedDebugInfo
                                : codegenoptions::NoDebugInfo);
     // Add the -fdebug-compilation-dir flag if needed.
     addDebugCompDirArg(Args, CmdArgs, C.getDriver().getVFS());

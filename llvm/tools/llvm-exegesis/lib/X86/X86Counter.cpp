@@ -31,7 +31,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#ifdef HAVE_LIBPFM
+#if defined(HAVE_LIBPFM) && defined(LIBPFM_HAS_FIELD_CYCLES)
 namespace llvm {
 namespace exegesis {
 
@@ -86,6 +86,7 @@ static llvm::Error parseDataBuffer(const char *DataBuf, size_t DataSize,
 
     struct perf_branch_entry Entry;
     memcpy(&Entry, DataPtr, sizeof(struct perf_branch_entry));
+
     // Read the perf_branch_entry array.
     for (uint64_t i = 0; i < Count; ++i) {
       const uint64_t BlockStart = From == nullptr
@@ -111,7 +112,6 @@ static llvm::Error parseDataBuffer(const char *DataBuf, size_t DataSize,
                                              llvm::errc::io_error);
 }
 
-#ifdef HAVE_LIBPFM
 X86LbrPerfEvent::X86LbrPerfEvent(unsigned SamplingPeriod) {
   assert(SamplingPeriod > 0 && "SamplingPeriod must be positive");
   EventString = "BR_INST_RETIRED.NEAR_TAKEN";
@@ -132,12 +132,6 @@ X86LbrPerfEvent::X86LbrPerfEvent(unsigned SamplingPeriod) {
 
   FullQualifiedEventString = EventString;
 }
-#else
-X86LbrPerfEvent::X86LbrPerfEvent(unsigned SamplingPeriod) {
-  EventString = "";
-  Attr = nullptr;
-}
-#endif
 
 X86LbrCounter::X86LbrCounter(pfm::PerfEvent &&NewEvent)
     : Counter(std::move(NewEvent)) {
@@ -214,5 +208,5 @@ X86LbrCounter::readOrError(StringRef FunctionBytes) const {
 } // namespace exegesis
 } // namespace llvm
 
-#endif // HAVE_LIBPFM
+#endif //  defined(HAVE_LIBPFM) && defined(LIBPFM_HAS_FIELD_CYCLES)
 #endif // __linux__

@@ -1919,8 +1919,10 @@ bool llvm::replaceAllDbgUsesWith(Instruction &From, Value &To,
   return false;
 }
 
-unsigned llvm::removeAllNonTerminatorAndEHPadInstructions(BasicBlock *BB) {
+std::pair<unsigned, unsigned>
+llvm::removeAllNonTerminatorAndEHPadInstructions(BasicBlock *BB) {
   unsigned NumDeadInst = 0;
+  unsigned NumDeadDbgInst = 0;
   // Delete the instructions backwards, as it has a reduced likelihood of
   // having to update as many def-use and use-def chains.
   Instruction *EndInst = BB->getTerminator(); // Last not to be deleted.
@@ -1933,11 +1935,13 @@ unsigned llvm::removeAllNonTerminatorAndEHPadInstructions(BasicBlock *BB) {
       EndInst = Inst;
       continue;
     }
-    if (!isa<DbgInfoIntrinsic>(Inst))
+    if (isa<DbgInfoIntrinsic>(Inst))
+      ++NumDeadDbgInst;
+    else
       ++NumDeadInst;
     Inst->eraseFromParent();
   }
-  return NumDeadInst;
+  return {NumDeadInst, NumDeadDbgInst};
 }
 
 unsigned llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap,
@@ -3026,44 +3030,6 @@ bool llvm::canReplaceOperandWithVariable(const Instruction *I, unsigned OpIdx) {
         return false;
     return true;
   }
-}
-
-using AllocaForValueMapTy = DenseMap<Value *, AllocaInst *>;
-AllocaInst *llvm::findAllocaForValue(Value *V,
-                                     AllocaForValueMapTy &AllocaForValue) {
-  if (AllocaInst *AI = dyn_cast<AllocaInst>(V))
-    return AI;
-  // See if we've already calculated (or started to calculate) alloca for a
-  // given value.
-  AllocaForValueMapTy::iterator I = AllocaForValue.find(V);
-  if (I != AllocaForValue.end())
-    return I->second;
-  // Store 0 while we're calculating alloca for value V to avoid
-  // infinite recursion if the value references itself.
-  AllocaForValue[V] = nullptr;
-  AllocaInst *Res = nullptr;
-  if (CastInst *CI = dyn_cast<CastInst>(V))
-    Res = findAllocaForValue(CI->getOperand(0), AllocaForValue);
-  else if (PHINode *PN = dyn_cast<PHINode>(V)) {
-    for (Value *IncValue : PN->incoming_values()) {
-      // Allow self-referencing phi-nodes.
-      if (IncValue == PN)
-        continue;
-      AllocaInst *IncValueAI = findAllocaForValue(IncValue, AllocaForValue);
-      // AI for incoming values should exist and should all be equal.
-      if (IncValueAI == nullptr || (Res != nullptr && IncValueAI != Res))
-        return nullptr;
-      Res = IncValueAI;
-    }
-  } else if (GetElementPtrInst *EP = dyn_cast<GetElementPtrInst>(V)) {
-    Res = findAllocaForValue(EP->getPointerOperand(), AllocaForValue);
-  } else {
-    LLVM_DEBUG(dbgs() << "Alloca search cancelled on unknown instruction: "
-                      << *V << "\n");
-  }
-  if (Res)
-    AllocaForValue[V] = Res;
-  return Res;
 }
 
 Value *llvm::invertCondition(Value *Condition) {

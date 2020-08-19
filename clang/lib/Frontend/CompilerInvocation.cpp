@@ -767,6 +767,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
             .Case("constructor", codegenoptions::DebugInfoConstructor)
             .Case("limited", codegenoptions::LimitedDebugInfo)
             .Case("standalone", codegenoptions::FullDebugInfo)
+            .Case("unused-types", codegenoptions::UnusedTypeInfo)
             .Default(~0U);
     if (Val == ~0U)
       Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args)
@@ -774,6 +775,12 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
     else
       Opts.setDebugInfo(static_cast<codegenoptions::DebugInfoKind>(Val));
   }
+  // If -fuse-ctor-homing is set and limited debug info is already on, then use
+  // constructor homing.
+  if (Args.getLastArg(OPT_fuse_ctor_homing))
+    if (Opts.getDebugInfo() == codegenoptions::LimitedDebugInfo)
+      Opts.setDebugInfo(codegenoptions::DebugInfoConstructor);
+
   if (Arg *A = Args.getLastArg(OPT_debugger_tuning_EQ)) {
     unsigned Val = llvm::StringSwitch<unsigned>(A->getValue())
                        .Case("gdb", unsigned(llvm::DebuggerKind::GDB))
@@ -1155,8 +1162,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   if (const Arg *A = Args.getLastArg(OPT_compress_debug_sections,
                                      OPT_compress_debug_sections_EQ)) {
     if (A->getOption().getID() == OPT_compress_debug_sections) {
-      // TODO: be more clever about the compression type auto-detection
-      Opts.setCompressDebugSections(llvm::DebugCompressionType::GNU);
+      Opts.setCompressDebugSections(llvm::DebugCompressionType::Z);
     } else {
       auto DCT = llvm::StringSwitch<llvm::DebugCompressionType>(A->getValue())
                      .Case("none", llvm::DebugCompressionType::None)
@@ -2022,8 +2028,9 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
     // FIXME: Supporting '<lang>-header-cpp-output' would be useful.
     bool Preprocessed = XValue.consume_back("-cpp-output");
     bool ModuleMap = XValue.consume_back("-module-map");
-    IsHeaderFile =
-        !Preprocessed && !ModuleMap && XValue.consume_back("-header");
+    IsHeaderFile = !Preprocessed && !ModuleMap &&
+                   XValue != "precompiled-header" &&
+                   XValue.consume_back("-header");
 
     // Principal languages.
     DashX = llvm::StringSwitch<InputKind>(XValue)
@@ -2050,7 +2057,7 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       DashX = llvm::StringSwitch<InputKind>(XValue)
                   .Case("cpp-output", InputKind(Language::C).getPreprocessed())
                   .Case("assembler-with-cpp", Language::Asm)
-                  .Cases("ast", "pcm",
+                  .Cases("ast", "pcm", "precompiled-header",
                          InputKind(Language::Unknown, InputKind::Precompiled))
                   .Case("ir", Language::LLVM_IR)
                   .Default(Language::Unknown);
@@ -2786,7 +2793,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   // Mimicking gcc's behavior, trigraphs are only enabled if -trigraphs
   // is specified, or -std is set to a conforming mode.
   // Trigraphs are disabled by default in c++1z onwards.
-  Opts.Trigraphs = !Opts.GNUMode && !Opts.MSVCCompat && !Opts.CPlusPlus17;
+  // For z/OS, trigraphs are enabled by default (without regard to the above).
+  Opts.Trigraphs =
+      (!Opts.GNUMode && !Opts.MSVCCompat && !Opts.CPlusPlus17) || T.isOSzOS();
   Opts.Trigraphs =
       Args.hasFlag(OPT_ftrigraphs, OPT_fno_trigraphs, Opts.Trigraphs);
 
@@ -2996,6 +3005,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
                             | Opts.NativeHalfArgsAndReturns;
   Opts.GNUAsm = !Args.hasArg(OPT_fno_gnu_inline_asm);
   Opts.Cmse = Args.hasArg(OPT_mcmse); // Armv8-M Security Extensions
+
+  Opts.ArmSveVectorBits =
+      getLastArgIntValue(Args, options::OPT_msve_vector_bits_EQ, 0, Diags);
 
   // __declspec is enabled by default for the PS4 by the driver, and also
   // enabled for Microsoft Extensions or Borland Extensions, here.
@@ -3649,6 +3661,7 @@ static void ParseTargetArgs(TargetOptions &Opts, ArgList &Args,
       Opts.EABIVersion = EABIVersion;
   }
   Opts.CPU = std::string(Args.getLastArgValue(OPT_target_cpu));
+  Opts.TuneCPU = std::string(Args.getLastArgValue(OPT_tune_cpu));
   Opts.FPMath = std::string(Args.getLastArgValue(OPT_mfpmath));
   Opts.FeaturesAsWritten = Args.getAllArgValues(OPT_target_feature);
   Opts.LinkerVersion =

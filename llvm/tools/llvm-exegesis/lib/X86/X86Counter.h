@@ -20,7 +20,8 @@
 
 // FIXME: Use appropriate wrappers for poll.h and mman.h
 // to support Windows and remove this linux-only guard.
-#if defined(__linux__) && defined(HAVE_LIBPFM)
+#if defined(__linux__) && defined(HAVE_LIBPFM) &&                              \
+    defined(LIBPFM_HAS_FIELD_CYCLES)
 
 namespace llvm {
 namespace exegesis {
@@ -48,6 +49,7 @@ private:
 } // namespace exegesis
 } // namespace llvm
 
-#endif // defined(__linux__) && defined(HAVE_LIBPFM)
+#endif // defined(__linux__) && defined(HAVE_LIBPFM) &&
+       // defined(LIBPFM_HAS_FIELD_CYCLES)
 
 #endif // LLVM_TOOLS_LLVM_EXEGESIS_LIB_X86_X86COUNTER_H

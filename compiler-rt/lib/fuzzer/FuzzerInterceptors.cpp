@@ -59,8 +59,67 @@ static void ensureFuzzerInited() {
   }
 }
 
+static int internal_strcmp_strncmp(const char *s1, const char *s2, bool strncmp,
+                                   size_t n) {
+  size_t i = 0;
+  while (true) {
+    if (strncmp) {
+      if (i == n)
+        break;
+      i++;
+    }
+    unsigned c1 = *s1;
+    unsigned c2 = *s2;
+    if (c1 != c2)
+      return (c1 < c2) ? -1 : 1;
+    if (c1 == 0)
+      break;
+    s1++;
+    s2++;
+  }
+  return 0;
+}
+
+static int internal_strncmp(const char *s1, const char *s2, size_t n) {
+  return internal_strcmp_strncmp(s1, s2, true, n);
+}
+
+static int internal_strcmp(const char *s1, const char *s2) {
+  return internal_strcmp_strncmp(s1, s2, false, 0);
+}
+
+static int internal_memcmp(const void *s1, const void *s2, size_t n) {
+  const uint8_t *t1 = static_cast<const uint8_t *>(s1);
+  const uint8_t *t2 = static_cast<const uint8_t *>(s2);
+  for (size_t i = 0; i < n; ++i, ++t1, ++t2)
+    if (*t1 != *t2)
+      return *t1 < *t2 ? -1 : 1;
+  return 0;
+}
+
+static size_t internal_strlen(const char *s) {
+  size_t i = 0;
+  while (s[i])
+    i++;
+  return i;
+}
+
+static char *internal_strstr(const char *haystack, const char *needle) {
+  // This is O(N^2), but we are not using it in hot places.
+  size_t len1 = internal_strlen(haystack);
+  size_t len2 = internal_strlen(needle);
+  if (len1 < len2)
+    return nullptr;
+  for (size_t pos = 0; pos <= len1 - len2; pos++) {
+    if (internal_memcmp(haystack + pos, needle, len2) == 0)
+      return const_cast<char *>(haystack) + pos;
+  }
+  return nullptr;
+}
+
 extern "C" {
 
+DEFINE_REAL(int, bcmp, const void *, const void *, size_t)
 DEFINE_REAL(int, memcmp, const void *, const void *, size_t)
 DEFINE_REAL(int, strncmp, const char *, const char *, size_t)
 DEFINE_REAL(int, strcmp, const char *, const char *)
@@ -70,27 +129,35 @@ DEFINE_REAL(char *, strstr, const char *, const char *)
 DEFINE_REAL(char *, strcasestr, const char *, const char *)
 DEFINE_REAL(void *, memmem, const void *, size_t, const void *, size_t)
 
+ATTRIBUTE_INTERFACE int bcmp(const char *s1, const char *s2, size_t n) {
+  if (!FuzzerInited)
+    return internal_memcmp(s1, s2, n);
+  int result = REAL(bcmp)(s1, s2, n);
+  __sanitizer_weak_hook_memcmp(GET_CALLER_PC(), s1, s2, n, result);
+  return result;
+}
+
 ATTRIBUTE_INTERFACE int memcmp(const void *s1, const void *s2, size_t n) {
-  ensureFuzzerInited();
+  if (!FuzzerInited)
+    return internal_memcmp(s1, s2, n);
   int result = REAL(memcmp)(s1, s2, n);
   __sanitizer_weak_hook_memcmp(GET_CALLER_PC(), s1, s2, n, result);
-
   return result;
 }
 
 ATTRIBUTE_INTERFACE int strncmp(const char *s1, const char *s2, size_t n) {
-  ensureFuzzerInited();
+  if (!FuzzerInited)
+    return internal_strncmp(s1, s2, n);
   int result = REAL(strncmp)(s1, s2, n);
   __sanitizer_weak_hook_strncmp(GET_CALLER_PC(), s1, s2, n, result);
-
   return result;
 }
 
 ATTRIBUTE_INTERFACE int strcmp(const char *s1, const char *s2) {
-  ensureFuzzerInited();
+  if (!FuzzerInited)
+    return internal_strcmp(s1, s2);
   int result = REAL(strcmp)(s1, s2);
   __sanitizer_weak_hook_strcmp(GET_CALLER_PC(), s1, s2, result);
-
   return result;
 }
 
@@ -98,7 +165,6 @@ ATTRIBUTE_INTERFACE int strncasecmp(const char *s1, const char *s2, size_t n) {
   ensureFuzzerInited();
   int result = REAL(strncasecmp)(s1, s2, n);
   __sanitizer_weak_hook_strncasecmp(GET_CALLER_PC(), s1, s2, n, result);
-
   return result;
 }
 
@@ -106,15 +172,14 @@ ATTRIBUTE_INTERFACE int strcasecmp(const char *s1, const char *s2) {
   ensureFuzzerInited();
   int result = REAL(strcasecmp)(s1, s2);
   __sanitizer_weak_hook_strcasecmp(GET_CALLER_PC(), s1, s2, result);
-
   return result;
 }
 
 ATTRIBUTE_INTERFACE char *strstr(const char *s1, const char *s2) {
-  ensureFuzzerInited();
+  if (!FuzzerInited)
+    return internal_strstr(s1, s2);
   char *result = REAL(strstr)(s1, s2);
   __sanitizer_weak_hook_strstr(GET_CALLER_PC(), s1, s2, result);
-
   return result;
 }
 
@@ -122,7 +187,6 @@ ATTRIBUTE_INTERFACE char *strcasestr(const char *s1, const char *s2) {
   ensureFuzzerInited();
   char *result = REAL(strcasestr)(s1, s2);
   __sanitizer_weak_hook_strcasestr(GET_CALLER_PC(), s1, s2, result);
-
   return result;
 }
 
@@ -131,7 +195,6 @@ void *memmem(const void *s1, size_t len1, const void *s2, size_t len2) {
   ensureFuzzerInited();
   void *result = REAL(memmem)(s1, len1, s2, len2);
   __sanitizer_weak_hook_memmem(GET_CALLER_PC(), s1, len1, s2, len2, result);
-
   return result;
 }
 
@@ -146,6 +209,8 @@ static void fuzzerInit() {
     return;
   FuzzerInitIsRunning = true;
 
+  REAL(bcmp) = reinterpret_cast<memcmp_type>(
+      getFuncAddr("bcmp", reinterpret_cast<uintptr_t>(&bcmp)));
   REAL(memcmp) = reinterpret_cast<memcmp_type>(
       getFuncAddr("memcmp", reinterpret_cast<uintptr_t>(&memcmp)));
   REAL(strncmp) = reinterpret_cast<strncmp_type>(

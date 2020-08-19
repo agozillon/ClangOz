@@ -233,11 +233,9 @@ private:
 
   template <bool IsSigned>
   bool SelectFlatOffset(SDNode *N, SDValue Addr, SDValue &VAddr,
-                        SDValue &Offset, SDValue &SLC) const;
-  bool SelectFlatAtomic(SDNode *N, SDValue Addr, SDValue &VAddr,
-                        SDValue &Offset, SDValue &SLC) const;
-  bool SelectFlatAtomicSigned(SDNode *N, SDValue Addr, SDValue &VAddr,
-                              SDValue &Offset, SDValue &SLC) const;
+                        SDValue &Offset) const;
+  bool SelectGlobalSAddr(SDNode *N, SDValue Addr, SDValue &SAddr,
+                         SDValue &VOffset, SDValue &Offset) const;
 
   bool SelectSMRDOffset(SDValue ByteOffsetNode, SDValue &Offset,
                         bool &Imm) const;
@@ -716,8 +714,7 @@ void AMDGPUDAGToDAGISel::Select(SDNode *N) {
       (Opc == AMDGPUISD::ATOMIC_INC || Opc == AMDGPUISD::ATOMIC_DEC ||
        Opc == ISD::ATOMIC_LOAD_FADD ||
        Opc == AMDGPUISD::ATOMIC_LOAD_FMIN ||
-       Opc == AMDGPUISD::ATOMIC_LOAD_FMAX ||
-       Opc == AMDGPUISD::ATOMIC_LOAD_CSUB)) {
+       Opc == AMDGPUISD::ATOMIC_LOAD_FMAX)) {
     N = glueCopyToM0LDSInit(N);
     SelectCode(N);
     return;
@@ -1663,8 +1660,7 @@ template <bool IsSigned>
 bool AMDGPUDAGToDAGISel::SelectFlatOffset(SDNode *N,
                                           SDValue Addr,
                                           SDValue &VAddr,
-                                          SDValue &Offset,
-                                          SDValue &SLC) const {
+                                          SDValue &Offset) const {
   int64_t OffsetVal = 0;
 
   if (Subtarget->hasFlatInstOffsets() &&
@@ -1688,33 +1684,27 @@ bool AMDGPUDAGToDAGISel::SelectFlatOffset(SDNode *N,
       } else {
         // If the offset doesn't fit, put the low bits into the offset field and
         // add the rest.
+        //
+        // For a FLAT instruction the hardware decides whether to access
+        // global/scratch/shared memory based on the high bits of vaddr,
+        // ignoring the offset field, so we have to ensure that when we add
+        // remainder to vaddr it still points into the same underlying object.
+        // The easiest way to do that is to make sure that we split the offset
+        // into two pieces that are both >= 0 or both <= 0.
 
         SDLoc DL(N);
-        uint64_t ImmField;
+        uint64_t RemainderOffset = COffsetVal;
+        uint64_t ImmField = 0;
         const unsigned NumBits = TII->getNumFlatOffsetBits(AS, IsSigned);
         if (IsSigned) {
-          ImmField = SignExtend64(COffsetVal, NumBits);
-
-          // Don't use a negative offset field if the base offset is positive.
-          // Since the scheduler currently relies on the offset field, doing so
-          // could result in strange scheduling decisions.
-
-          // TODO: Should we not do this in the opposite direction as well?
-          if (static_cast<int64_t>(COffsetVal) > 0) {
-            if (static_cast<int64_t>(ImmField) < 0) {
-              const uint64_t OffsetMask =
-                  maskTrailingOnes<uint64_t>(NumBits - 1);
-              ImmField = COffsetVal & OffsetMask;
-            }
-          }
-        } else {
-          // TODO: Should we do this for a negative offset?
-          const uint64_t OffsetMask = maskTrailingOnes<uint64_t>(NumBits);
-          ImmField = COffsetVal & OffsetMask;
+          // Use signed division by a power of two to truncate towards 0.
+          int64_t D = 1LL << (NumBits - 1);
+          RemainderOffset = (static_cast<int64_t>(COffsetVal) / D) * D;
+          ImmField = COffsetVal - RemainderOffset;
+        } else if (static_cast<int64_t>(COffsetVal) >= 0) {
+          ImmField = COffsetVal & maskTrailingOnes<uint64_t>(NumBits);
+          RemainderOffset = COffsetVal - ImmField;
         }
-
-        uint64_t RemainderOffset = COffsetVal - ImmField;
-
         assert(TII->isLegalFLATOffset(ImmField, AS, IsSigned));
         assert(RemainderOffset + ImmField == COffsetVal);
 
@@ -1759,24 +1749,70 @@ bool AMDGPUDAGToDAGISel::SelectFlatOffset(SDNode *N,
 
   VAddr = Addr;
   Offset = CurDAG->getTargetConstant(OffsetVal, SDLoc(), MVT::i16);
-  SLC = CurDAG->getTargetConstant(0, SDLoc(), MVT::i1);
   return true;
 }
 
-bool AMDGPUDAGToDAGISel::SelectFlatAtomic(SDNode *N,
-                                          SDValue Addr,
-                                          SDValue &VAddr,
-                                          SDValue &Offset,
-                                          SDValue &SLC) const {
-  return SelectFlatOffset<false>(N, Addr, VAddr, Offset, SLC);
+// If this matches zero_extend i32:x, return x
+static SDValue matchZExtFromI32(SDValue Op) {
+  if (Op.getOpcode() != ISD::ZERO_EXTEND)
+    return SDValue();
+
+  SDValue ExtSrc = Op.getOperand(0);
+  return (ExtSrc.getValueType() == MVT::i32) ? ExtSrc : SDValue();
 }
 
-bool AMDGPUDAGToDAGISel::SelectFlatAtomicSigned(SDNode *N,
-                                                SDValue Addr,
-                                                SDValue &VAddr,
-                                                SDValue &Offset,
-                                                SDValue &SLC) const {
-  return SelectFlatOffset<true>(N, Addr, VAddr, Offset, SLC);
+// Match (64-bit SGPR base) + (zext vgpr offset) + sext(imm offset)
+bool AMDGPUDAGToDAGISel::SelectGlobalSAddr(SDNode *N,
+                                           SDValue Addr,
+                                           SDValue &SAddr,
+                                           SDValue &VOffset,
+                                           SDValue &Offset) const {
+  int64_t ImmOffset = 0;
+
+  // Match the immediate offset first, which canonically is moved as low as
+  // possible.
+  if (CurDAG->isBaseWithConstantOffset(Addr)) {
+    SDValue LHS = Addr.getOperand(0);
+    SDValue RHS = Addr.getOperand(1);
+
+    int64_t COffsetVal = cast<ConstantSDNode>(RHS)->getSExtValue();
+    const SIInstrInfo *TII = Subtarget->getInstrInfo();
+
+    // TODO: Could split larger constant into VGPR offset.
+    if (TII->isLegalFLATOffset(COffsetVal, AMDGPUAS::GLOBAL_ADDRESS, true)) {
+      Addr = LHS;
+      ImmOffset = COffsetVal;
+    }
+  }
+
+  // Match the variable offset.
+  if (Addr.getOpcode() != ISD::ADD)
+    return false;
+
+  SDValue LHS = Addr.getOperand(0);
+  SDValue RHS = Addr.getOperand(1);
+
+  if (!LHS->isDivergent()) {
+    // add (i64 sgpr), (zero_extend (i32 vgpr))
+    if (SDValue ZextRHS = matchZExtFromI32(RHS)) {
+      SAddr = LHS;
+      VOffset = ZextRHS;
+    }
+  }
+
+  if (!SAddr && !RHS->isDivergent()) {
+    // add (zero_extend (i32 vgpr)), (i64 sgpr)
+    if (SDValue ZextLHS = matchZExtFromI32(LHS)) {
+      SAddr = RHS;
+      VOffset = ZextLHS;
+    }
+  }
+
+  if (!SAddr)
+    return false;
+
+  Offset = CurDAG->getTargetConstant(ImmOffset, SDLoc(), MVT::i16);
+  return true;
 }
 
 bool AMDGPUDAGToDAGISel::SelectSMRDOffset(SDValue ByteOffsetNode,

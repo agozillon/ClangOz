@@ -603,13 +603,16 @@ public:
     // If LbrSamplingPeriod was provided, then ignore the
     // CounterName because we only have one for LBR.
     if (LbrSamplingPeriod > 0) {
-      // Can't use LBR without HAVE_LIBPFM, or __linux__ (for now)
-#if defined(HAVE_LIBPFM) && defined(__linux__)
+      // Can't use LBR without HAVE_LIBPFM, LIBPFM_HAS_FIELD_CYCLES, or without
+      // __linux__ (for now)
+#if defined(HAVE_LIBPFM) && defined(LIBPFM_HAS_FIELD_CYCLES) &&                \
+    defined(__linux__)
       return std::make_unique<X86LbrCounter>(
           X86LbrPerfEvent(LbrSamplingPeriod));
 #else
       return llvm::make_error<llvm::StringError>(
-          "LBR counter requested without HAVE_LIBPFM or running on Linux.",
+          "LBR counter requested without HAVE_LIBPFM, LIBPFM_HAS_FIELD_CYCLES, "
+          "or running on Linux.",
           llvm::errc::invalid_argument);
 #endif
     }

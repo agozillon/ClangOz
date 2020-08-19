@@ -1035,6 +1035,16 @@ void Verifier::visitDICompositeType(const DICompositeType &N) {
     AssertDI(N.getTag() == dwarf::DW_TAG_array_type,
              "dataLocation can only appear in array type");
   }
+
+  if (N.getRawAssociated()) {
+    AssertDI(N.getTag() == dwarf::DW_TAG_array_type,
+             "associated can only appear in array type");
+  }
+
+  if (N.getRawAllocated()) {
+    AssertDI(N.getTag() == dwarf::DW_TAG_array_type,
+             "allocated can only appear in array type");
+  }
 }
 
 void Verifier::visitDISubroutineType(const DISubroutineType &N) {
@@ -1652,9 +1662,10 @@ void Verifier::verifyParameterAttrs(AttributeSet Attrs, Type *Ty,
   AttrCount += Attrs.hasAttribute(Attribute::StructRet) ||
                Attrs.hasAttribute(Attribute::InReg);
   AttrCount += Attrs.hasAttribute(Attribute::Nest);
+  AttrCount += Attrs.hasAttribute(Attribute::ByRef);
   Assert(AttrCount <= 1,
          "Attributes 'byval', 'inalloca', 'preallocated', 'inreg', 'nest', "
-         "and 'sret' are incompatible!",
+         "'byref', and 'sret' are incompatible!",
          V);
 
   Assert(!(Attrs.hasAttribute(Attribute::InAlloca) &&
@@ -1720,9 +1731,10 @@ void Verifier::verifyParameterAttrs(AttributeSet Attrs, Type *Ty,
     SmallPtrSet<Type*, 4> Visited;
     if (!PTy->getElementType()->isSized(&Visited)) {
       Assert(!Attrs.hasAttribute(Attribute::ByVal) &&
-                 !Attrs.hasAttribute(Attribute::InAlloca) &&
-                 !Attrs.hasAttribute(Attribute::Preallocated),
-             "Attributes 'byval', 'inalloca', and 'preallocated' do not "
+             !Attrs.hasAttribute(Attribute::ByRef) &&
+             !Attrs.hasAttribute(Attribute::InAlloca) &&
+             !Attrs.hasAttribute(Attribute::Preallocated),
+             "Attributes 'byval', 'byref', 'inalloca', and 'preallocated' do not "
              "support unsized types!",
              V);
     }
@@ -1731,9 +1743,17 @@ void Verifier::verifyParameterAttrs(AttributeSet Attrs, Type *Ty,
              "Attribute 'swifterror' only applies to parameters "
              "with pointer to pointer type!",
              V);
+
+    if (Attrs.hasAttribute(Attribute::ByRef)) {
+      Assert(Attrs.getByRefType() == PTy->getElementType(),
+             "Attribute 'byref' type does not match parameter!", V);
+    }
   } else {
     Assert(!Attrs.hasAttribute(Attribute::ByVal),
            "Attribute 'byval' only applies to parameters with pointer type!",
+           V);
+    Assert(!Attrs.hasAttribute(Attribute::ByRef),
+           "Attribute 'byref' only applies to parameters with pointer type!",
            V);
     Assert(!Attrs.hasAttribute(Attribute::SwiftError),
            "Attribute 'swifterror' only applies to parameters "
@@ -1765,10 +1785,11 @@ void Verifier::verifyFunctionAttrs(FunctionType *FT, AttributeList Attrs,
           !RetAttrs.hasAttribute(Attribute::Returned) &&
           !RetAttrs.hasAttribute(Attribute::InAlloca) &&
           !RetAttrs.hasAttribute(Attribute::Preallocated) &&
+          !RetAttrs.hasAttribute(Attribute::ByRef) &&
           !RetAttrs.hasAttribute(Attribute::SwiftSelf) &&
           !RetAttrs.hasAttribute(Attribute::SwiftError)),
-         "Attributes 'byval', 'inalloca', 'preallocated', 'nest', 'sret', "
-         "'nocapture', 'nofree', "
+         "Attributes 'byval', 'inalloca', 'preallocated', 'byref', "
+         "'nest', 'sret', 'nocapture', 'nofree', "
          "'returned', 'swiftself', and 'swifterror' do not apply to return "
          "values!",
          V);
@@ -2102,16 +2123,9 @@ void Verifier::verifyStatepoint(const CallBase &Call) {
          Call);
   const int NumTransitionArgs =
       cast<ConstantInt>(NumTransitionArgsV)->getZExtValue();
-  Assert(NumTransitionArgs >= 0,
-         "gc.statepoint number of transition arguments must be positive", Call);
+  Assert(NumTransitionArgs == 0,
+         "gc.statepoint w/inline transition bundle is deprecated", Call);
   const int EndTransitionArgsInx = EndCallArgsInx + 1 + NumTransitionArgs;
-
-  // We're migrating away from inline operands to operand bundles, enforce
-  // the either/or property during transition.
-  if (Call.getOperandBundle(LLVMContext::OB_gc_transition)) {
-    Assert(NumTransitionArgs == 0,
-           "can't use both deopt operands and deopt bundle on a statepoint");
-  }
 
   const Value *NumDeoptArgsV = Call.getArgOperand(EndTransitionArgsInx + 1);
   Assert(isa<ConstantInt>(NumDeoptArgsV),
@@ -2119,22 +2133,12 @@ void Verifier::verifyStatepoint(const CallBase &Call) {
          "must be constant integer",
          Call);
   const int NumDeoptArgs = cast<ConstantInt>(NumDeoptArgsV)->getZExtValue();
-  Assert(NumDeoptArgs >= 0,
-         "gc.statepoint number of deoptimization arguments "
-         "must be positive",
-         Call);
+  Assert(NumDeoptArgs == 0,
+         "gc.statepoint w/inline deopt operands is deprecated", Call);
 
-  // We're migrating away from inline operands to operand bundles, enforce
-  // the either/or property during transition.
-  if (Call.getOperandBundle(LLVMContext::OB_deopt)) {
-    Assert(NumDeoptArgs == 0,
-           "can't use both deopt operands and deopt bundle on a statepoint");
-  }
-
-  const int ExpectedNumArgs =
-      7 + NumCallArgs + NumTransitionArgs + NumDeoptArgs;
-  Assert(ExpectedNumArgs <= (int)Call.arg_size(),
-         "gc.statepoint too few arguments according to length fields", Call);
+  const int ExpectedNumArgs = 7 + NumCallArgs;
+  Assert(ExpectedNumArgs == (int)Call.arg_size(),
+         "gc.statepoint too many arguments", Call);
 
   // Check that the only uses of this gc.statepoint are gc.result or
   // gc.relocate calls which are tied to this statepoint and thus part
@@ -2292,6 +2296,28 @@ void Verifier::visitFunction(const Function &F) {
   case CallingConv::AMDGPU_CS:
     Assert(!F.hasStructRetAttr(),
            "Calling convention does not allow sret", &F);
+    if (F.getCallingConv() != CallingConv::SPIR_KERNEL) {
+      const unsigned StackAS = DL.getAllocaAddrSpace();
+      unsigned i = 0;
+      for (const Argument &Arg : F.args()) {
+        Assert(!Attrs.hasParamAttribute(i, Attribute::ByVal),
+               "Calling convention disallows byval", &F);
+        Assert(!Attrs.hasParamAttribute(i, Attribute::Preallocated),
+               "Calling convention disallows preallocated", &F);
+        Assert(!Attrs.hasParamAttribute(i, Attribute::InAlloca),
+               "Calling convention disallows inalloca", &F);
+
+        if (Attrs.hasParamAttribute(i, Attribute::ByRef)) {
+          // FIXME: Should also disallow LDS and GDS, but we don't have the enum
+          // value here.
+          Assert(Arg.getType()->getPointerAddressSpace() != StackAS,
+                 "Calling convention disallows stack byref", &F);
+        }
+
+        ++i;
+      }
+    }
+
     LLVM_FALLTHROUGH;
   case CallingConv::Fast:
   case CallingConv::Cold:
@@ -3174,17 +3200,19 @@ static bool isTypeCongruent(Type *L, Type *R) {
 
 static AttrBuilder getParameterABIAttributes(int I, AttributeList Attrs) {
   static const Attribute::AttrKind ABIAttrs[] = {
-      Attribute::StructRet,   Attribute::ByVal,     Attribute::InAlloca,
-      Attribute::InReg,       Attribute::SwiftSelf, Attribute::SwiftError,
-      Attribute::Preallocated};
+      Attribute::StructRet,    Attribute::ByVal,     Attribute::InAlloca,
+      Attribute::InReg,        Attribute::SwiftSelf, Attribute::SwiftError,
+      Attribute::Preallocated, Attribute::ByRef};
   AttrBuilder Copy;
   for (auto AK : ABIAttrs) {
     if (Attrs.hasParamAttribute(I, AK))
       Copy.addAttribute(AK);
   }
-  // `align` is ABI-affecting only in combination with `byval`.
+
+  // `align` is ABI-affecting only in combination with `byval` or `byref`.
   if (Attrs.hasParamAttribute(I, Attribute::Alignment) &&
-      Attrs.hasParamAttribute(I, Attribute::ByVal))
+      (Attrs.hasParamAttribute(I, Attribute::ByVal) ||
+       Attrs.hasParamAttribute(I, Attribute::ByRef)))
     Copy.addAlignmentAttr(Attrs.getParamAlignment(I));
   return Copy;
 }
@@ -4774,45 +4802,6 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
              "gc.relocate: statepoint base index out of bounds", Call);
       Assert(DerivedIndex < Opt->Inputs.size(),
              "gc.relocate: statepoint derived index out of bounds", Call);
-    } else {
-      Assert(BaseIndex < StatepointCall.arg_size(),
-             "gc.relocate: statepoint base index out of bounds", Call);
-      Assert(DerivedIndex < StatepointCall.arg_size(),
-             "gc.relocate: statepoint derived index out of bounds", Call);
-
-      // Check that BaseIndex and DerivedIndex fall within the 'gc parameters'
-      // section of the statepoint's argument.
-      Assert(StatepointCall.arg_size() > 0,
-             "gc.statepoint: insufficient arguments");
-      Assert(isa<ConstantInt>(StatepointCall.getArgOperand(3)),
-             "gc.statement: number of call arguments must be constant integer");
-      const uint64_t NumCallArgs =
-        cast<ConstantInt>(StatepointCall.getArgOperand(3))->getZExtValue();
-      Assert(StatepointCall.arg_size() > NumCallArgs + 5,
-             "gc.statepoint: mismatch in number of call arguments");
-      Assert(isa<ConstantInt>(StatepointCall.getArgOperand(NumCallArgs + 5)),
-             "gc.statepoint: number of transition arguments must be "
-             "a constant integer");
-      const uint64_t NumTransitionArgs =
-          cast<ConstantInt>(StatepointCall.getArgOperand(NumCallArgs + 5))
-              ->getZExtValue();
-      const uint64_t DeoptArgsStart = 4 + NumCallArgs + 1 + NumTransitionArgs + 1;
-      Assert(isa<ConstantInt>(StatepointCall.getArgOperand(DeoptArgsStart)),
-             "gc.statepoint: number of deoptimization arguments must be "
-             "a constant integer");
-      const uint64_t NumDeoptArgs =
-          cast<ConstantInt>(StatepointCall.getArgOperand(DeoptArgsStart))
-              ->getZExtValue();
-      const uint64_t GCParamArgsStart = DeoptArgsStart + 1 + NumDeoptArgs;
-      const uint64_t GCParamArgsEnd = StatepointCall.arg_size();
-      Assert(GCParamArgsStart <= BaseIndex && BaseIndex < GCParamArgsEnd,
-             "gc.relocate: statepoint base index doesn't fall within the "
-             "'gc parameters' section of the statepoint call",
-             Call);
-      Assert(GCParamArgsStart <= DerivedIndex && DerivedIndex < GCParamArgsEnd,
-             "gc.relocate: statepoint derived index doesn't fall within the "
-             "'gc parameters' section of the statepoint call",
-             Call);
     }
 
     // Relocated value must be either a pointer type or vector-of-pointer type,
@@ -4941,15 +4930,17 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
   case Intrinsic::sadd_sat:
   case Intrinsic::uadd_sat:
   case Intrinsic::ssub_sat:
-  case Intrinsic::usub_sat: {
+  case Intrinsic::usub_sat:
+  case Intrinsic::sshl_sat:
+  case Intrinsic::ushl_sat: {
     Value *Op1 = Call.getArgOperand(0);
     Value *Op2 = Call.getArgOperand(1);
     Assert(Op1->getType()->isIntOrIntVectorTy(),
-           "first operand of [us][add|sub]_sat must be an int type or vector "
-           "of ints");
+           "first operand of [us][add|sub|shl]_sat must be an int type or "
+           "vector of ints");
     Assert(Op2->getType()->isIntOrIntVectorTy(),
-           "second operand of [us][add|sub]_sat must be an int type or vector "
-           "of ints");
+           "second operand of [us][add|sub|shl]_sat must be an int type or "
+           "vector of ints");
     break;
   }
   case Intrinsic::smul_fix:
