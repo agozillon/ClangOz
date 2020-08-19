@@ -4911,6 +4911,38 @@ namespace {
     else
       CSF->Arguments[index] = SetTo;
   }
+
+  // This is a helper for offsetting contigious array iterators and limiting
+  // repetition, int64_t is maybe not the best type for the values long term
+  void OffsetLValue(APValue& APV, int64_t TypeSize, int64_t Offset, 
+                    bool OffsetFromStart = true, int64_t OffsetBoundry = -1) {
+    if (OffsetBoundry > -1) {
+      auto CurrIndex = (APV.getLValuePath().size() > 1) ?
+        APV.getLValuePath()[1].getAsArrayIndex() : 0;
+
+      if ((CurrIndex + Offset) > OffsetBoundry)
+        Offset = OffsetBoundry;
+      
+    }
+
+    std::vector<APValue::LValuePathEntry> NewLValPath;
+    for (size_t j = 0; j < APV.getLValuePath().size(); ++j) {
+      NewLValPath.push_back((j == 0) ? APV.getLValuePath()[j] : 
+        APV.getLValuePath()[j]
+          .ArrayIndex(
+            OffsetFromStart ?
+              APV.getLValuePath()[j].getAsArrayIndex() + Offset
+            : Offset)); 
+    }
+
+    APV.setLValue(APV.getLValueBase(), 
+                  OffsetFromStart ? 
+                      APV.getLValueOffset() + 
+                      CharUnits::fromQuantity(TypeSize * Offset)
+                    : CharUnits::fromQuantity(TypeSize * Offset), 
+                  NewLValPath, APV.isLValueOnePastTheEnd(), 
+                  APV.isNullPointer());
+  }
   
   //  Experiment at creating someway to pass information into Clang rather than 
   //  trying to analyize which can be extremely difficult.
@@ -4923,6 +4955,8 @@ namespace {
     : public ConstStmtVisitor<LoopWrapperGatherer, bool> {
     EvalInfo Info;
     std::vector<EvalInfo> &ThreadInfo;
+    std::vector<llvm::Any> NoCopyBackList;
+    
     std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> &RedList;
     int64_t ThreadPartitionSize;
     int64_t ThreadPartitionOverflow;
@@ -4965,11 +4999,23 @@ namespace {
                             &RedList) :
                           Info(Info), ThreadInfo(ThreadInfo), RedList(RedList){}
     
+      std::vector<llvm::Any> GetNoCopyBackList() {
+        return NoCopyBackList;
+      }
+      
       bool SearchBody(const Stmt* Body) {
         for (auto Stmt : Body->children()) {
           Visit(Stmt);
         }
 
+        return true;
+      }
+      
+      bool VisitExprWithCleanups(const ExprWithCleanups* EWC) {
+        for (auto Stmt : EWC->children()) {
+          Visit(Stmt);
+        }
+        
         return true;
       }
       
@@ -4992,34 +5038,39 @@ namespace {
       bool HandleBeginEndIteratorPair(const CallExpr *E) {
         if (E->getNumArgs() > 2 || E->getNumArgs() < 2)
           return false;
-          
-        int BeginIndex = -1, EndIndex = -1;
+
+        llvm::Any BeginArgOrTemp, EndArgOrTemp;
         APValue APVBegin, APVEnd;
         QualType QTBegin, QTEnd;
-        
+
+
         // Parameter: T Begin
         // TODO: Create helper for the nested if's since it's used more than 
         // once..
-        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(0)))
-          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
-            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
-              BeginIndex = PVD->getFunctionScopeIndex();
-              APVBegin = Info.CurrentCall->Arguments[BeginIndex];
-              QTBegin = PVD->getOriginalType();
-            }
-
+        if (auto DRE = dyn_cast<DeclRefExpr>(E->getArg(0))) {
+          if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+            BeginArgOrTemp = PVD->getFunctionScopeIndex();
+            APVBegin = *GetArgOrTemp(BeginArgOrTemp, Info.CurrentCall);
+            QTBegin = PVD->getOriginalType();
+          } else if (auto VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+            BeginArgOrTemp = static_cast<const void*>(VD);
+            APVBegin = *GetArgOrTemp(BeginArgOrTemp, Info.CurrentCall);
+            QTBegin = VD->getType();
+          }
+        }
+          
         // Parameter: T2 End
-        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(1)))
-          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
-            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
-              EndIndex = PVD->getFunctionScopeIndex();
-              APVEnd = Info.CurrentCall->Arguments[EndIndex];
-              QTEnd = PVD->getOriginalType();
-            }
+        if (auto DRE = dyn_cast<DeclRefExpr>(E->getArg(1)))
+          if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+            EndArgOrTemp = PVD->getFunctionScopeIndex();
+            APVEnd = *GetArgOrTemp(EndArgOrTemp, Info.CurrentCall);
+            QTEnd = PVD->getOriginalType();
+          } else if (auto VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+            EndArgOrTemp = static_cast<const void*>(VD);
+            APVEnd = *GetArgOrTemp(EndArgOrTemp, Info.CurrentCall);
+            QTEnd = VD->getType();
+          }
 
-        if (BeginIndex < 0 || EndIndex < 0)
-          return false;
-        
         if (APVBegin.isLValue() && APVEnd.isLValue()) {
           int64_t EndTySz = 
             Info.Ctx.getTypeSizeInChars(QTEnd->isPointerType() ? 
@@ -5038,105 +5089,249 @@ namespace {
 
           for (size_t i = 0; i < ThreadInfo.size(); ++i) {
               // Setting End Iterator
-              int64_t endOfThreadLoop 
-                  = (i != ThreadInfo.size() - 1) ? 
+               int64_t endOfThreadLoop 
+                  =  (i != ThreadInfo.size() - 1) ?
                       ThreadPartitionSize * (i + 1)
                     : (ThreadPartitionSize * (i + 1)) + ThreadPartitionOverflow;
-              std::vector<APValue::LValuePathEntry> NewLValPath;
-              for (size_t j = 0; j < APVEnd.getLValuePath().size(); ++j)
-                NewLValPath.push_back((j == 0) ? APVEnd.getLValuePath()[j] :
-                               APVEnd.getLValuePath()[j]
-                                  .ArrayIndex(endOfThreadLoop));
-              
-              // Only altering a few values, but unfortunately LValue Path has 
-              // no set function and the get returns a const array.
-              APVEnd.setLValue(APVEnd.getLValueBase(), 
-                            CharUnits::fromQuantity(EndTySz * endOfThreadLoop), 
-                            NewLValPath, APVEnd.isLValueOnePastTheEnd(), 
-                            APVEnd.isNullPointer()); 
 
-              ThreadInfo[i].CurrentCall->ThreadArgumentsMap[EndIndex] = APVEnd;
+              OffsetLValue(APVEnd, EndTySz, (BeginOffset / BeginTySz) 
+                           + endOfThreadLoop, false);
+              SetArgOrTemp(EndArgOrTemp, ThreadInfo[i].CurrentCall, APVEnd);
               
               // Setting Start Iterator
-              int64_t startOfThreadLoop = ThreadPartitionSize * i; 
-              
-              NewLValPath.clear();
-              for (size_t j = 0; j < APVBegin.getLValuePath().size(); ++j)
-                NewLValPath.push_back((j == 0) ? APVBegin.getLValuePath()[j] :
-                               APVBegin.getLValuePath()[j]
-                                  .ArrayIndex(startOfThreadLoop));
-                                  
-              APVBegin.setLValue(APVBegin.getLValueBase(), 
-                  CharUnits::fromQuantity(BeginTySz * startOfThreadLoop), 
-                  NewLValPath, APVBegin.isLValueOnePastTheEnd(), 
-                  APVBegin.isNullPointer());
-              
-              ThreadInfo[i].CurrentCall->ThreadArgumentsMap[BeginIndex] 
-                  = APVBegin;
+              OffsetLValue(APVBegin, BeginTySz, ThreadPartitionSize * i);
+              SetArgOrTemp(BeginArgOrTemp, ThreadInfo[i].CurrentCall, APVBegin);
+
+             APVBegin = *GetArgOrTemp(BeginArgOrTemp, Info.CurrentCall);
+             APVEnd = *GetArgOrTemp(EndArgOrTemp, Info.CurrentCall);
+          }
+        } else if (APVBegin.isStruct() && APVEnd.isStruct()) {
+          // This segment expects an iterator with a single field, this is not
+          // always going to be the case, in theory we could restrict users to
+          // designing iterators that work in parallel constexpr contexts to 
+          // something we can always handle. But I don't think arbitrary 
+          // iterators are a possibility. The restrictions could be that they 
+          // always name the underlying iterator pointer (or whatever it may be)
+          // to something specific so we can find it or for the struct to only 
+          // contain a single member.
+          // Remove sugar to hopefully get the raw record type
+          int64_t EndTySz = -1;
+          if (auto RT = 
+                dyn_cast<RecordType>(QTEnd->getUnqualifiedDesugaredType())) {
+            QualType IterTy = 
+                RT->getDecl()->findFirstNamedDataMember()->getType();
+            EndTySz = 
+              Info.Ctx.getTypeSizeInChars(IterTy->isPointerType() ? 
+                  IterTy->getPointeeType() : IterTy).getQuantity();
+          }
+
+          // Remove sugar to hopefully get the raw record type
+          int64_t BeginTySz = -1;
+          if (auto RT = 
+                dyn_cast<RecordType>(QTBegin->getUnqualifiedDesugaredType())) {
+            QualType IterTy = 
+                RT->getDecl()->findFirstNamedDataMember()->getType();
+            BeginTySz = 
+              Info.Ctx.getTypeSizeInChars(IterTy->isPointerType() ? 
+                  IterTy->getPointeeType() : IterTy).getQuantity();
+          }
+
+          int64_t BeginOffset = 
+            APVBegin.getStructField(0).getLValueOffset().getQuantity();
+          int64_t EndOffset = 
+            APVEnd.getStructField(0).getLValueOffset().getQuantity();
+
+          int64_t LoopExtent = (EndOffset - BeginOffset) / EndTySz;
+          ThreadPartitionSize = LoopExtent / ThreadInfo.size();
+          ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
+
+          for (size_t i = 0; i < ThreadInfo.size(); ++i) {
+              // Setting End Iterator
+               int64_t endOfThreadLoop 
+                  =  (i != ThreadInfo.size() - 1) ?
+                      ThreadPartitionSize * (i + 1)
+                    : (ThreadPartitionSize * (i + 1)) + ThreadPartitionOverflow;
+
+              OffsetLValue(APVEnd.getStructField(0), EndTySz, 
+                           (BeginOffset / BeginTySz) 
+                            + endOfThreadLoop, false);
+              SetArgOrTemp(EndArgOrTemp, ThreadInfo[i].CurrentCall, APVEnd);
+                
+              OffsetLValue(APVBegin.getStructField(0), BeginTySz, 
+                           ThreadPartitionSize * i);
+              SetArgOrTemp(BeginArgOrTemp, ThreadInfo[i].CurrentCall, APVBegin);
+
+             APVBegin = *GetArgOrTemp(BeginArgOrTemp, Info.CurrentCall);
+             APVEnd = *GetArgOrTemp(EndArgOrTemp, Info.CurrentCall);
           }
         } else {
-          QTEnd.dump();
-          QTBegin.dump();
+          APVBegin.dump();
+          APVEnd.dump();
         }
         
         return true;
       }
   
       bool HandleIteratorLoopStep(const CallExpr *E) {
-        if (E->getNumArgs() > 2 || E->getNumArgs() < 2)
+        if (E->getNumArgs() > 4 || E->getNumArgs() < 4)
           return false;
- 
+
         int FuncIndex = -1;
         APValue APV;
         QualType QT;
-        
+
         // Parameter: T Iter
-        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(0)))
-          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
-            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
-              FuncIndex = PVD->getFunctionScopeIndex();
-              QT = PVD->getOriginalType();
-              APV = Info.CurrentCall->Arguments[FuncIndex];
-            }
+        if (auto DRE = dyn_cast<DeclRefExpr>(E->getArg(0)))
+          if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+            FuncIndex = PVD->getFunctionScopeIndex();
+            QT = PVD->getOriginalType();
+            APV = Info.CurrentCall->Arguments[FuncIndex];
+          }
 
         if (FuncIndex < 0)
           return false;
-          
+
         // Parameter: int StepSize, not sure if it's required just yet
         llvm::APSInt StepVal(32);
         if (!E->getArg(1)->isIntegerConstantExpr(StepVal, Info.Ctx))
           return false;
         
-        int32_t StepInt = StepVal.getSExtValue();
+        int64_t StepInt = StepVal.getSExtValue();
+
+        int32_t OpTyInt = -1; 
+        if (auto DRE = dyn_cast<DeclRefExpr>(E->getArg(2)))
+          if (auto ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl()))
+            OpTyInt = ECD->getInitVal().getSExtValue();
+
+        // Parameter: T BoundIter, this parameter has a default argument if it's 
+        // the default it'll skip this (different AST nodes) which is fine, as 
+        // the default is a nullptr and the intent is to ignore it in that case 
+        //anyway!
+        int64_t BoundArrSz = -1;
+        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(3)))
+          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+         
+              auto APV2 = 
+                  Info.CurrentCall->Arguments[PVD->getFunctionScopeIndex()];
+              if (APV2.isLValue()) {
+                BoundArrSz = APV2.getLValueOffset().getQuantity() / 
+                  Info.Ctx.getTypeSizeInChars(
+                    PVD->getOriginalType()->isPointerType() 
+                      ?   PVD->getOriginalType()->getPointeeType() 
+                        : PVD->getOriginalType()).getQuantity();
+               } else if (APV2.isStruct()) {
+                  // We are making the assumption the first field of an iterator
+                  // is the one that we need to partition for now, there is a 
+                  // slightly bigger explanation in the BeginEndIteratorPair
+                  // method.
+                  if (auto RT = 
+                    dyn_cast<RecordType>(
+                      PVD->getOriginalType()->getUnqualifiedDesugaredType())) {
+                    QualType IterTy = 
+                      RT->getDecl()->findFirstNamedDataMember()->getType();
+                    BoundArrSz = 
+                      APV2.getStructField(0).getLValueOffset().getQuantity() /
+                        Info.Ctx.getTypeSizeInChars(IterTy->isPointerType() ?
+                          IterTy->getPointeeType() : IterTy).getQuantity();
+                  }
+            
+               }
+            }
 
         for (size_t i = 0; i < ThreadInfo.size(); ++i) {
            APV = Info.CurrentCall->Arguments[FuncIndex];
-                        
+
           // TODO/FIXME: Change the below to a switch statement and also
           // abstract into a function if possible similar logic is used a lot
           if (APV.isLValue()) {
             int64_t TySz = Info.Ctx.getTypeSizeInChars(QT->isPointerType() ? 
                 QT->getPointeeType() : QT).getQuantity();
-              
-            // Setting Begin Iterator
-            std::vector<APValue::LValuePathEntry> NewLValPath;
-            for (size_t j = 0; j < APV.getLValuePath().size(); ++j) {
-              NewLValPath.push_back((j == 0) ? APV.getLValuePath()[j] : 
-                          APV.getLValuePath()[j]
-                                .ArrayIndex(APV.getLValuePath()[j].getAsArrayIndex() + 
-                                              (ThreadPartitionSize * i))); 
+
+            switch (OpTyInt) {  
+              case 1: // PostInc            
+                  OffsetLValue(APV, TySz, (ThreadPartitionSize * i), true, 
+                               BoundArrSz);
+                break;
+              case 2: // PreInc
+                  OffsetLValue(APV, TySz, (ThreadPartitionSize * i), true,
+                               BoundArrSz);
+                break;
+              case 3: // PostDec
+                  OffsetLValue(APV, TySz, -(ThreadPartitionSize * 
+                                           (ThreadInfo.size() - (i + 1))), 
+                              true, BoundArrSz);
+                break;
+              case 4: // PreDec
+                  OffsetLValue(APV, TySz, -(ThreadPartitionSize * 
+                                           (ThreadInfo.size() - (i + 1))),
+                               true, BoundArrSz);
+                break;
+              default:
+                  llvm_unreachable("Incorrect OperationType passed to "
+                                  "IteratorLoopStep");
+                break;
             }
-            
-            APV.setLValue(APV.getLValueBase(), 
-                          APV.getLValueOffset() + 
-                          CharUnits::fromQuantity(TySz * ThreadPartitionSize * i), 
-                          NewLValPath, APV.isLValueOnePastTheEnd(), 
-                          APV.isNullPointer()); 
 
             ThreadInfo[i].CurrentCall
                 ->ThreadArgumentsMap[FuncIndex] = APV; 
+         } else if (APV.isStruct()) {
+           int64_t TySz = 0;
+           if (auto RT = 
+                dyn_cast<RecordType>(QT->getUnqualifiedDesugaredType())) {
+                QualType IterTy = 
+                  RT->getDecl()->findFirstNamedDataMember()->getType();
+                TySz = Info.Ctx.getTypeSizeInChars(IterTy->isPointerType() ? 
+                  IterTy->getPointeeType() : IterTy).getQuantity();
+            }
+          
+            switch (OpTyInt) {  
+              case 1: // PostInc            
+                  OffsetLValue(APV.getStructField(0), TySz, 
+                               (ThreadPartitionSize * i), true, BoundArrSz);
+                break;
+              case 2: // PreInc
+                  OffsetLValue(APV.getStructField(0), TySz, 
+                               (ThreadPartitionSize * i), true, BoundArrSz);
+                break;
+              case 3: // PostDec
+                  OffsetLValue(APV.getStructField(0), TySz, 
+                               -(ThreadPartitionSize * (ThreadInfo.size()
+                               - (i + 1))), true, BoundArrSz);
+                break;
+              case 4: // PreDec
+                  OffsetLValue(APV.getStructField(0), TySz, 
+                               -(ThreadPartitionSize * (ThreadInfo.size() 
+                               - (i + 1))), true, BoundArrSz);
+                break;
+              default:
+                  llvm_unreachable("Incorrect OperationType passed to "
+                                  "IteratorLoopStep");
+                break;
+            }
+            
+            ThreadInfo[i].CurrentCall->
+              ThreadArgumentsMap[FuncIndex] = APV;
          } else if (APV.isInt()) {
-            APV.getInt() = ThreadPartitionSize * i;
+            switch (OpTyInt) {
+              case 1: // PostInc
+                  APV.getInt() = APV.getInt() + ThreadPartitionSize * i;
+                break;
+              case 2: // PreInc
+                  APV.getInt() = APV.getInt() + ThreadPartitionSize * i;
+                break;
+              case 3: // PostDec
+                  APV.getInt() = APV.getInt() - ThreadPartitionSize * i;
+                break;
+              case 4: // PreDec
+                  APV.getInt() = APV.getInt() - ThreadPartitionSize * i;
+                break;
+              default:
+                  llvm_unreachable("Incorrect OperationType passed to "
+                                  "IteratorLoopStep");
+                break;
+            }
+            
             ThreadInfo[i].CurrentCall->
               ThreadArgumentsMap[FuncIndex] = APV;
          } else if (APV.isAbsent()) {
@@ -5146,7 +5341,6 @@ namespace {
             ThreadInfo[i].CurrentCall->
               ThreadArgumentsMap[FuncIndex] = APV;
          } else {
-//              llvm::errs() << "APValue Kind: " << APV.getKind() << "\n";
             llvm_unreachable("Unhandled Loop Dependents Case");
          }
             
@@ -5225,6 +5419,28 @@ namespace {
         for (int i = 0; i < ThreadInfo.size(); ++i)
           SetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall, 
                        *GetArgOrTemp(ArgOrTemp, Info.CurrentCall));
+
+        return true;
+      }
+
+      bool HandleImmutableVariable(const CallExpr *E) {
+        if (E->getNumArgs() != 1)
+          return false;
+
+        llvm::Any ArgOrTemp;
+
+        // Parameter: T Var
+        // TODO: Create helper for the nested if's since it's used more than 
+        // once..
+        if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(0)))
+          if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+            if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+              ArgOrTemp = PVD->getFunctionScopeIndex();
+            } else if (auto VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+              ArgOrTemp = static_cast<const void*>(VD);
+            }
+
+        NoCopyBackList.push_back(ArgOrTemp);
 
         return true;
       }
@@ -5394,7 +5610,7 @@ namespace {
       bool VisitCallExpr(const CallExpr *E) {
         if (const FunctionDecl *F = E->getDirectCallee()) {
           StringRef name = F->getName();
-          
+
           // This check should probably also make sure these lie in the correct
           // namespace even if they technically use the __ prefix which is 
           // reserved for the C++ implementation
@@ -5408,8 +5624,9 @@ namespace {
             return HandleThreadLocalCopy(E);
           } else if (name == "__PartitionUsingIndex") {
             return HandlePartitionUsingIndex(E);
+          } else if (name == "__ImmutableVariable") {
+            return HandleImmutableVariable(E);
           }
-
 
         }
         
@@ -5471,7 +5688,7 @@ namespace {
   }
 
   void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
-                     llvm::Any ArgOrTemp, int64_t TySz, APValue APValPrev) { 
+                     llvm::Any ArgOrTemp, int64_t TySz, APValue APValPrev) {
     // TODO: Need to check type its working on before we do this... 
     // the below code wont work for everything
     auto ParentAPVal = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
@@ -5541,20 +5758,7 @@ namespace {
           }
         }
 
-        // Make sure the iterator points to the correct place in the array
-        // TODO: I use this segment of code a couple of times, probably can 
-        // push it into a function
-        std::vector<APValue::LValuePathEntry> NewLValPath;
-        for (int j = 0; j < ParentAPVal->getLValuePath().size(); ++j) {
-          NewLValPath.push_back((j == 0) ? ParentAPVal->getLValuePath()[j] : 
-                         ParentAPVal->getLValuePath()[j]
-                            .ArrayIndex(ArrStartIndex)); 
-        }
-
-        ParentAPVal->setLValue(ParentAPVal->getLValueBase(), 
-                      CharUnits::fromQuantity(TySz * ArrStartIndex), 
-                      NewLValPath, ParentAPVal->isLValueOnePastTheEnd(), 
-                      ParentAPVal->isNullPointer());
+        OffsetLValue(*ParentAPVal, TySz, ArrStartIndex, false);
       }
     }
 
@@ -5620,8 +5824,21 @@ namespace {
   // arguements list should in theory be the original copy (and thus shared
   // for better or worse for now), excluding the iterators which get their own 
   // copy in the threadargumentsmap
-  void CopyFromThreadArguments(EvalInfo &From, EvalInfo &To) {
+  void CopyFromThreadArguments(EvalInfo &From, EvalInfo &To, 
+      std::vector<llvm::Any> NoCopyBackList) {
+    
+    auto skip = [NoCopyBackList](int i) { 
+      for (auto v : NoCopyBackList)
+        if (llvm::any_cast<unsigned int>(v) == i)
+          return true;
+      return false;
+    };
+
     for (size_t i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
+        if (skip(i)) {
+          continue;
+        }
+
       To.CurrentCall->Arguments[i] = *From.CurrentCall->getArguments(i);
     }
   }
@@ -6026,26 +6243,31 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         HasConstexprParExecutor(Info.CurrentCall->Callee) && 
         !tp.threadsAreActive() && LLVM_ENABLE_THREADS == 1) {
       std::vector<EvalInfo> EvalInfos;
+      llvm::SmallVector<StmtResult, 4> StmtResults;
       llvm::SmallVector<std::promise<EvalStmtResult>, 4> EvalPromises;
       llvm::SmallVector<std::future<EvalStmtResult>, 4> EvalFutures;
+      
+      APValue ResAPV[4] = {Result.Value, Result.Value, Result.Value, 
+                           Result.Value};
+      StmtResult ResStmt[4] = {{ResAPV[0], Result.Slot}, 
+                               {ResAPV[1], Result.Slot},
+                               {ResAPV[2], Result.Slot}, 
+                               {ResAPV[3], Result.Slot}};
 
-      for (size_t i = 0; i <  tp.getPoolSize(); ++i) {
+        
+      for (size_t i = 0; i < tp.getPoolSize(); ++i) {
         EvalPromises.push_back(std::promise<EvalStmtResult>());
         EvalFutures.push_back(EvalPromises[i].get_future());
+        // Note: This will call the copy constructor when it resizes and when it 
+        // copies the value in
         EvalInfos.push_back(Info);
-        // Copying things to "thread local memory", CopyFromThreadArguments is
-        // the inverse, this currently only works for arguments to functions
-        // not temporaries within the function.
-        CopyToThreadArguments(Info, EvalInfos[i]);
+        StmtResults.push_back(ResStmt[i]);
       }
 
       std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> RedList;
-      LoopWrapperGatherer(Info, EvalInfos, RedList)
-          .SearchBody(Info.CurrentCall->Callee->getBody());
+      auto lwg = LoopWrapperGatherer(Info, EvalInfos, RedList);
+      lwg.SearchBody(Info.CurrentCall->Callee->getBody());
 
-      // Older Method
-//    LoopDependentsGatherer(Info, EvalInfos).Visit(FS);
-//    LoopBodyDependentsGatherer(Info, EvalInfos, RedList).Visit(FS, false, 0);
       auto ForThreadFunction = [](EvalInfo &Info, BlockScopeRAII &ForScope, 
                                    const ForStmt *FS, StmtResult &Result,
                                    std::promise<EvalStmtResult> &p) {
@@ -6105,7 +6327,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
 
       for (size_t i = 0; i < tp.getPoolSize(); ++i) {
           tp.async(ForThreadFunction, std::ref(EvalInfos[i]), 
-                   std::ref(ForScope), FS, std::ref(Result),
+                   std::ref(ForScope), FS, std::ref(StmtResults[i]),
                    std::ref(EvalPromises[i]));
       }
 
@@ -6128,7 +6350,10 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
             // We want our iterator data stored in the original Info to be 
             // correct and consistent with our results, they could be used 
             // elsewhere in the algorithm
-            CopyFromThreadArguments(EvalInfos[i], Info);
+            CopyFromThreadArguments(EvalInfos[i], Info, 
+                                    lwg.GetNoCopyBackList());
+            Result.Value = StmtResults[i].Value;
+            Result.Slot = StmtResults[i].Slot;
             break;
         }
         
@@ -6136,7 +6361,9 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
           // We want our iterator data stored in the original Info to be 
           // correct and consistent with our results, they could be used 
           // elsewhere in the algorithm
-          CopyFromThreadArguments(EvalInfos[i], Info);
+          CopyFromThreadArguments(EvalInfos[i], Info, lwg.GetNoCopyBackList());
+          Result.Value = StmtResults[i].Value;
+          Result.Slot = StmtResults[i].Slot;
         }
       }
       
