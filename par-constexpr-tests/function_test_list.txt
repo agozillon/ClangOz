@@ -65,29 +65,116 @@ Working:
 * any_of
 * none_of
 * for_each
+* for_each_n
 * count
 * count_if
 * copy
+* copy_backward
+* copy_n
+* move
+* move_backward
 * mismatch
 * find
+* find_end
 * find_if
 * find_if_not
 * find_first_of
+* fill
+* fill_n
+* set_intersection ~
 * transform
+* replace_if
+* replace
+* replace_copy
+* replace_copy_if
+* swap_ranges
+* is_partitioned
+* is_sorted
+* is_sorted_until
+* lexicographical_compare
 
 Not Working:
 * copy_if
+* iter_swap - 1d will work by default as nothing is parallelized but the test 
+  case with a 2d array which will be parallelized doesn't work as the indices
+  /offsets are calculated incorrectly
+* reverse
+* reverse_copy
+* shuffle
+* sample
+* unique_copy
+* partition
+* partition_copy
+* set_difference : similar to set_intersection, can currently be implemented very
+  unoptimally
+* set_symmetric_difference : possible quite similar to set_difference and 
+  set_intersection
+* set_union : possible quite similar to set_difference and 
+  set_symmetric_difference, set_intersection
+* max : uses max_element, otherwise its linear
+* max_element : requires a really specific reduction phase
+* min : uses min_element, otherwise its linear
+* min_element : requires a really specific reduction phase
+* equal : there is a loop case, but its an algorithm that makes use of an &&
+  with the 2 sets of iterators, could be interesting to implement
+* includes
 
 Not Implementable Optimally (or sometimes they can be but the results would be
 not ideal e.g. std::generate):
 * generate
 
 Maybe could be made to work with some difficulty:
+
 * find_end
 * adjacent_find
 * search
 * search_n
-* for_each_n
+* swap : doesn't appear to have an executor overload and the swap we'd be 
+    interested in anyway is part of std::array or the container we're working on
+    so in theory this could be integrated into our library
+* rotate
+* rotate_copy
+* stable_partition
+* partition_point
+* is_heap : uses is_heap_until
+* is_heap_until : could be difficult to implement or easy, hard to discern from
+  the algorithm
+* make_heap : uses sift_down, may not be possible to implement
+* sort : better to make own implementation with some intention of it being 
+  parallelized rather than reuse the serial variaton
+* partial_sort_copy : may be easier to implement than sort, but still needs 
+  things like intermediate arrays and some kind of reduction 
+* partial_sort : similar reasons to the copy version
+* stable_sort : seems to largelly be a recursive function the only component that 
+  looks parallelizeable is an internal funciton called __insertion_sort, which 
+  may be parallelizeable in the future
+* nth_element : falls into the same category as sort, it's a bunch of nested 
+  'infinite' while loops, so it's likely better to implement our own version
+* lower_bound : very similar algorithm to partition_point, if that can be made to
+  work then this should soon follow
+* binary_search : if lower_bound works this should work, it looks like like if 
+  I can get lower_bound to work i can get a lot of similar algorithms to work.
+* equal_range : uses lower/upper bound and has a similar loop style, so the use
+  case is similar to binary_search 
+* merge : could work as its built as a for loop, but likely unoptimally as it 
+  looks like it'd need a lock or some kind of reduction step
+* inplace_merge : infinite loop, definetly very hard to implement if its possible
+  similar situation to sort
+* pop_heap : looks a little too complex and the loop component is a small part 
+  of the overall algorithm, it's also a do/while
+* sort_heap : uses pop_heap, which uses sift_down, a lot of these may be plausible
+  if the sift functions work
+* minmax_element : quite complex loop but could be possible
+* minmax : small portion is a loop that could be possible
+
+Unimplemented in libcxx at the moment or deprecated:
+* shift_left
+* shift_right
+* random_shuffle
+
+Shouldn't work:
+* clamp : it has no loops to parallelize
+
 
 all_of : works
 any_of : works
@@ -124,9 +211,9 @@ copy : works
 copy_if : broken at the moment, fixable but unoptimally with a lock, would be 
   slower than sequential
 copy_n : works
-copy_backward : 
-move : 
-move_backward :
+copy_backward : works
+move : works 
+move_backward : works
 fill : works
 fill_n : works
 transform : works
@@ -142,62 +229,93 @@ remove :
 remove_if :
 remove_copy :
 remove_copy_if :
-replace : 
-replace_if :
-replace_copy :
-replace_copy_if :
-swap : 
-swap_ranges :
+replace : works
+replace_if : works
+replace_copy : works
+replace_copy_if : works
+swap : doesn't appear to have an executor overload and the swap we'd be 
+  interested in anyway is part of std::array or the container we're working on
+  so in theory this could be integrated into our library
+swap_ranges : works
 iter_swap :
-reverse : 
-reverse_copy :
-rotate :
-rotate_copy :
-shift_left : 
-shift_right :
-random_shuffle : 
-shuffle :
-sample :
-unique :
-unique_copy :
-is_partitioned :
-partition : 
-partition_copy : 
-stable_partition : 
-partition_point :
-is_sorted : 
-is_sorted_until : 
-sort :
-partial_sort :
-partial_sort_copy : 
-stable_sort : 
-nth_element : 
-lower_bound :
-upper_bound :
-binary_search :
-equal_range :
-merge :
-inplace_merge :
+reverse : will need some thought for it to work if its feasible, your touching
+  on the same elements as another thread frequently.
+reverse_copy : sort of similar to above, the way threads are partitioned 
+  normally will create several smaller reversed arrays rather than the desired 
+  result
+rotate : this is non-trivial to parallelize if it's possible at all, the 
+  rotate_right component is already parallelized due to move_backward, but
+  rotate_left doesn't have any components that are parallelizeable and 
+  rotate_forward seems incredibly complex to do if it's feasible at all
+rotate_copy : same reason as above
+shift_left : not implemented yet in libcxx, possibly as complex as rotate
+shift_right : not implemented yet in libcxx, possibly as complex as rotate
+random_shuffle : deprecated for shuffle, after C++17
+shuffle : this will suffer the same problem as reverse you have a chance of 
+  shuffling an element from a location owned by another thread which in turn 
+  could be in the process of being shuffled. It would likely be a lot more 
+  random than intended...
+sample : similar shared data problems
+unique : similar shared data problems
+unique_copy : this is another set_intersection scenario where we either use a 
+  lock and slow everything down or we create a reduction at the end...
+is_partitioned : works but there is two loops in the one function which 
+  brings out the issue of handling multiple loops in the same function body
+partition : similar shared data problems as all non-copy algorithms
+partition_copy : this is another set_intersection scenario where we either use a 
+  lock and slow everything down or we create a reduction at the end...
+stable_partition : uses infinite loop, may not be feasible to get it to work
+partition_point : seems like it'd be difficult to get to work
+is_sorted : works
+is_sorted_until : works
+sort : seems a bit too complex and makes use of an infinite loop, i think it'd 
+  likely be a lot easier to implement an alternate sort algorithm that works in
+  parallel rather than trying to make use of this
+partial_sort : sane reasons as the _copy version
+partial_sort_copy : this one might be feasible with some difficulty, but it 
+  likely should be one of the last things tackled
+stable_sort : seems to largelly be a recursive function the only component that 
+  looks parallelizeable is an internal funciton called __insertion_sort, which 
+  may be parallelizeable in the future
+nth_element : falls into the same category as sort, it's a bunch of nested 
+  'infinite' while loops, so it's likely better to implement our own version
+lower_bound : very similar algorithm to partition_point, if that can be made to
+  work then this should soon follow
+upper_bound : similar to lower_bound and partition_point
+binary_search : if lower_bound works this should work.
+equal_range : uses lower/upper bound and has a similar loop style
+merge : could work as its built as a for loop, but likely unoptimally as it 
+  looks like it'd need a lock 
+inplace_merge : infinite loop, definetly very hard to implement if its possible
+  similar situation to sort
 includes :
-set_difference :
+set_difference : similar to set_intersection, can currently be implemented very
+  unoptimally
 set_intersection :
-set_symmetric_difference :
-set_union :
-is_heap :
-is_heap_until :
-make_heap :
-push_heap :
-pop_heap :
-sort_heap :
-max :
-max_element :
-min :
-min_element :
-minmax :
-minmax_element :
-clamp :
-equal :
-lexicographical_compare : 
+set_symmetric_difference : possible quite similar to set_difference and 
+  set_intersection
+set_union : possible quite similar to set_difference and 
+  set_symmetric_difference, set_intersection
+is_heap : uses is_heap_until
+is_heap_until : could be difficult to implement or easy, hard to discern from
+  the algorithm
+make_heap : uses sift_down, may not be possible to implement
+push_heap : uses sift_up, may not be possible to implement or at least very 
+  difficult
+pop_heap : looks a little too complex and the loop component is a small part of
+  the overall algorithm, it's also a do/while
+sort_heap : uses pop_heap, which uses sift_down, a lot of these may be plausible
+  if the sift functions work
+max : uses max_element, otherwise its linear
+max_element : requires a really specific reduction phase
+min : uses min_element, otherwise its linear
+min_element : requires a really specific reduction phase
+minmax : small portion is a loop that could be possible
+minmax_element : quite complex loop but could be possible
+clamp : it has no loops to parallelize
+equal : there is a loop case, but its an algorithm that makes use of an &&
+  with the 2 sets of iterators, could be interesting to implement
+lexicographical_compare : works
 lexicographical_compare_three_way :
 is_permutation :
 next_permutation : 
