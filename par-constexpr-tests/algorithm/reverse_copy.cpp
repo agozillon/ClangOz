@@ -9,9 +9,9 @@ using namespace __cep::experimental;
 #include "../helpers/test_helpers.hpp"
 
 template <typename T, int N, bool ForceRuntime = false>
-constexpr auto copy_ov1() {
+constexpr auto reverse_copy_ov1() {
   std::array<T, N> arr {};
-  std::array<T, N> arr_copy {};
+  std::array<T, N> arr_reverse_copy {};
     
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i;
@@ -21,17 +21,18 @@ constexpr auto copy_ov1() {
   if constexpr (ForceRuntime) {
     std::cout << "is constant evaluated: " 
               << std::is_constant_evaluated() << "\n";
-    std::copy(arr.begin(), arr.end(), arr_copy.begin());
+    std::reverse_copy(arr.begin(), arr.end(), arr_reverse_copy.begin());
   } else {
-    std::copy(execution::ce_par, arr.begin(), arr.end(), arr_copy.begin());
+    std::reverse_copy(execution::ce_par, arr.begin(), arr.end(), 
+                      arr_reverse_copy.begin());
   }
   
-  return arr_copy;
+  return arr_reverse_copy;
 }
 
 int main() {
-  constexpr auto output_ov1 = copy_ov1<int, 32>();
-  auto runtime_ov1 = copy_ov1<int, 32, true>();
+  constexpr auto output_ov1 = reverse_copy_ov1<int, 32>();
+  auto runtime_ov1 = reverse_copy_ov1<int, 32, true>();
 
   for (auto r : runtime_ov1)
     std::cout << r << "\n";
