@@ -1520,20 +1520,20 @@ struct _LIBCPP_TEMPLATE_VIS allocator_traits
         {typedef allocator_traits<typename rebind_alloc<_Tp>::other> other;};
 #endif  // _LIBCPP_CXX03_LANG
 
-    _LIBCPP_NODISCARD_AFTER_CXX17 _LIBCPP_INLINE_VISIBILITY
+    _LIBCPP_NODISCARD_AFTER_CXX17 _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
     static pointer allocate(allocator_type& __a, size_type __n)
         {return __a.allocate(__n);}
-    _LIBCPP_NODISCARD_AFTER_CXX17 _LIBCPP_INLINE_VISIBILITY
+    _LIBCPP_NODISCARD_AFTER_CXX17 _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
     static pointer allocate(allocator_type& __a, size_type __n, const_void_pointer __hint)
         {return __allocate(__a, __n, __hint,
             __has_allocate_hint<allocator_type, size_type, const_void_pointer>());}
 
-    _LIBCPP_INLINE_VISIBILITY
+    _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
     static void deallocate(allocator_type& __a, pointer __p, size_type __n) _NOEXCEPT
         {__a.deallocate(__p, __n);}
 
     template <class _Tp, class... _Args>
-        _LIBCPP_INLINE_VISIBILITY
+        _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
         static void construct(allocator_type& __a, _Tp* __p, _Args&&... __args)
             {__construct(__has_construct<allocator_type, _Tp*, _Args...>(),
                          __a, __p, _VSTD::forward<_Args>(__args)...);}
@@ -1780,13 +1780,21 @@ public:
         {return _VSTD::addressof(__x);}
 #endif
 
-    _LIBCPP_NODISCARD_AFTER_CXX17 _LIBCPP_INLINE_VISIBILITY _Tp* allocate(size_t __n)
+    _LIBCPP_NODISCARD_AFTER_CXX17 _LIBCPP_CONSTEXPR_AFTER_CXX17 _LIBCPP_INLINE_VISIBILITY _Tp* allocate(size_t __n)
         {
         // TODO(mpark): Replace with `allocator_traits<allocator>::max_size(*this)`.
         if (__n > (size_t(~0) / sizeof(_Tp)))
             __throw_length_error("allocator<T>::allocate(size_t n)"
                                  " 'n' exceeds maximum supported size");
-        return static_cast<_Tp*>(_VSTD::__libcpp_allocate(__n * sizeof(_Tp), _LIBCPP_ALIGNOF(_Tp)));
+                                 
+        /*Is there a reason the "const" version of the allocator can call 
+          __libcpp_allocate in a constexpr context with no issues but if I add
+          constexpr here it doesn't allow it? the only difference appears to
+          be the const-ness of the data being allocated... */
+        if constexpr (std::is_constant_evaluated())
+          return static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)));
+        else 
+         return static_cast<_Tp*>(_VSTD::__libcpp_allocate(__n * sizeof(_Tp), _LIBCPP_ALIGNOF(_Tp)));
         }
 
 #if _LIBCPP_STD_VER <= 17 || defined(_LIBCPP_ENABLE_CXX20_REMOVED_ALLOCATOR_MEMBERS)
@@ -1794,8 +1802,16 @@ public:
     _Tp* allocate(size_t __n, const void*) { return allocate(__n); }
 #endif
 
-    _LIBCPP_INLINE_VISIBILITY void deallocate(_Tp* __p, size_t __n) _NOEXCEPT
-        {_VSTD::__libcpp_deallocate((void*)__p, __n * sizeof(_Tp), _LIBCPP_ALIGNOF(_Tp));}
+    _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17 void deallocate(_Tp* __p, size_t __n) _NOEXCEPT
+        {
+          if (std::is_constant_evaluated())
+          {
+            ::operator delete(__p);
+            return;
+          } else {
+            _VSTD::__libcpp_deallocate((void*)__p, __n * sizeof(_Tp), _LIBCPP_ALIGNOF(_Tp));
+          }
+        }
 
 #if _LIBCPP_STD_VER <= 17 || defined(_LIBCPP_ENABLE_CXX20_REMOVED_ALLOCATOR_MEMBERS)
     _LIBCPP_DEPRECATED_IN_CXX17 _LIBCPP_INLINE_VISIBILITY size_type max_size() const _NOEXCEPT
@@ -1845,7 +1861,7 @@ public:
         {return _VSTD::addressof(__x);}
 #endif
 
-    _LIBCPP_NODISCARD_AFTER_CXX17 _LIBCPP_INLINE_VISIBILITY const _Tp* allocate(size_t __n)
+    _LIBCPP_NODISCARD_AFTER_CXX17 _LIBCPP_CONSTEXPR_AFTER_CXX17 _LIBCPP_INLINE_VISIBILITY const _Tp* allocate(size_t __n)
     {
         // TODO(mpark): Replace with `allocator_traits<allocator>::max_size(*this)`.
         if (__n > (size_t(~0) / sizeof(_Tp)))
@@ -3069,7 +3085,7 @@ uninitialized_fill_n(_ForwardIterator __f, _Size __n, const _Tp& __x)
 #if _LIBCPP_STD_VER > 14
 
 template <class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR
 void destroy_at(_Tp* __loc) {
     _LIBCPP_ASSERT(__loc, "null pointer given to destroy_at");
     __loc->~_Tp();
@@ -3083,7 +3099,7 @@ void destroy(_ForwardIterator __first, _ForwardIterator __last) {
 }
 
 template <class _ForwardIterator, class _Size>
-inline _LIBCPP_INLINE_VISIBILITY
+inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR
 _ForwardIterator destroy_n(_ForwardIterator __first, _Size __n) {
     for (; __n > 0; (void)++__first, --__n)
         _VSTD::destroy_at(_VSTD::addressof(*__first));
@@ -5118,6 +5134,13 @@ struct __builtin_new_allocator {
   }
 };
 
+// g++ implementation
+template<typename _Tp, typename... _Args>
+constexpr auto
+construct_at(_Tp* __location, _Args&&... __args)
+noexcept(noexcept(::new((void*)0) _Tp(std::declval<_Args>()...)))
+-> decltype(::new((void*)0) _Tp(std::declval<_Args>()...))
+{ return ::new((void*)__location) _Tp(std::forward<_Args>(__args)...); }
 
 _LIBCPP_END_NAMESPACE_STD
 
