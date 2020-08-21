@@ -5205,11 +5205,13 @@ namespace {
           return false;
 
         // Parameter: int StepSize, not sure if it's required just yet
-        llvm::APSInt StepVal(32);
-        if (!E->getArg(1)->isIntegerConstantExpr(StepVal, Info.Ctx))
+        int64_t StepInt = -1;
+        if (auto StepVal = E->getArg(1)->getIntegerConstantExpr(Info.Ctx))
+          StepInt = StepVal->getSExtValue();
+        else 
           return false;
         
-        int64_t StepInt = StepVal.getSExtValue();
+        
 
         int32_t OpTyInt = -1; 
         if (auto DRE = dyn_cast<DeclRefExpr>(E->getArg(2)))
