@@ -38,6 +38,11 @@ int getLastArgIntValue(const ArgList &Args, OptSpecifier Id, int Default,
   return getLastArgIntValueImpl<int>(Args, Id, Default, Diags, Base);
 }
 
+unsigned getLastArgUIntValue(const ArgList &Args, OptSpecifier Id, int Default,
+                             DiagnosticsEngine *Diags, unsigned Base) {
+  return getLastArgIntValueImpl<unsigned>(Args, Id, Default, Diags, Base);
+}
+
 uint64_t getLastArgUInt64Value(const ArgList &Args, OptSpecifier Id,
                                uint64_t Default, DiagnosticsEngine *Diags,
                                unsigned Base) {
