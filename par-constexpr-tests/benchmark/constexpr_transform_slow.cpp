@@ -4,30 +4,36 @@
 #include <numeric>
 #include <iterator>
 
+#ifdef CONSTEXPR_PAR
+#include <execution>
+using namespace __cep::experimental;
+#endif
+
+// it's likely better just to use linux's time to get an overall read of the 
+// speed rather than -ftime-report, which is more focused on breaking down the
+// time spent in LLVM
+//
 // No parallelism:
 // 
-// clang++ -fconstexpr-steps=2147483647 -std=c++2a -stdlib=libc++ \
+// clang++ -fconstexpr-steps=4294967295 -std=c++2a -stdlib=libc++ \
 //    constexpr_transform_slow.cpp
 //
-// 
-// clang++ -ftime-report -fconstexpr-steps=2147483647 -std=c++2a \
+// clang++ -ftime-report -fconstexpr-steps=4294967295 -std=c++2a \
 //  -stdlib=libc++ constexpr_transform_slow.cpp
 //
 // With Parallelism: 
 //
-// $CLANG_BIN/clang++ -fconstexpr-steps=2147483647 -std=c++2a -stdlib=libc++  
-//  -fexperimental-constexpr-parallel constexpr_transform_slow.cpp
-//
-// $CLANG_BIN/clang++ -ftime-report -fconstexpr-steps=2147483647 -std=c++2a 
+// $CLANG_BIN/clang++ -DCONSTEXPR_PAR -fconstexpr-steps=4294967295 -std=c++2a 
 //  -stdlib=libc++ -fexperimental-constexpr-parallel 
-//   constexpr_transform_slow.cpp
+//  constexpr_transform_slow.cpp
+//
+// $CLANG_BIN/clang++ -DCONSTEXPR_PAR -ftime-report -fconstexpr-steps=4294967295 
+//  -std=c++2a -stdlib=libc++ -fexperimental-constexpr-parallel 
+//  constexpr_transform_slow.cpp
 //
 // I moved away from using -ftime-reprot to just using linux's time function, 
 // less verbose output.
 
-// TODO:
-// 5) Use secondary argument to a std function to denote if it should be parallelized
-//    or not
 
 template <typename T>
 constexpr auto test_constexpr_transform() {
@@ -36,6 +42,22 @@ constexpr auto test_constexpr_transform() {
     std::array<T, 320000> c = {0};
     std::array<T, 320000> expected = {0};
 
+#ifdef CONSTEXPR_PAR
+    std::iota(execution::ce_par, a.begin(), a.end(), 0);
+    std::iota(execution::ce_par, b.begin(), b.end(), 0);
+    std::iota(execution::ce_par, expected.begin(), expected.end(), 0);
+    
+    std::for_each(execution::ce_par, expected.begin(), expected.end(), 
+                  [](auto &i){ i *= 2; });
+    
+    // I think the broken return iterator might be part of creating the 
+    // temporaries and only using those, it'll probably return the original 
+    // non-modified iterator, so it won't be at the correct position (end of 
+    // the modified array)
+    auto it = std::transform(execution::ce_par, std::begin(a), std::end(a), 
+                             std::begin(b), std::begin(c), 
+                             [](auto& lhs, auto& rhs) { return lhs + rhs; });
+#else
     std::iota(a.begin(), a.end(), 0);
     std::iota(b.begin(), b.end(), 0);
     std::iota(expected.begin(), expected.end(), 0);
@@ -48,8 +70,8 @@ constexpr auto test_constexpr_transform() {
     // the modified array)
     auto it = std::transform(std::begin(a), std::end(a), 
                              std::begin(b), std::begin(c), 
-                             [](auto& lhs, auto& rhs) { return lhs + rhs; }); // basically std::plus
-
+                             [](auto& lhs, auto& rhs) { return lhs + rhs; });
+#endif
    // you can't actually static_assert and test for equality inside here, for 
    // some reason the std::array's not being declared with constexpr cause this
    // not to be a constant expression inside the scope of this function.
@@ -69,8 +91,13 @@ constexpr auto test_constexpr_transform() {
 template <typename T>
 consteval auto golden_array() {
   std::array<T, 320000> a = {0};
+#ifdef CONSTEXPR_PAR
+  std::iota(execution::ce_par, a.begin(), a.end(), 0);
+  std::for_each(execution::ce_par, a.begin(), a.end(), [](auto &i){ i *= 2; });
+#else
   std::iota(a.begin(), a.end(), 0);
   std::for_each(a.begin(), a.end(), [](auto &i){ i *= 2; });
+#endif
   return a;
 }
 
