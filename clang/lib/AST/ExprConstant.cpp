@@ -74,7 +74,7 @@ using llvm::APFloat;
 using llvm::Optional;
   
 static std::mutex eval_lock;
-static std::mutex eval_lock2;
+static std::recursive_mutex eval_lock2;
 
 namespace {
   struct LValue;
@@ -3478,8 +3478,8 @@ findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
               const SubobjectDesignator &Sub, SubobjectHandler &handler) {
   // it works here with no error, and is 0m24.144s vs 0m38.228s on the benchmark
   // very high system costs as the lock is requested often
-  std::lock_guard<std::mutex> locked(eval_lock2);
-  
+
+    std::lock_guard<std::recursive_mutex> locked(eval_lock2);
   // agozillon: This lock "fixes" the issue, but its not ideal so there are 
   // several race conditions in this function that pose problems, the lock seems
   // a little hamfisted as a fix, need to find the locations of contention and 
