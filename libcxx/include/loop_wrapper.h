@@ -54,7 +54,7 @@ namespace cest::loop_wrapper {
   constexpr void __IteratorLoopStep(T& StartIter, int StepSize, 
                                     OperatorType OpTy = 
                                     OperatorType::PreInc, 
-                                    const T& BoundIter=std::nullptr_t{}){}
+                                    const T& BoundIter=T{}){}
   
   /*
      Used by the compiler to calculate the loops extent and helps it work out
