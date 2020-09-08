@@ -795,12 +795,25 @@ namespace {
     // replicating at the level of the CurrentCall Frame, nothing above it, 
     // perhaps that's OK though as it's unlikely we would want to replicate
     // the whole CallStack and likely just reference it
+    //
+    // FIXME/TODO: Copying the CleanupStack will cause hard to detect bugs, 
+    // when an EvalInfo is destructed it deletes them all, but the Cleanup class
+    // contains all of the APValues for the evaluation at that stage, these are
+    // not deep copied which appears to cause some issues with incorrect 
+    // modification of the HasSideEffect boolean resulting in some things being
+    // declared not constexpr when they are. I don't think creating a copy of 
+    // these is really sensible in our case, I'd like to move away from a copy
+    // constructor at some point to generating an seperate EvalInfo and 
+    // CallStackFrame with only the neccessary components for each thread, but 
+    // this may require a bit of a restructure to move away from vectors as 
+    // EvalInfo/CallStackFrame are not move/copy friendly (hence this copy 
+    // constructor).
     EvalInfo(const EvalInfo& EI) : Ctx(EI.Ctx), EvalStatus(EI.EvalStatus),
       CurrentCall(nullptr), CallStackDepth(EI.CallStackDepth),  
       NextCallIndex(EI.NextCallIndex),StepsLeft(EI.StepsLeft), 
       EnableNewConstInterp(EI.EnableNewConstInterp), 
       BottomFrame(*EI.CurrentCall, *this),
-      CleanupStack(EI.CleanupStack), EvaluatingDecl(EI.EvaluatingDecl), 
+      /*CleanupStack(EI.CleanupStack),*/ EvaluatingDecl(EI.EvaluatingDecl), 
       IsEvaluatingDecl(EI.IsEvaluatingDecl), 
       ObjectsUnderConstruction(EI.ObjectsUnderConstruction),
       HeapAllocs(EI.HeapAllocs), NumHeapAllocs(EI.NumHeapAllocs),
@@ -813,6 +826,7 @@ namespace {
         EI.CheckingPotentialConstantExpression),
       CheckingForUndefinedBehavior(EI.CheckingForUndefinedBehavior),
       EvalMode(EI.EvalMode) {}
+      
     /// CallStackDepth - The number of calls in the call stack right now.
     unsigned CallStackDepth;
 
@@ -4927,34 +4941,55 @@ namespace {
 
   // This is a helper for offsetting contigious array iterators and limiting
   // repetition, int64_t is maybe not the best type for the values long term
-  void OffsetLValue(APValue& APV, int64_t TypeSize, int64_t Offset, 
-                    bool OffsetFromStart = true, int64_t OffsetBoundry = -1) {
-    if (OffsetBoundry > -1) {
-      auto CurrIndex = (APV.getLValuePath().size() > 1) ?
-        APV.getLValuePath()[1].getAsArrayIndex() : 0;
-
-      if ((CurrIndex + Offset) > OffsetBoundry)
-        Offset = OffsetBoundry;
+  void OffsetLValue(const ASTContext &Ctx, APValue& APV, int64_t TypeSize, 
+                    int64_t Offset, bool OffsetFromStart = true, 
+                    int64_t OffsetBoundry = -1) {
+      auto Base = APV.getLValueBase();
+      QualType ElemTy;
+      if (const ValueDecl *VD = Base.dyn_cast<const ValueDecl*>()) {
+        ElemTy = VD->getType();
+      } else if (DynamicAllocLValue DA = Base.dyn_cast<DynamicAllocLValue>()) {
+        ElemTy = Base.getDynamicAllocType();
+      }
+    
+      std::vector<APValue::LValuePathEntry> NewLValPath;
+      for (unsigned I = 0, N = APV.getLValuePath().size(); I != N; ++I) {
+        // lvalue must be a class, perhaps nested
+        if (ElemTy->getAs<RecordType>()) { 
+          NewLValPath.push_back(APV.getLValuePath()[I]);
+          const Decl *BaseOrMember = 
+            APV.getLValuePath()[I].getAsBaseOrMember().getPointer();
+          
+          if (const CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(BaseOrMember)) {
+            ElemTy = Ctx.getRecordType(RD);
+          } else {
+            ElemTy = cast<ValueDecl>(BaseOrMember)->getType();
+          }
+        } else { // lvalue must be an array
+          // FIXME: this is very likely incorrect for arrays of arrays etc.
+          if (OffsetBoundry > -1) {
+            auto CurrIndex = APV.getLValuePath()[I].getAsArrayIndex();
+            if ((CurrIndex + Offset) > OffsetBoundry)
+              Offset = OffsetBoundry;
+          }
       
-    }
-
-    std::vector<APValue::LValuePathEntry> NewLValPath;
-    for (size_t j = 0; j < APV.getLValuePath().size(); ++j) {
-      NewLValPath.push_back((j == 0) ? APV.getLValuePath()[j] : 
-        APV.getLValuePath()[j]
-          .ArrayIndex(
-            OffsetFromStart ?
-              APV.getLValuePath()[j].getAsArrayIndex() + Offset
-            : Offset)); 
-    }
-
-    APV.setLValue(APV.getLValueBase(), 
-                  OffsetFromStart ? 
-                      APV.getLValueOffset() + 
-                      CharUnits::fromQuantity(TypeSize * Offset)
-                    : CharUnits::fromQuantity(TypeSize * Offset), 
-                  NewLValPath, APV.isLValueOnePastTheEnd(), 
-                  APV.isNullPointer());
+          ElemTy = Ctx.getAsArrayType(ElemTy)->getElementType();
+          NewLValPath.push_back(APV.getLValuePath()[I]
+            .ArrayIndex(
+              OffsetFromStart ?
+                APV.getLValuePath()[I].getAsArrayIndex() + Offset
+              : Offset));
+        }
+      }
+      
+      APV.setLValue(Base, 
+                    OffsetFromStart ? 
+                        APV.getLValueOffset() + 
+                        CharUnits::fromQuantity(TypeSize * Offset)
+                      : CharUnits::fromQuantity(TypeSize * Offset), 
+                    NewLValPath, APV.isLValueOnePastTheEnd(), 
+                    APV.isNullPointer());
+    
   }
   
   //  Experiment at creating someway to pass information into Clang rather than 
@@ -4966,44 +5001,79 @@ namespace {
   //  the simpler analysis they allow.
   class LoopWrapperGatherer
     : public ConstStmtVisitor<LoopWrapperGatherer, bool> {
-    EvalInfo Info;
-    std::vector<EvalInfo> &ThreadInfo;
-    std::vector<llvm::Any> NoCopyBackList;
-    
-    std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> &RedList;
-    int64_t ThreadPartitionSize;
-    int64_t ThreadPartitionOverflow;
+      EvalInfo Info;
+      std::vector<EvalInfo> &ThreadInfo;
+      std::vector<llvm::Any> NoCopyBackList;
+      
+      std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> &RedList;
+      int64_t ThreadPartitionSize;
+      int64_t ThreadPartitionOverflow;
 
-    // Note: This function needs a fair bit of work if its to stay in use, it
-    // was mainly built to duplicate an array that's part of a struct.
-    APValue CopyAPValue(llvm::Any ArgOrTemp) {
-      APValue* CandidateAPV = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
+      // Note: This function needs a fair bit of work if its to stay in use, it
+      // was mainly built to duplicate an array that's part of a struct.
+      APValue CopyAPValue(llvm::Any ArgOrTemp) {
+        APValue* CandidateAPV = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
 
-      if (!CandidateAPV) {
-        return APValue();
+        if (!CandidateAPV) {
+          return APValue();
+        }
+        
+        if (CandidateAPV->isLValue()) {
+          LValue CandidateLVal;
+          CandidateLVal.setFrom(Info.Ctx, *CandidateAPV);
+          QualType CandidateQt = getType(CandidateAPV->getLValueBase());
+          CompleteObject Obj = findCompleteObject(Info, nullptr, 
+                                              AccessKinds::AK_Read, CandidateLVal, 
+                                              CandidateQt);
+
+          // TODO: This currently assumes its a field, but that isn't always the 
+          // case, it could be an array etc. look into findSubObject to get an idea.
+          if (const FieldDecl *Field = getAsField(CandidateAPV->getLValuePath()[0])){
+            APValue* O = &Obj.Value->getStructField(Field->getFieldIndex());
+            if (O->isArray()) {
+              return APValue(*O);
+            }
+          }
+        } else {
+          return APValue(*CandidateAPV);
+        }
       }
       
-      if (CandidateAPV->isLValue()) {
-        LValue CandidateLVal;
-        CandidateLVal.setFrom(Info.Ctx, *CandidateAPV);
-        QualType CandidateQt = getType(CandidateAPV->getLValueBase());
-        CompleteObject Obj = findCompleteObject(Info, nullptr, 
-                                            AccessKinds::AK_Read, CandidateLVal, 
-                                            CandidateQt);
+      APValue* FindSubobjectAPVal(APValue& APV, EvalInfo& Info) {
+        QualType Type = getType(APV.getLValueBase());
+        ArrayRef<APValue::LValuePathEntry> Path = APV.getLValuePath();
 
-        // TODO: This currently assumes its a field, but that isn't always the 
-        // case, it could be an array etc. look into findSubObject to get an idea.
-        if (const FieldDecl *Field = getAsField(CandidateAPV->getLValuePath()[0])){
-          APValue* O = &Obj.Value->getStructField(Field->getFieldIndex());
-          if (O->isArray()) {
-            return APValue(*O);
+        LValue ParentLVal;
+        ParentLVal.setFrom(Info.Ctx, APV);
+        CompleteObject Obj = findCompleteObject(Info, nullptr, AccessKinds::AK_Read,
+                                          ParentLVal, getType(APV.getLValueBase()));
+        APValue* CurrAPV = Obj.Value;
+        uint64_t Index = 0;
+
+        for (unsigned I = 0, N = Path.size(); I != N; ++I) {
+          if (Type->isArrayType()) {
+            Type = Info.Ctx.getAsArrayType(Type)->getElementType();
+            Index = Path[I].getAsArrayIndex();
+            if ((N - I) != 1 && CurrAPV->getArrayInitializedElts() > Index)
+              CurrAPV = &CurrAPV->getArrayInitializedElt(Index);
+          } else if (Type->isAnyComplexType()) { // likely only needs handled long
+                                                 // term
+            Type = Type->castAs<ComplexType>()->getElementType();
+          } else if (const FieldDecl *FD = getAsField(Path[I])) {
+            Type = FD->getType();
+            CurrAPV = &CurrAPV->getStructField(FD->getFieldIndex());
+          } else { // Not too sure what scenarios will fall into this yet, perhaps 
+                   // unions and some other things
+            return CurrAPV;
           }
+
+          if ((N - I) != 1)
+            return CurrAPV;
         }
-      } else {
-        return APValue(*CandidateAPV);
+
+        return CurrAPV;
       }
-    }
-    
+
     public:
       LoopWrapperGatherer(EvalInfo Info,
                           std::vector<EvalInfo> &ThreadInfo,
@@ -5107,12 +5177,13 @@ namespace {
                       ThreadPartitionSize * (i + 1)
                     : (ThreadPartitionSize * (i + 1)) + ThreadPartitionOverflow;
 
-              OffsetLValue(APVEnd, EndTySz, (BeginOffset / BeginTySz) 
+              OffsetLValue(Info.Ctx, APVEnd, EndTySz, (BeginOffset / BeginTySz) 
                            + endOfThreadLoop, false);
               SetArgOrTemp(EndArgOrTemp, ThreadInfo[i].CurrentCall, APVEnd);
-              
+
               // Setting Start Iterator
-              OffsetLValue(APVBegin, BeginTySz, ThreadPartitionSize * i);
+              OffsetLValue(Info.Ctx, APVBegin, BeginTySz, 
+                           ThreadPartitionSize * i);
               SetArgOrTemp(BeginArgOrTemp, ThreadInfo[i].CurrentCall, APVBegin);
 
              APVBegin = *GetArgOrTemp(BeginArgOrTemp, Info.CurrentCall);
@@ -5165,12 +5236,12 @@ namespace {
                       ThreadPartitionSize * (i + 1)
                     : (ThreadPartitionSize * (i + 1)) + ThreadPartitionOverflow;
 
-              OffsetLValue(APVEnd.getStructField(0), EndTySz, 
+              OffsetLValue(Info.Ctx, APVEnd.getStructField(0), EndTySz, 
                            (BeginOffset / BeginTySz) 
                             + endOfThreadLoop, false);
               SetArgOrTemp(EndArgOrTemp, ThreadInfo[i].CurrentCall, APVEnd);
                 
-              OffsetLValue(APVBegin.getStructField(0), BeginTySz, 
+              OffsetLValue(Info.Ctx, APVBegin.getStructField(0), BeginTySz, 
                            ThreadPartitionSize * i);
               SetArgOrTemp(BeginArgOrTemp, ThreadInfo[i].CurrentCall, APVBegin);
 
@@ -5265,20 +5336,20 @@ namespace {
 
             switch (OpTyInt) {  
               case 1: // PostInc            
-                  OffsetLValue(APV, TySz, (ThreadPartitionSize * i), true, 
-                               BoundArrSz);
+                  OffsetLValue(Info.Ctx, APV, TySz, (ThreadPartitionSize * i), 
+                               true, BoundArrSz);
                 break;
               case 2: // PreInc
-                  OffsetLValue(APV, TySz, (ThreadPartitionSize * i), true,
-                               BoundArrSz);
+                  OffsetLValue(Info.Ctx, APV, TySz, (ThreadPartitionSize * i), 
+                               true, BoundArrSz);
                 break;
               case 3: // PostDec
-                  OffsetLValue(APV, TySz, -(ThreadPartitionSize * 
+                  OffsetLValue(Info.Ctx, APV, TySz, -(ThreadPartitionSize * 
                                            (ThreadInfo.size() - (i + 1))), 
                               true, BoundArrSz);
                 break;
               case 4: // PreDec
-                  OffsetLValue(APV, TySz, -(ThreadPartitionSize * 
+                  OffsetLValue(Info.Ctx, APV, TySz, -(ThreadPartitionSize * 
                                            (ThreadInfo.size() - (i + 1))),
                                true, BoundArrSz);
                 break;
@@ -5302,20 +5373,20 @@ namespace {
           
             switch (OpTyInt) {  
               case 1: // PostInc            
-                  OffsetLValue(APV.getStructField(0), TySz, 
+                  OffsetLValue(Info.Ctx, APV.getStructField(0), TySz, 
                                (ThreadPartitionSize * i), true, BoundArrSz);
                 break;
               case 2: // PreInc
-                  OffsetLValue(APV.getStructField(0), TySz, 
+                  OffsetLValue(Info.Ctx, APV.getStructField(0), TySz, 
                                (ThreadPartitionSize * i), true, BoundArrSz);
                 break;
               case 3: // PostDec
-                  OffsetLValue(APV.getStructField(0), TySz, 
+                  OffsetLValue(Info.Ctx, APV.getStructField(0), TySz, 
                                -(ThreadPartitionSize * (ThreadInfo.size()
                                - (i + 1))), true, BoundArrSz);
                 break;
               case 4: // PreDec
-                  OffsetLValue(APV.getStructField(0), TySz, 
+                  OffsetLValue(Info.Ctx, APV.getStructField(0), TySz, 
                                -(ThreadPartitionSize * (ThreadInfo.size() 
                                - (i + 1))), true, BoundArrSz);
                 break;
@@ -5647,6 +5718,83 @@ namespace {
         
         return false;
       }
+      
+      // TODO: This function is likely going to require some further consideration 
+      // in the future. It's possible we don't want to copy across all arguments 
+      // indiscriminately, we originally only wanted to keep the iterators 
+      // consistent as they may be used later in the algorithm 
+      // (e.g. as return types), making everything consistent may be overkill.
+      // On the other hand we may end up wanting to do the same copy with the 
+      // temporaries as well, which may be used later in the algorithm...
+      // It's worth noting that we currently only assume things in the CurrentCall
+      // will need to be copied, and anticipate that we aren't manipulating anything
+      // from calls higher up the stack for the moment, this goes for the majority 
+      // of the Parallel Constexpr Algorithms for the moment.
+      //
+      // The above statement may be partially incorrect as every APValue in the 
+      // arguements list should in theory be the original copy (and thus shared
+      // for better or worse for now), excluding the iterators which get their own 
+      // copy in the threadargumentsmap
+      void CopyFromThreadArguments(EvalInfo &From, EvalInfo &To, 
+                                   uint32_t ThreadPartition, uint32_t PoolSz) {
+        auto skip = [this](int i) { 
+          for (auto v : NoCopyBackList)
+            if (llvm::any_cast<unsigned int>(v) == i)
+              return true;
+          return false;
+        };
+
+        for (size_t i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
+            if (skip(i)) {
+              continue;
+            }
+
+         if (From.CurrentCall->getArguments(i)->isLValue() && 
+            From.CurrentCall->getArguments(i)->hasLValuePath()) {
+            ArrayRef<APValue::LValuePathEntry> Path = 
+                From.CurrentCall->getArguments(i)->getLValuePath();
+
+            // An alternative to the below method would perhaps be to use getType
+            // on the APValues BaseLValue to get the top level type to distinguish 
+            // if its an array and then make our decision based off of that. This
+            // would likely be less robust but faster.
+            APValue* FromAPV = FindSubobjectAPVal(
+                                              *From.CurrentCall->getArguments(i), 
+                                              From);
+            APValue* ToAPV = FindSubobjectAPVal(*To.CurrentCall->getArguments(i), 
+                                                To);
+             
+            if (ToAPV->isArray()) {
+              bool FinalPartition = (ThreadPartition == (PoolSz - 1));
+              uint64_t Start =  (!FinalPartition) ?
+                      ThreadPartitionSize * ThreadPartition
+                    : (ThreadPartitionSize * ThreadPartition) 
+                      + ThreadPartitionOverflow;
+
+              uint64_t End =  (!FinalPartition) ?
+                      ThreadPartitionSize * (ThreadPartition + 1)
+                    : (ThreadPartitionSize * (ThreadPartition + 1)) 
+                      + ThreadPartitionOverflow;
+
+              for (int Index = Start; Index < End; ++Index) {
+                // agozillon: possible bug waiting to happen if these somehow
+                // do not match as expected.
+                if (ToAPV->getArrayInitializedElts() > Index &&
+                    FromAPV->getArrayInitializedElts() > Index)
+                  ToAPV->getArrayInitializedElt(Index) 
+                      = FromAPV->getArrayInitializedElt(Index);
+              }
+
+            }
+
+            // This may be better served as simply assigning the top level 
+            // LValue data (offset etc.), as it's possible simply assinging like
+            // this casues some issues in certain cases.
+            To.CurrentCall->Arguments[i] = *From.CurrentCall->getArguments(i);
+          } else 
+            To.CurrentCall->Arguments[i] = *From.CurrentCall->getArguments(i);
+        }
+      }
   };
 
   // realistically if a lot look like this we can squash them into a macro...
@@ -5773,7 +5921,7 @@ namespace {
           }
         }
 
-        OffsetLValue(*ParentAPVal, TySz, ArrStartIndex, false);
+        OffsetLValue(Info.Ctx, *ParentAPVal, TySz, ArrStartIndex, false);
       }
     }
 
@@ -5820,48 +5968,6 @@ namespace {
           llvm_unreachable("Invald ReductionType passed to ParConstExprReduce");
           break;
       }
-    }
-  }
-  
-  // TODO: This function is likely going to require some further consideration 
-  // in the future. It's possible we don't want to copy across all arguments 
-  // indiscriminately, we originally only wanted to keep the iterators 
-  // consistent as they may be used later in the algorithm 
-  // (e.g. as return types), making everything consistent may be overkill.
-  // On the other hand we may end up wanting to do the same copy with the 
-  // temporaries as well, which may be used later in the algorithm...
-  // It's worth noting that we currently only assume things in the CurrentCall
-  // will need to be copied, and anticipate that we aren't manipulating anything
-  // from calls higher up the stack for the moment, this goes for the majority 
-  // of the Parallel Constexpr Algorithms for the moment.
-  //
-  // The above statement may be partially incorrect as every APValue in the 
-  // arguements list should in theory be the original copy (and thus shared
-  // for better or worse for now), excluding the iterators which get their own 
-  // copy in the threadargumentsmap
-  void CopyFromThreadArguments(EvalInfo &From, EvalInfo &To, 
-      std::vector<llvm::Any> NoCopyBackList) {
-    
-    auto skip = [NoCopyBackList](int i) { 
-      for (auto v : NoCopyBackList)
-        if (llvm::any_cast<unsigned int>(v) == i)
-          return true;
-      return false;
-    };
-
-    for (size_t i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
-        if (skip(i)) {
-          continue;
-        }
-
-      To.CurrentCall->Arguments[i] = *From.CurrentCall->getArguments(i);
-    }
-  }
-  
-  
-  void CopyToThreadArguments(EvalInfo &From, EvalInfo &To) {
-    for (size_t i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
-      To.CurrentCall->ThreadArgumentsMap[i] = From.CurrentCall->Arguments[i];
     }
   }
 
@@ -6270,6 +6376,8 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
                                {ResAPV[3], Result.Slot}};
 
         
+
+      EvalInfos.reserve(tp.getPoolSize()); // avoids some extra copy constructs
       for (size_t i = 0; i < tp.getPoolSize(); ++i) {
         EvalPromises.push_back(std::promise<EvalStmtResult>());
         EvalFutures.push_back(EvalPromises[i].get_future());
@@ -6362,26 +6470,27 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         if (ESR_Ret == ESR_ParEarlySucceeded || ESR_Ret == ESR_Returned) {
             if (ESR_Ret == ESR_ParEarlySucceeded) 
               ESR_Ret = ESR_Succeeded;
+
             // We want our iterator data stored in the original Info to be 
             // correct and consistent with our results, they could be used 
             // elsewhere in the algorithm
-            CopyFromThreadArguments(EvalInfos[i], Info, 
-                                    lwg.GetNoCopyBackList());
+            lwg.CopyFromThreadArguments(EvalInfos[i], Info, i, 
+                                        EvalInfos.size());
             Result.Value = StmtResults[i].Value;
             Result.Slot = StmtResults[i].Slot;
             break;
         }
         
-        if (i == EvalFutures.size() - 1) {
+        if (ESR_Ret == ESR_Succeeded) {
           // We want our iterator data stored in the original Info to be 
           // correct and consistent with our results, they could be used 
           // elsewhere in the algorithm
-          CopyFromThreadArguments(EvalInfos[i], Info, lwg.GetNoCopyBackList());
+          lwg.CopyFromThreadArguments(EvalInfos[i], Info, i, EvalInfos.size());
           Result.Value = StmtResults[i].Value;
           Result.Slot = StmtResults[i].Slot;
         }
       }
-      
+
       // TODO List:
       //  1) Find the very rare bug that occurs in mismatch and count_if 
       //     (likely others)
@@ -7177,7 +7286,8 @@ static bool HandleFunctionCall(SourceLocation CallLoc,
                                EvalInfo &Info, APValue &Result,
                                const LValue *ResultSlot) {
                                
-  if (Info.getLangOpts().ExperimentalConstexprParallel && 
+                      
+  if (Info.getLangOpts().ExperimentalConstexprParallel  && 
       Callee->getNameAsString() == "__ThreadLock")
     eval_lock.lock();
   
