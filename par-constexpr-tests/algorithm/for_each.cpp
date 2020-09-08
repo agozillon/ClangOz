@@ -10,11 +10,6 @@ using namespace __cep::experimental;
 
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto for_each_ov1() {
-  // this is just here to make sure the runtime iteration is actually executing
-  // at runtime
-  if constexpr (ForceRuntime) 
-    std::cout << "is constant evaluated: " << std::is_constant_evaluated() << "\n";
-
   std::array<T, N> arr {};
     
   for (int i = 0; i < arr.size(); ++i)

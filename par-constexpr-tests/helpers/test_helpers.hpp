@@ -193,4 +193,18 @@ constexpr auto remove_dups_from_sorted(std::array<T, N> v) {
   return new_arr;
 }
 
+// helper to convert container with iterator to a std::array at compile time, 
+// generally for use with dynamic containers
+template <typename T, int N>
+constexpr auto convert_container_to_array(auto container) {
+  std::array<T, N> new_arr{};
+  int i = 0;
+  for (auto it = container.begin(); it != container.end(); ++it) {
+    new_arr[i] = *it;
+    ++i;
+  }
+  
+  return new_arr;
+}
+
 }
