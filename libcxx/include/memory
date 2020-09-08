@@ -1791,8 +1791,10 @@ public:
           __libcpp_allocate in a constexpr context with no issues but if I add
           constexpr here it doesn't allow it? the only difference appears to
           be the const-ness of the data being allocated... */
-        return static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)));
-        // return static_cast<_Tp*>(_VSTD::__libcpp_allocate(__n * sizeof(_Tp), _LIBCPP_ALIGNOF(_Tp)));
+        if (std::is_constant_evaluated())
+          return static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)));
+
+        return static_cast<_Tp*>(_VSTD::__libcpp_allocate(__n * sizeof(_Tp), _LIBCPP_ALIGNOF(_Tp)));
         }
 
 #if _LIBCPP_STD_VER <= 17 || defined(_LIBCPP_ENABLE_CXX20_REMOVED_ALLOCATOR_MEMBERS)
@@ -1806,9 +1808,9 @@ public:
           {
             ::operator delete(__p);
             return;
-          } else {
-            _VSTD::__libcpp_deallocate((void*)__p, __n * sizeof(_Tp), _LIBCPP_ALIGNOF(_Tp));
           }
+          
+          _VSTD::__libcpp_deallocate((void*)__p, __n * sizeof(_Tp), _LIBCPP_ALIGNOF(_Tp));
         }
 
 #if _LIBCPP_STD_VER <= 17 || defined(_LIBCPP_ENABLE_CXX20_REMOVED_ALLOCATOR_MEMBERS)
