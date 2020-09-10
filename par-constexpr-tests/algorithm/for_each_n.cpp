@@ -1,31 +1,30 @@
 #include <array>
 #include <algorithm>
+#include <execution>
 #include <iostream>
 #include <type_traits>
 
+using namespace __cep::experimental;
+
 #include "../helpers/test_helpers.hpp"
 
-/*
-  This is currently written as a while loop, so not going to work without 
-  extending the compiler to deal with while loops or alternatively rewriting it
-  to work with for loops.
-*/
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto for_each_ov1() {
-  // this is just here to make sure the runtime iteration is actually executing
-  // at runtime
-  if constexpr (ForceRuntime) 
-    std::cout << "is constant evaluated: " 
-              << std::is_constant_evaluated() << "\n";
-
   std::array<T, N> arr {};
-    
+
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = (i + 32);
 
-  std::for_each_n(arr.begin(), 16, 
-                  [](auto &i){ i *= 2; });
-  
+    if constexpr (ForceRuntime) {
+    std::cout << "is constant evaluated: " 
+              << std::is_constant_evaluated() << "\n";
+
+    std::for_each_n(arr.begin(), 16, [](auto &i){ i *= 2; });
+  } else {
+    std::for_each_n(execution::ce_par, arr.begin(), 16, 
+                    [](auto &i){ i *= 2; });
+  }
+
   return arr;
 }
 

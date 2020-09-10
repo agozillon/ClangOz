@@ -1,7 +1,11 @@
 #include <array>
 #include <algorithm>
+#include <execution>
 #include <iostream>
 #include <type_traits>
+
+using namespace __cep::experimental;
+
 
 #include "../helpers/test_helpers.hpp"
 
@@ -21,21 +25,23 @@
 
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto find_end_ov1() {
-  // this is just here to make sure the runtime iteration is actually executing
-  // at runtime
-  if constexpr (ForceRuntime) 
-    std::cout << "is constant evaluated: " << std::is_constant_evaluated() << "\n";
-
   std::array<T, N> arr {};
   std::array<T, 4> seq {0,1,2,3};
     
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i % 4;
 
-  auto found = std::find_end(arr.begin(), arr.end(), 
-                             seq.begin(), seq.end());
-  
-  return std::distance(arr.begin(), found);
+  if constexpr (ForceRuntime) {
+      std::cout << "is constant evaluated: " 
+              << std::is_constant_evaluated() << "\n";
+    auto found = std::find_end(arr.begin(), arr.end(), 
+                               seq.begin(), seq.end());
+    return std::distance(arr.begin(), found);
+  } else {
+    auto found = std::find_end(execution::ce_par, arr.begin(), arr.end(), 
+                               seq.begin(), seq.end());
+    return std::distance(arr.begin(), found);
+  }
 }
 
 int main() {
