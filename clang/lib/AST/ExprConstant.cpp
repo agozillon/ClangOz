@@ -5040,6 +5040,9 @@ namespace {
       }
       
       APValue* FindSubobjectAPVal(APValue& APV, EvalInfo& Info) {
+        if (APV.isNullPointer())
+          return &APV;
+          
         QualType Type = getType(APV.getLValueBase());
         ArrayRef<APValue::LValuePathEntry> Path = APV.getLValuePath();
 

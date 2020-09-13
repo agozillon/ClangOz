@@ -25,9 +25,9 @@ constexpr auto move_ov1() {
   if constexpr (ForceRuntime) {
     std::cout << "is constant evaluated: " 
               << std::is_constant_evaluated() << "\n";
-    std::move_backward(vec.begin(), vec.end(), vec_move.begin());
+    std::move_backward(vec.begin(), vec.end(), vec_move.end());
   } else {
-    std::move_backward(execution::ce_par, vec.begin(), vec.end(), vec_move.begin());
+    std::move_backward(execution::ce_par, vec.begin(), vec.end(), vec_move.end());
   }
   
   return std::make_pair(pce::utility::convert_container_to_array<T, N>(vec_move),
@@ -35,8 +35,8 @@ constexpr auto move_ov1() {
 }
 
 int main() {
-  constexpr auto output_ov1 = move_ov1<arr_t, arr_sz>();
-  auto runtime_ov1 = move_ov1<arr_t, arr_sz, true>();
+  constexpr auto output_ov1 = move_ov1<int, 32>();
+  auto runtime_ov1 = move_ov1<int, 32, true>();
 
   std::cout << "Runtime == Compile Time: " 
     << (pce::utility::check_runtime_against_compile(std::get<0>(output_ov1), 

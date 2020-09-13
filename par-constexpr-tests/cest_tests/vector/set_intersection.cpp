@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <utility>
 #include <execution>
 #include "cest/vector.hpp"
 
@@ -26,7 +27,7 @@ constexpr auto set_intersection_ov1(auto intersection_arr) {
                           out.begin());
   }
   
-  return pce::utility::convert_container_to_array<T, N>(vec);
+  return pce::utility::convert_container_to_array<T, N>(out);
 }
 
 template <typename T, int Sz, int Max>
@@ -55,37 +56,44 @@ constexpr bool compare_vals(auto arr, auto arr2) {
   return true;
 }
 
+template <bool ForceRuntime = false>
+constexpr auto run_test() {
+  cest::vector<int> vec {};
+  auto intersection_arr = rnd_arry<int, 16, 31>();
+    
+  for (int i = 0; i < intersection_arr.size(); ++i)
+    vec.push_back(intersection_arr[i]);
+
+  auto output_ov1 = set_intersection_ov1<int, 32, ForceRuntime>(vec);
+  
+  return std::pair<std::array<int, 32>, bool>(
+    output_ov1,
+    compare_vals<int>(intersection_arr, output_ov1));
+}
 
 int main() {
-  constexpr auto intersection_arr = rnd_arry<int, 16, 31>();
-  
-  static constexpr cest::vector<int> vec {};
+  constexpr auto ret_c = run_test();
+  auto ret = run_test<true>();
 
-  for (int i = 0; i < intersection_arr.size(); ++i) {
-    vec.push_back(intersection_arr[i]);
-  }
-  
-  constexpr auto output_ov1 = set_intersection_ov1<int, 32>(vec);
-  auto runtime_ov1 = set_intersection_ov1<int, 32, true>(intersection_arr);
-
-  constexpr bool b1 = compare_vals<int>(intersection_arr, output_ov1);
-  bool b2 = compare_vals<int>(intersection_arr, runtime_ov1);
-
-  std::cout << "runtime & compile time intersection list equal " << (b1 & b2) << "\n";
+  std::cout << "runtime & compile time intersection list equal " << 
+      (std::get<1>(ret_c) & std::get<1>(ret)) << "\n";
 
   for (int i = 0; i < 32; ++i) {
-    std::cout << output_ov1[i] << " ";
+    std::cout << std::get<0>(ret)[i] << " ";
   }
   
   std::cout << "\n\n\n";
   
   for (int i = 0; i < 32; ++i) {
-    std::cout << runtime_ov1[i] << " ";
+    std::cout << std::get<0>(ret_c)[i] << " ";
   }
     std::cout << "\n\n\n";
+    
+  std::cout << "\n\n\n";
   std::cout << "Runtime == Compile Time: " 
-    << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
+    << pce::utility::check_runtime_against_compile(std::get<0>(ret_c), 
+                                                   std::get<0>(ret))
     << "\n";
-  
+
   return 0;
 }
