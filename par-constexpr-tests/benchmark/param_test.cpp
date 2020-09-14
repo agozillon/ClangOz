@@ -1,4 +1,5 @@
 #include <array>
+#include <algorithm>
 #include <execution>
 
 #ifndef SZ
@@ -11,9 +12,10 @@ template <typename T, typename P>
 constexpr bool doit(P pol)
 {
   T x;
-  std::for_each(pol, x.begin(), x.end(), [](auto &x){ x *= 2; });
-  //std::for_each(x.begin(), x.end(), [](auto &x){ x *= 2; });
-  return true;
+  std::for_each(pol, x.begin(), x.end(), [](auto &i){ i = 0; });
+  bool b = std::all_of(pol, x.begin(), x.end(),
+                       [](auto &i){ return i%2 == 0; });
+  return b;
 }
 
 int main(int argc, char *argv[])
