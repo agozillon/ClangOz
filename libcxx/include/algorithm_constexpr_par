@@ -136,7 +136,8 @@ for_each(_ExecutionPolicy&& __exec, _ForwardIterator __first,
          _ForwardIterator __last, _Function __f)
 {
     __BeginEndIteratorPair(__first, __last);
-
+    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
     for (; __first != __last; ++__first)
         __f(*__first);
 }
@@ -158,7 +159,8 @@ for_each_n(_ExecutionPolicy&& __exec, _InputIterator __first, _Size __orig_n,
     int __end = 0;
     __PartitionUsingIndex(__n, __end, EqualityType::GT);
     __IteratorLoopStep(__first, 1, OperatorType::PreInc);
-    
+    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
     for (; __n > __end;  --__n) {
        __f(*__first);
        ++__first;
@@ -340,7 +342,7 @@ mismatch(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
     __BeginEndIteratorPair(__first1, __last1);
 /*    __IteratorLoopStep(__first1, 1);*/
     __IteratorLoopStep(__first2, 1, OperatorType::PreInc);
-    
+
     for (; __first1 != __last1; ++__first1, (void) ++__first2)
         if (!__pred(*__first1, *__first2))
             break;
@@ -372,7 +374,9 @@ __copy_constexpr(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-      
+    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
+    
     for (; __first != __last; ++__first, (void) ++__result)
         *__result = *__first;
     return __result;
@@ -408,6 +412,8 @@ __copy_backward_constexpr(_ExecutionPolicy&& __exec,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreDec);
+    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+                     OperatorType::PreDec);
     
     for (; __first != __last;)
         *--__result = *--__last;
@@ -497,7 +503,9 @@ copy_n(_ExecutionPolicy&& __exec, _InputIterator __first, _Size __orig_n,
         __PartitionUsingIndex(__n, __end, EqualityType::GT);
         __IteratorLoopStep(__first, 1, OperatorType::PreInc);
         __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-
+        __ReduceVariable(__result, ReductionType::OrderedAssign, 
+                         OperatorType::PreDec);
+                     
         for (--__n; __n > __end; --__n)
         {
             ++__first;
@@ -539,7 +547,8 @@ __move(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-
+    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
     for (; __first != __last; ++__first, (void) ++__result)
         *__result = _VSTD::move(*__first);
     return __result;
@@ -592,7 +601,9 @@ __move_backward(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreDec);
-    
+    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+                     OperatorType::PreDec);
+                 
     for (; __first != __last;)
         *--__result = _VSTD::move(*--__last);
     return __result;
@@ -648,7 +659,9 @@ transform(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-    
+    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
+                     
     for (; __first != __last; ++__first, (void) ++__result)
         *__result = __op(*__first);
     return __result;
@@ -667,7 +680,9 @@ transform(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
     __BeginEndIteratorPair(__first1, __last1);
     __IteratorLoopStep(__first2, 1, OperatorType::PreInc);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-
+    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
+                     
     for (; __first1 != __last1; ++__first1, (void) ++__first2, ++__result)
         *__result = __binary_op(*__first1, *__first2);
     return __result;
@@ -684,7 +699,9 @@ replace(_ExecutionPolicy&& __exec, _ForwardIterator __first,
         _ForwardIterator __last, const _Tp& __old_value, const _Tp& __new_value)
 {
     __BeginEndIteratorPair(__first, __last);
-
+    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
+                     
     for (; __first != __last; ++__first)
         if (*__first == __old_value)
             *__first = __new_value;
@@ -702,7 +719,9 @@ replace_if(_ExecutionPolicy&& __exec, _ForwardIterator __first,
            _ForwardIterator __last, _Predicate __pred, const _Tp& __new_value)
 {
     __BeginEndIteratorPair(__first, __last);
-
+    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
+                     
     for (; __first != __last; ++__first)
         if (__pred(*__first))
             *__first = __new_value;
@@ -722,7 +741,9 @@ replace_copy(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-    
+    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
+                     
     for (; __first != __last; ++__first, (void) ++__result)
         if (*__first == __old_value)
             *__result = __new_value;
@@ -745,7 +766,9 @@ replace_copy_if(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-    
+    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
+                     
     for (; __first != __last; ++__first, (void) ++__result)
         if (__pred(*__first))
             *__result = __new_value;
@@ -1020,7 +1043,9 @@ __fill_n(_ExecutionPolicy&& __exec, _OutputIterator __first, _Size __n,
     int __end = 0;
     __PartitionUsingIndex(__n, __end, EqualityType::GT);
     __IteratorLoopStep(__first, 1, OperatorType::PreInc);
-        
+    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
+                     
     for (; __n > __end; ++__first, (void) --__n)
         *__first = __value_;
     return __first;
@@ -1102,7 +1127,9 @@ remove(_ExecutionPolicy&& __exec, _ForwardIterator __first,
         
         __BeginEndIteratorPair(__i, __last);
         __IteratorLoopStep(__first, 1, OperatorType::PreInc);
-
+        __ReduceVariable(__first, ReductionType::OrderedAssign, 
+                         OperatorType::PreInc);
+                     
         for (; ++__i != __last;)
         {
             if (!(*__i == __value_))
@@ -1173,7 +1200,11 @@ swap_ranges(_ExecutionPolicy&& __exec, _ForwardIterator1 __first1,
 {
     __BeginEndIteratorPair(__first1, __last1);
     __IteratorLoopStep(__first2, 1, OperatorType::PreInc);
-    
+    __ReduceVariable(__first1, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
+    __ReduceVariable(__first2, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
+
     for(; __first1 != __last1; ++__first1, (void) ++__first2)
         swap(*__first1, *__first2);
     return __first2;

@@ -62,6 +62,7 @@
 #include <cstring>
 #include <future>
 #include <functional>
+#include <stack>
 #include <thread>
 #include <iostream>
 
@@ -523,8 +524,6 @@ namespace {
     typedef std::map<unsigned, APValue> ThreadArgMapTy;
     ThreadArgMapTy ThreadArgumentsMap;
 
-    CallStackFrame(const CallStackFrame& CSF, EvalInfo& EI);
-
     APValue* getArguments(unsigned Index) {
       // TODO: This is a naive implementation that's going to check the
       // ThreadArgumentsMap first, then if nothing is found it'll check the 
@@ -538,7 +537,7 @@ namespace {
       if (val != ThreadArgumentsMap.end()) {
         return &val->second; 
       }
-        
+
       return &Arguments[Index];
     }
     
@@ -584,6 +583,8 @@ namespace {
     llvm::DenseMap<const VarDecl *, FieldDecl *> LambdaCaptureFields;
     FieldDecl *LambdaThisCaptureField;
 
+    CallStackFrame(const CallStackFrame& CSF, EvalInfo& EI);
+    CallStackFrame(const CallStackFrame&);
     CallStackFrame(EvalInfo &Info, SourceLocation CallLoc,
                    const FunctionDecl *Callee, const LValue *This,
                    APValue *Arguments);
@@ -677,6 +678,7 @@ namespace {
         : Value(Val, IsLifetimeExtended), Base(Base), T(T) {}
 
     bool isLifetimeExtended() const { return Value.getInt(); }
+    APValue::LValueBase getLValueBase() const { return Base; }
     bool endLifetime(EvalInfo &Info, bool RunDestructors) {
       if (RunDestructors) {
         SourceLocation Loc;
@@ -809,11 +811,11 @@ namespace {
     // EvalInfo/CallStackFrame are not move/copy friendly (hence this copy 
     // constructor).
     EvalInfo(const EvalInfo& EI) : Ctx(EI.Ctx), EvalStatus(EI.EvalStatus),
-      CurrentCall(nullptr), CallStackDepth(EI.CallStackDepth),  
-      NextCallIndex(EI.NextCallIndex),StepsLeft(EI.StepsLeft), 
-      EnableNewConstInterp(EI.EnableNewConstInterp), 
+      CurrentCall(nullptr), CallStackDepth(EI.CallStackDepth),
+      NextCallIndex(EI.NextCallIndex), StepsLeft(EI.StepsLeft), 
+      EnableNewConstInterp(EI.EnableNewConstInterp),
       BottomFrame(*EI.CurrentCall, *this),
-      /*CleanupStack(EI.CleanupStack),*/ EvaluatingDecl(EI.EvaluatingDecl), 
+      CleanupStack(EI.CleanupStack), EvaluatingDecl(EI.EvaluatingDecl), 
       IsEvaluatingDecl(EI.IsEvaluatingDecl), 
       ObjectsUnderConstruction(EI.ObjectsUnderConstruction),
       HeapAllocs(EI.HeapAllocs), NumHeapAllocs(EI.NumHeapAllocs),
@@ -826,7 +828,7 @@ namespace {
         EI.CheckingPotentialConstantExpression),
       CheckingForUndefinedBehavior(EI.CheckingForUndefinedBehavior),
       EvalMode(EI.EvalMode) {}
-      
+
     /// CallStackDepth - The number of calls in the call stack right now.
     unsigned CallStackDepth;
 
@@ -1451,17 +1453,34 @@ void SubobjectDesignator::diagnosePointerArithmetic(EvalInfo &Info,
 CallStackFrame::CallStackFrame(const CallStackFrame& CSF, EvalInfo& EI) 
       : Info(EI), Caller(CSF.Caller), Callee(CSF.Callee), This(CSF.This), 
       Arguments(CSF.Arguments), ThreadArgumentsMap(CSF.ThreadArgumentsMap),
-      /*CurSourceLocExprScope(EI.CurSourceLocExprScope),*/
       Temporaries(CSF.Temporaries), CallLoc(CSF.CallLoc), Index(CSF.Index), 
       TempVersionStack(CSF.TempVersionStack), CurTempVersion(CSF.CurTempVersion),
       LambdaCaptureFields(CSF.LambdaCaptureFields), 
       LambdaThisCaptureField(CSF.LambdaThisCaptureField)
     {
-        /* It may not be guaranteed that this is generating a totally new 
-           EvalInfo, generally this CallStackFrame copy constructor is expected
-           to be called as part of the copying of a new EvalInfo. */
-        Info.CurrentCall = this; 
+        Info.CurrentCall = this;
+
+       // FIXME/TODO: If I keep the usage of these moves, this is a bug waiting 
+       // to happen, the move =operator is private so cannot be used.
+       //CurSourceLocExprScope = CSF.CurSourceLocExprScope;
     }
+// This is really only for immediate usage after a CallStackFrame has been 
+// created and you wish to place it within a vector
+CallStackFrame::CallStackFrame(const CallStackFrame &CSF) : Info(CSF.Info),
+    CallLoc(CSF.CallLoc), Callee(CSF.Callee), This(CSF.This), 
+    Arguments(CSF.Arguments), Index(Info.NextCallIndex) {
+  // new address after move..this technically causes the assert in the 
+  // destructor that we have commented out to fire in certain cases as we 
+  // can't guarantee the order of deletion for the CallStackFrames we make and
+  // moving things into vectors can cause deletions that will fire the assert
+  //Info.CurrentCall = this; 
+  
+  // destruct called after a move will lower this by 1, whether or not it should 
+  // be up to the move contructor to reestablish the correct depth is perhaps 
+  // debateable
+  ++Info.CallStackDepth; 
+}
+
 CallStackFrame::CallStackFrame(EvalInfo &Info, SourceLocation CallLoc,
                                const FunctionDecl *Callee, const LValue *This,
                                APValue *Arguments)
@@ -1472,7 +1491,7 @@ CallStackFrame::CallStackFrame(EvalInfo &Info, SourceLocation CallLoc,
 }
 
 CallStackFrame::~CallStackFrame() {
-  assert(Info.CurrentCall == this && "calls retired out of order");
+//  assert(Info.CurrentCall == this && "calls retired out of order");
   --Info.CallStackDepth;
   Info.CurrentCall = Caller;
 }
@@ -3492,8 +3511,8 @@ findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
               const SubobjectDesignator &Sub, SubobjectHandler &handler) {
   // it works here with no error, and is 0m24.144s vs 0m38.228s on the benchmark
   // very high system costs as the lock is requested often
+  //std::lock_guard<std::recursive_mutex> locked(eval_lock2);
 
-    std::lock_guard<std::recursive_mutex> locked(eval_lock2);
   // agozillon: This lock "fixes" the issue, but its not ideal so there are 
   // several race conditions in this function that pose problems, the lock seems
   // a little hamfisted as a fix, need to find the locations of contention and 
@@ -4991,7 +5010,45 @@ namespace {
                     APV.isNullPointer());
     
   }
-  
+
+  APValue* FindSubobjectAPVal(APValue& APV, EvalInfo& Info) {
+    if (APV.isNullPointer())
+      return &APV;
+      
+    QualType Type = getType(APV.getLValueBase());
+    ArrayRef<APValue::LValuePathEntry> Path = APV.getLValuePath();
+
+    LValue ParentLVal;
+    ParentLVal.setFrom(Info.Ctx, APV);
+    CompleteObject Obj = findCompleteObject(Info, nullptr, AccessKinds::AK_Read,
+                                      ParentLVal, getType(APV.getLValueBase()));
+    APValue* CurrAPV = Obj.Value;
+    uint64_t Index = 0;
+
+    for (unsigned I = 0, N = Path.size(); I != N; ++I) {
+      if (Type->isArrayType()) {
+        Type = Info.Ctx.getAsArrayType(Type)->getElementType();
+        Index = Path[I].getAsArrayIndex();
+        if ((N - I) != 1 && CurrAPV->getArrayInitializedElts() > Index)
+          CurrAPV = &CurrAPV->getArrayInitializedElt(Index);
+      } else if (Type->isAnyComplexType()) { // likely only needs handled long
+                                             // term
+        Type = Type->castAs<ComplexType>()->getElementType();
+      } else if (const FieldDecl *FD = getAsField(Path[I])) {
+        Type = FD->getType();
+        CurrAPV = &CurrAPV->getStructField(FD->getFieldIndex());
+      } else { // Not too sure what scenarios will fall into this yet, perhaps 
+               // unions and some other things
+        return CurrAPV;
+      }
+
+      if ((N - I) != 1)
+        return CurrAPV;
+    }
+
+    return CurrAPV;
+  }
+
   //  Experiment at creating someway to pass information into Clang rather than 
   //  trying to analyize which can be extremely difficult.
   //  
@@ -5002,8 +5059,13 @@ namespace {
   class LoopWrapperGatherer
     : public ConstStmtVisitor<LoopWrapperGatherer, bool> {
       EvalInfo Info;
+      
+      // Could likely make these llvm vectors
       std::vector<EvalInfo> &ThreadInfo;
       std::vector<llvm::Any> NoCopyBackList;
+      
+      std::vector<std::vector<CallStackFrame>> SaveTheFrames;
+      std::vector<std::vector<APValue>> SaveTheArgs;
       
       std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> &RedList;
       int64_t ThreadPartitionSize;
@@ -5038,89 +5100,164 @@ namespace {
           return APValue(*CandidateAPV);
         }
       }
-      
-      APValue* FindSubobjectAPVal(APValue& APV, EvalInfo& Info) {
-        if (APV.isNullPointer())
-          return &APV;
-          
-        QualType Type = getType(APV.getLValueBase());
-        ArrayRef<APValue::LValuePathEntry> Path = APV.getLValuePath();
 
-        LValue ParentLVal;
-        ParentLVal.setFrom(Info.Ctx, APV);
-        CompleteObject Obj = findCompleteObject(Info, nullptr, AccessKinds::AK_Read,
-                                          ParentLVal, getType(APV.getLValueBase()));
-        APValue* CurrAPV = Obj.Value;
-        uint64_t Index = 0;
 
-        for (unsigned I = 0, N = Path.size(); I != N; ++I) {
-          if (Type->isArrayType()) {
-            Type = Info.Ctx.getAsArrayType(Type)->getElementType();
-            Index = Path[I].getAsArrayIndex();
-            if ((N - I) != 1 && CurrAPV->getArrayInitializedElts() > Index)
-              CurrAPV = &CurrAPV->getArrayInitializedElt(Index);
-          } else if (Type->isAnyComplexType()) { // likely only needs handled long
-                                                 // term
-            Type = Type->castAs<ComplexType>()->getElementType();
-          } else if (const FieldDecl *FD = getAsField(Path[I])) {
-            Type = FD->getType();
-            CurrAPV = &CurrAPV->getStructField(FD->getFieldIndex());
-          } else { // Not too sure what scenarios will fall into this yet, perhaps 
-                   // unions and some other things
-            return CurrAPV;
-          }
-
-          if ((N - I) != 1)
-            return CurrAPV;
-        }
-
-        return CurrAPV;
-      }
-
-    public:
+  public:
       LoopWrapperGatherer(EvalInfo Info,
                           std::vector<EvalInfo> &ThreadInfo,
                           std::vector<std::tuple<int, int, llvm::Any, int64_t, 
                                                  APValue>> 
                             &RedList) :
-                          Info(Info), ThreadInfo(ThreadInfo), RedList(RedList){}
+                          Info(Info), ThreadInfo(ThreadInfo), RedList(RedList){
+        SaveTheFrames.reserve(ThreadInfo.size());
+      }
     
       std::vector<llvm::Any> GetNoCopyBackList() {
         return NoCopyBackList;
       }
+
+      void CloneEvalInfo(const EvalInfo& Original, EvalInfo& Clone) {
       
-      bool SearchBody(const Stmt* Body) {
-        for (auto Stmt : Body->children()) {
-          Visit(Stmt);
+      
+        std::stack<CallStackFrame*> Frames;
+
+        // This may look redundant, but we need to do introduce new temporaries
+        // and CallStackFrames in the correct order they were invoked to avoid
+        // errors.
+        CallStackFrame *OrigFrame = Original.CurrentCall;
+        Frames.push(OrigFrame);
+        while (OrigFrame->Caller) {
+          OrigFrame = OrigFrame->Caller;
+          Frames.push(OrigFrame);
         }
 
-        return true;
-      }
-      
-      bool VisitExprWithCleanups(const ExprWithCleanups* EWC) {
-        for (auto Stmt : EWC->children()) {
-          Visit(Stmt);
-        }
-        
-        return true;
-      }
-      
-      bool VisitIfStmt(const IfStmt* IfS) {
-        for (auto Stmt : IfS->children()) {
-          Visit(Stmt);
+        SaveTheFrames.push_back(std::vector<CallStackFrame>());
+        SaveTheFrames.back().reserve(Frames.size()); 
+        CallStackFrame *PreviousFrame = nullptr;
+
+
+        while (!Frames.empty()) {
+          CallStackFrame *CloneFrame = Frames.top();
+          Frames.pop();
+          std::vector<APValue> NewArgs;
+          // clone args
+          if (CloneFrame->Callee)
+            for (unsigned i = 0; i < CloneFrame->Callee->getNumParams(); ++i) {
+              NewArgs.push_back(CloneFrame->Arguments[i]);
+            }
+
+                    
+          SaveTheArgs.push_back(NewArgs);
+
+          // clone frame
+          SaveTheFrames.back().push_back(
+            CallStackFrame(Clone, CloneFrame->CallLoc, 
+                               CloneFrame->Callee, CloneFrame->This, 
+                               SaveTheArgs.back().data())
+          );
+          
+
+          // clone temporaries
+          for (auto& CS : Original.CleanupStack) {
+             
+             APValue::LValueBase Base = CS.getLValueBase();
+             const void* PtrKey;
+             if (Base.is<const ValueDecl*>()) 
+               PtrKey = static_cast<const void*>(Base.get<const ValueDecl*>());
+             else if (Base.is<const Expr*>()) 
+               PtrKey = static_cast<const void*>(Base.get<const Expr*>());
+             std::pair<const void *, unsigned> KV(PtrKey, Base.getVersion());
+             
+              
+               auto LB = CloneFrame->Temporaries.find(KV);
+              
+              if (LB != CloneFrame->Temporaries.end() && LB->first == KV) {
+                APValue &Copy = SaveTheFrames.back().back()
+                                  .Temporaries[std::pair<const void *, unsigned> 
+                                                (PtrKey,
+                                                 Base.getVersion())];
+                Clone.CleanupStack.push_back(Cleanup(&Copy, Base, getType(Base), 
+                                                     CS.isLifetimeExtended()));
+                // this copy/assigment is hemoraging time, probably when its 
+                // trying to mimic/clone the array, what I dont understand is 
+                // why it doesn't seem to cost anything for the first invocations 
+                // of iota and then it scales upwards at  an ever increasing 
+                // cost up to a point and then resets
+                // can we mitigate this easily or will it require a wrapper
+                // or a slightly more complex algorithm to detect what truly
+                // needs copied?
+                // it appears that at least the first few calls the array data 
+                // is not instantiated (perhaps just the template being 
+                // instantiated with no proper initilization?) but once the data
+                // is instantiated there is a large performance cost to this 
+                // copy
+                // This is incredibly slow when its a large array as it has to
+                // copy the memebers individually, I am not sure if there is a
+                // way to block copy the array data as an array is an APValue 
+                // containing multiple other APValues in an pointer array
+                // representing individual array elements
+                Copy = LB->second;
+
+             }
+              
+
+          }
+
+          // The CallStackFrame indexes are not actually linear, so we must 
+          // mimic the index
+          SaveTheFrames.back().back().Index = CloneFrame->Index;
+          // Assign To Last CallStackFrame/Chain together so they hopefully 
+          // refer to each other correctly
+          SaveTheFrames.back().back().Caller = PreviousFrame;
+          PreviousFrame = &SaveTheFrames.back().back();
         }
 
-        return true;
+        // Not ideal but if you exchange CurrentCall to point at the new 
+        // CallStackFrame constructed from the move construction within the
+        // move constructor, then the destruct of the old CallStackFrame will 
+        // trigger an assert. Ideally there would be away around invoking any
+        // assignment/moves when pushing to the vector but it doesn't seem 
+        // feasible
+        Clone.CurrentCall = &SaveTheFrames.back().back();
+        // FIXME/TODO: This has to be constructed it cannot be assigned
+//        Clone.BottomFrame = SaveTheFrames.back().front();
+        Clone.NextCallIndex = Original.NextCallIndex;
+        Clone.CallStackDepth = Original.CallStackDepth;
+
+    }
+  
+    bool SearchBody(const Stmt* Body) {
+      for (auto Stmt : Body->children()) {
+        Visit(Stmt);
       }
 
-      bool VisitCompoundStmt(const CompoundStmt* CompoundS) {
-        for (auto Stmt : CompoundS->children()) {
-          Visit(Stmt);
-        }
-
-        return true;
+      return true;
+    }
+      
+    bool VisitExprWithCleanups(const ExprWithCleanups* EWC) {
+      for (auto Stmt : EWC->children()) {
+        Visit(Stmt);
       }
       
+      return true;
+    }
+      
+    bool VisitIfStmt(const IfStmt* IfS) {
+      for (auto Stmt : IfS->children()) {
+        Visit(Stmt);
+      }
+
+      return true;
+    }
+
+    bool VisitCompoundStmt(const CompoundStmt* CompoundS) {
+      for (auto Stmt : CompoundS->children()) {
+        Visit(Stmt);
+      }
+
+      return true;
+    }
+    
       bool HandleBeginEndIteratorPair(const CallExpr *E) {
         if (E->getNumArgs() > 2 || E->getNumArgs() < 2)
           return false;
@@ -5144,7 +5281,7 @@ namespace {
             QTBegin = VD->getType();
           }
         }
-          
+        
         // Parameter: T2 End
         if (auto DRE = dyn_cast<DeclRefExpr>(E->getArg(1)))
           if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
@@ -5255,7 +5392,7 @@ namespace {
           APVBegin.dump();
           APVEnd.dump();
         }
-        
+                
         return true;
       }
   
@@ -5444,7 +5581,7 @@ namespace {
         
         llvm::Any ArgOrTemp;
         int64_t TySz;
-        
+
         // Parameter: T Var
         // FIXME/TODO: Make this a function, so we can reuse it in the other 
         // 2 calls and more in the future, its a common idiom at this point
@@ -5479,7 +5616,10 @@ namespace {
         if (OpInt < 0 || AccumInt < 0)
           return false;
 
-                          
+        // A reduction should be excluded from the normal copy back interaction
+        // as it's a special case handling of copying back some data from 
+        // threads
+        NoCopyBackList.push_back(ArgOrTemp);
         RedList.push_back(std::tuple<int, int, llvm::Any, int64_t, APValue>(
                                      AccumInt, OpInt, ArgOrTemp, TySz, 
                                      CopyAPValue(ArgOrTemp)));
@@ -5722,82 +5862,68 @@ namespace {
         return false;
       }
       
-      // TODO: This function is likely going to require some further consideration 
-      // in the future. It's possible we don't want to copy across all arguments 
-      // indiscriminately, we originally only wanted to keep the iterators 
-      // consistent as they may be used later in the algorithm 
-      // (e.g. as return types), making everything consistent may be overkill.
-      // On the other hand we may end up wanting to do the same copy with the 
-      // temporaries as well, which may be used later in the algorithm...
-      // It's worth noting that we currently only assume things in the CurrentCall
-      // will need to be copied, and anticipate that we aren't manipulating anything
-      // from calls higher up the stack for the moment, this goes for the majority 
-      // of the Parallel Constexpr Algorithms for the moment.
-      //
-      // The above statement may be partially incorrect as every APValue in the 
-      // arguements list should in theory be the original copy (and thus shared
-      // for better or worse for now), excluding the iterators which get their own 
-      // copy in the threadargumentsmap
-      void CopyFromThreadArguments(EvalInfo &From, EvalInfo &To, 
-                                   uint32_t ThreadPartition, uint32_t PoolSz) {
-        auto skip = [this](int i) { 
+
+      // The general idea is that we need to copy back all the copies from the 
+      // thread EvalInfo's back to the main Info. The PrimaryThread is the 
+      // "wining" thread, basically the thread that we returned from or exited
+      // from due to a successful but early (or not early) return state. This is
+      // only relevant for non-array data that has not been partitioned. 
+      // 
+      // At the moment array data that is mutable should be marked with a reduce
+      // wrapper to achieve the appropriate result. I think it's perhaps a 
+      // little overkill and strong to converge all of the arrays we find across
+      // the CallStackFrame for all threads, you also have to make some 
+      // assumptions on how the data would be paritioned which I dont think is 
+      // ideal.
+      void CopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
+        auto skip = [this](llvm::Any i) { 
           for (auto v : NoCopyBackList)
-            if (llvm::any_cast<unsigned int>(v) == i)
+            if (llvm::any_isa<unsigned int>(v) && 
+                llvm::any_isa<unsigned int>(i) && 
+                llvm::any_cast<unsigned int>(v) == 
+                llvm::any_cast<unsigned int>(i))
               return true;
+            else if (llvm::any_isa<void*>(v) &&
+                     llvm::any_isa<void*>(i) &&
+                     llvm::any_cast<void*>(v) == 
+                     llvm::any_cast<void*>(i))
+              return true;
+          
           return false;
         };
 
-        for (size_t i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
-            if (skip(i)) {
+        CallStackFrame *OrigFrame = To.CurrentCall;
+        CallStackFrame *PrimaryCopyFrame = From.CurrentCall;
+
+        while (OrigFrame->Caller) {
+          // copy back temporaries, this is important even for the current frame 
+          // as we may need the value after the loop ends e.g. to return from a 
+          // function
+          for (auto& OrigTemp : OrigFrame->Temporaries) {
+            // we only skip the current frame for the moment
+            if ((To.CurrentCall == OrigFrame) && skip(OrigTemp.first.first))
               continue;
-            }
+            OrigTemp.second =
+              PrimaryCopyFrame->Temporaries.find(OrigTemp.first)->second;
+          }
 
-         if (From.CurrentCall->getArguments(i)->isLValue() && 
-            From.CurrentCall->getArguments(i)->hasLValuePath()) {
-            ArrayRef<APValue::LValuePathEntry> Path = 
-                From.CurrentCall->getArguments(i)->getLValuePath();
-
-            // An alternative to the below method would perhaps be to use getType
-            // on the APValues BaseLValue to get the top level type to distinguish 
-            // if its an array and then make our decision based off of that. This
-            // would likely be less robust but faster.
-            APValue* FromAPV = FindSubobjectAPVal(
-                                              *From.CurrentCall->getArguments(i), 
-                                              From);
-            APValue* ToAPV = FindSubobjectAPVal(*To.CurrentCall->getArguments(i), 
-                                                To);
-             
-            if (ToAPV->isArray()) {
-              bool FinalPartition = (ThreadPartition == (PoolSz - 1));
-              uint64_t Start =  (!FinalPartition) ?
-                      ThreadPartitionSize * ThreadPartition
-                    : (ThreadPartitionSize * ThreadPartition) 
-                      + ThreadPartitionOverflow;
-
-              uint64_t End =  (!FinalPartition) ?
-                      ThreadPartitionSize * (ThreadPartition + 1)
-                    : (ThreadPartitionSize * (ThreadPartition + 1)) 
-                      + ThreadPartitionOverflow;
-
-              for (int Index = Start; Index < End; ++Index) {
-                // agozillon: possible bug waiting to happen if these somehow
-                // do not match as expected.
-                if (ToAPV->getArrayInitializedElts() > Index &&
-                    FromAPV->getArrayInitializedElts() > Index)
-                  ToAPV->getArrayInitializedElt(Index) 
-                      = FromAPV->getArrayInitializedElt(Index);
+          // copy back arguments
+          if (OrigFrame->Callee)
+            for (size_t i = 0; i < OrigFrame->Callee->getNumParams(); ++i){
+               
+              // we only skip the current frame for the moment
+              if ((To.CurrentCall == OrigFrame) && skip(i)) { 
+                  continue;
               }
 
+              OrigFrame->Arguments[i] = *PrimaryCopyFrame->getArguments(i);
             }
-
-            // This may be better served as simply assigning the top level 
-            // LValue data (offset etc.), as it's possible simply assinging like
-            // this casues some issues in certain cases.
-            To.CurrentCall->Arguments[i] = *From.CurrentCall->getArguments(i);
-          } else 
-            To.CurrentCall->Arguments[i] = *From.CurrentCall->getArguments(i);
+            
+          OrigFrame = OrigFrame->Caller;
+          PrimaryCopyFrame = PrimaryCopyFrame->Caller;
         }
-      }
+    }
+
   };
 
   // realistically if a lot look like this we can squash them into a macro...
@@ -5854,90 +5980,91 @@ namespace {
   }
 
   void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
-                     llvm::Any ArgOrTemp, int64_t TySz, APValue APValPrev) {
+                     llvm::Any ArgOrTemp, int64_t TySz, APValue APValPrev,
+                     bool Reverse) {
     // TODO: Need to check type its working on before we do this... 
     // the below code wont work for everything
-    auto ParentAPVal = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
+    APValue* SubObjAPVal = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
+    APValue* CompleteObjAPV = FindSubobjectAPVal(*SubObjAPVal, Info);
     
-    // round-about way to get the complete object (e.g. array) the 
-    // iterator/pointer belongs to, perhaps there is a better way I'm unaware 
-    // of though, calling findCompleteObject comes at a fair cost
-    LValue ParentLVal;
-    ParentLVal.setFrom(Info.Ctx, *ParentAPVal);
-    QualType ParentQt = getType(ParentAPVal->getLValueBase());
-    CompleteObject Obj = findCompleteObject(Info, nullptr, 
-                                      AccessKinds::AK_Read, ParentLVal, 
-                                      ParentQt);
+    if (CompleteObjAPV->isArray()) {
+      // NOTE: In certain cases (like std::array) you can use 
+      // getTypeSizeInChars on the ParentQt QualType to get the correct 
+      // data size. However, I don't know if this will neccessarily hold
+      // true for all object types that contain an array as it's asking the 
+      // size of the struct/class I believe. Which depending on the class 
+      // layout and what it contains could perhaps be off. I've opted for 
+      // the safer option for now, which is carrying over the underlying 
+      // type from the iterator which we get from the gathering phase.
+      int64_t ArrSz = CompleteObjAPV->getArraySize();
+      
+      if (ArrSz > CompleteObjAPV->getArrayInitializedElts())
+        expandArray(*CompleteObjAPV, ArrSz - 1);
 
-    // TODO: This currently assumes its a field, but that isn't always the 
-    // case, it could be an array etc. look into findSubObject to get an idea.
-    if (const FieldDecl *Field = getAsField(ParentAPVal->getLValuePath()[0])) {
-      APValue* O = &Obj.Value->getStructField(Field->getFieldIndex());
-      if (O->isArray()) {
-        // NOTE: In certain cases (like std::array) you can use 
-        // getTypeSizeInChars on the ParentQt QualType to get the correct 
-        // data size. However, I don't know if this will neccessarily hold
-        // true for all object types that contain an array as it's asking the 
-        // size of the struct/class I believe. Which depending on the class 
-        // layout and what it contains could perhaps be off. I've opted for 
-        // the safer option for now, which is carrying over the underlying 
-        // type from the iterator which we get from the gathering phase.
-        int64_t ArrSz = O->getArraySize();
-        int64_t ArrSzChars = ArrSz * TySz;
-        int64_t ThreadPartitionSize = ArrSzChars / ThreadInfo.size();
-        // FIXME: When fixed the below should likely be:
-        //  int64_t ArrStartIndex = 
-        //    ParentAPVal->getLValueOffset().getQuantity() / TySz;
-        int64_t ArrStartIndex = 0;
+      int64_t ArrSzChars = ArrSz * TySz;
+      int64_t ThreadPartitionSize = ArrSzChars / ThreadInfo.size();
+      int64_t ArrStartIndex = 
+          (SubObjAPVal->getLValueOffset().getQuantity() / TySz);
+      
+      if (Reverse) {
+        for (int i = ThreadInfo.size() - 1; i >= 0; --i) {
+          APValue* ThreadSubObjAPVal = 
+            GetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall);
+          APValue* ThreadObjAPV = FindSubobjectAPVal(*ThreadSubObjAPVal, 
+                                                     ThreadInfo[i]);
+                                                     
+           // In byte offset, not an index
+            int64_t IteratorEndPoint = 
+                ThreadSubObjAPVal->getLValueOffset().getQuantity();
+            int64_t ThreadEndIndex = IteratorEndPoint / TySz;
+            // TODO/FIXME: This has to take into account overflow still
+            int64_t ThreadStartIndex = (ThreadPartitionSize * (i + 1)) / TySz;
+            
+            for (int j = ThreadStartIndex; j > ThreadEndIndex; --j) {
+              CompleteObjAPV->getArrayInitializedElt(ArrStartIndex - 1).swap(
+                  ThreadObjAPV->getArrayInitializedElt(j - 1));
+              --ArrStartIndex;
+            }
+        }
+      } else {
 
         for (int i = 0; i < ThreadInfo.size(); ++i) {
+          APValue* ThreadSubObjAPVal = 
+            GetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall);
+          APValue* ThreadObjAPV = FindSubobjectAPVal(*ThreadSubObjAPVal, 
+                                                   ThreadInfo[i]);
           // In byte offset, not an index
-          int64_t IteratorEndPoint =
-            GetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall)
-                  ->getLValueOffset().getQuantity();
-          int64_t ThreadStartIndex = (ThreadPartitionSize * i) / TySz;
+          int64_t IteratorEndPoint = 
+              ThreadSubObjAPVal->getLValueOffset().getQuantity();
           int64_t ThreadEndIndex = IteratorEndPoint / TySz;
-
-          for (int j = ThreadStartIndex; j < ThreadEndIndex; ++j) {
-            // Swap the element from its offset into its rightful position 
-            O->getArrayInitializedElt(ArrStartIndex).swap(
-              O->getArrayInitializedElt(j));
-
-            // By sideaffect we may have overwritten some elements that we 
-            // shouldn't have, these need to be replaced using the old copy 
-            // we had, if the old copy hasn't actually been "initialized"
-            // use whatever constitutes as a default value.
-            // FIXME: This is very likely an implementation defect that 
-            // we're bandaiding with this, it will very likely crop up 
-            // again somewhere else. This is likely intrinsically linked to 
-            // the reason we have to have the lock, we may need to make 
-            // copies across threads. 
-            // FIXME: In set_intersection It may also be because we make the
-            // Result iterator start at offsets across the thread partition 
-            // via __IteratorLoopStep 
-            if (j != ArrStartIndex)
-              O->getArrayInitializedElt(j).swap(j >= 
-                APValPrev.getArrayInitializedElts() ? 
-                  APValPrev.getArrayFiller() 
-                : APValPrev.getArrayInitializedElt(j));
-            ArrStartIndex++;
-          }
-        }
-
-        OffsetLValue(Info.Ctx, *ParentAPVal, TySz, ArrStartIndex, false);
+          // TODO/FIXME: This has to take into account overflow still
+          int64_t ThreadStartIndex = (ThreadPartitionSize * i) / TySz;
+          
+          
+            for (int j = ThreadStartIndex; j < ThreadEndIndex; ++j) {
+              CompleteObjAPV->getArrayInitializedElt(ArrStartIndex).swap(
+                  ThreadObjAPV->getArrayInitializedElt(j));
+              ++ArrStartIndex;
+            }
+         }
       }
+      
+      OffsetLValue(Info.Ctx, *SubObjAPVal, TySz, ArrStartIndex, false);
     }
-
-
-
   }
   
   void RedTypeOrdered(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
                       int OpType, llvm::Any ArgOrTemp, int64_t TySz, 
                       APValue APValPrev) {
     switch (OpType) {
-          case 5: // Assign
-              OrderedAssign(Info, ThreadInfo, ArgOrTemp, TySz, APValPrev);
+          case 1:
+          case 2:
+              OrderedAssign(Info, ThreadInfo, ArgOrTemp, TySz, APValPrev, 
+                            false);
+            break;
+          case 3:
+          case 4:
+              OrderedAssign(Info, ThreadInfo, ArgOrTemp, TySz, APValPrev, true);
             break;
           default:
               llvm_unreachable("RedTypeAccumulate passed invalid OpType");
@@ -6353,7 +6480,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
     /// inside of the ASTContext similar to interp::Context which is accessible 
     /// through EvalInfo
     static llvm::ThreadPool tp;
-    
+
     // I also need to know the context it's in, not just that its named transform
     // e.g. I need to know its defined in the standard library and not some user
     // code 
@@ -6378,20 +6505,27 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
                                {ResAPV[2], Result.Slot}, 
                                {ResAPV[3], Result.Slot}};
 
-        
-
       EvalInfos.reserve(tp.getPoolSize()); // avoids some extra copy constructs
       for (size_t i = 0; i < tp.getPoolSize(); ++i) {
         EvalPromises.push_back(std::promise<EvalStmtResult>());
         EvalFutures.push_back(EvalPromises[i].get_future());
         // Note: This will call the copy constructor when it resizes and when it 
         // copies the value in
-        EvalInfos.push_back(Info);
+        EvalInfos.push_back(EvalInfo(Info.Ctx, Info.EvalStatus, Info.EvalMode));
+        EvalInfos[i].InConstantContext = Info.InConstantContext;
+        EvalInfos[i].CheckingPotentialConstantExpression 
+            = Info.CheckingPotentialConstantExpression;
+        EvalInfos[i].EnableNewConstInterp = false;
         StmtResults.push_back(ResStmt[i]);
       }
 
       std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> RedList;
       auto lwg = LoopWrapperGatherer(Info, EvalInfos, RedList);
+ 
+      for (size_t i = 0; i < tp.getPoolSize(); ++i) {
+        lwg.CloneEvalInfo(Info, EvalInfos[i]);
+      }
+ 
       lwg.SearchBody(Info.CurrentCall->Callee->getBody());
 
       auto ForThreadFunction = [](EvalInfo &Info, BlockScopeRAII &ForScope, 
@@ -6477,8 +6611,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
             // We want our iterator data stored in the original Info to be 
             // correct and consistent with our results, they could be used 
             // elsewhere in the algorithm
-            lwg.CopyFromThreadArguments(EvalInfos[i], Info, i, 
-                                        EvalInfos.size());
+            lwg.CopyFromThreadArguments(Info, EvalInfos[i]);
             Result.Value = StmtResults[i].Value;
             Result.Slot = StmtResults[i].Slot;
             break;
@@ -6488,31 +6621,12 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
           // We want our iterator data stored in the original Info to be 
           // correct and consistent with our results, they could be used 
           // elsewhere in the algorithm
-          lwg.CopyFromThreadArguments(EvalInfos[i], Info, i, EvalInfos.size());
+          lwg.CopyFromThreadArguments(Info, EvalInfos[i]);
           Result.Value = StmtResults[i].Value;
           Result.Slot = StmtResults[i].Slot;
         }
       }
 
-      // TODO List:
-      //  1) Find the very rare bug that occurs in mismatch and count_if 
-      //     (likely others)
-      //  2) Test if we can remove the intrusive lock by making copies of all
-      //     things inside of the stack frame's arguments list:
-      //      - I have tested this, but you'd realistically have to make copies
-      //        of everything above the current stack frame that's passed into
-      //        the current stack frame, as there is a possibility of those 
-      //        having conflicts e.g. an array passed into the function may
-      //        have to get resized. Perhaps it's possible just to copy the
-      //        data linked to the arguments. A good start may be to trace 
-      //        what gets passed to expandArray(*O, Index) etc. and causes an 
-      //        assertion.
-      //  3) Create a script that will execute all tests X amount of times to 
-      //     look for problems that may rarely crop up. This is important in 
-      //     detecting multithreaded issues that are introduced due to changes 
-      //     or that persist.
-      //  4) Continue fixing and testing functions... need to fix copy_if, 
-      //     partial_sum etc.
       
       // This idea of a reduce isn't superb it only really handles simple cases
       // what happens if its a complex user defined function?
