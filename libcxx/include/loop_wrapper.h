@@ -15,7 +15,8 @@
 namespace cest::loop_wrapper {
   enum ReductionType { 
     Accumulate = 0,
-    OrderedAssign = 1,
+    PartitionedOrderedAssign = 1,
+    OrderedAssign = 2
   };
 
   enum OperatorType { 

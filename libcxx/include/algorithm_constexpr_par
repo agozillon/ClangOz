@@ -136,7 +136,7 @@ for_each(_ExecutionPolicy&& __exec, _ForwardIterator __first,
          _ForwardIterator __last, _Function __f)
 {
     __BeginEndIteratorPair(__first, __last);
-    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+    __ReduceVariable(__first, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
     for (; __first != __last; ++__first)
         __f(*__first);
@@ -159,7 +159,7 @@ for_each_n(_ExecutionPolicy&& __exec, _InputIterator __first, _Size __orig_n,
     int __end = 0;
     __PartitionUsingIndex(__n, __end, EqualityType::GT);
     __IteratorLoopStep(__first, 1, OperatorType::PreInc);
-    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+    __ReduceVariable(__first, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
     for (; __n > __end;  --__n) {
        __f(*__first);
@@ -374,7 +374,7 @@ __copy_constexpr(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+    __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
     
     for (; __first != __last; ++__first, (void) ++__result)
@@ -412,7 +412,7 @@ __copy_backward_constexpr(_ExecutionPolicy&& __exec,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreDec);
-    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+    __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreDec);
     
     for (; __first != __last;)
@@ -503,7 +503,7 @@ copy_n(_ExecutionPolicy&& __exec, _InputIterator __first, _Size __orig_n,
         __PartitionUsingIndex(__n, __end, EqualityType::GT);
         __IteratorLoopStep(__first, 1, OperatorType::PreInc);
         __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-        __ReduceVariable(__result, ReductionType::OrderedAssign, 
+        __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
                          OperatorType::PreDec);
                      
         for (--__n; __n > __end; --__n)
@@ -547,7 +547,7 @@ __move(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+    __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
     for (; __first != __last; ++__first, (void) ++__result)
         *__result = _VSTD::move(*__first);
@@ -601,7 +601,7 @@ __move_backward(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreDec);
-    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+    __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreDec);
                  
     for (; __first != __last;)
@@ -659,7 +659,7 @@ transform(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+    __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
                      
     for (; __first != __last; ++__first, (void) ++__result)
@@ -680,7 +680,7 @@ transform(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
     __BeginEndIteratorPair(__first1, __last1);
     __IteratorLoopStep(__first2, 1, OperatorType::PreInc);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+    __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
                      
     for (; __first1 != __last1; ++__first1, (void) ++__first2, ++__result)
@@ -699,7 +699,7 @@ replace(_ExecutionPolicy&& __exec, _ForwardIterator __first,
         _ForwardIterator __last, const _Tp& __old_value, const _Tp& __new_value)
 {
     __BeginEndIteratorPair(__first, __last);
-    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+    __ReduceVariable(__first, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
                      
     for (; __first != __last; ++__first)
@@ -719,7 +719,7 @@ replace_if(_ExecutionPolicy&& __exec, _ForwardIterator __first,
            _ForwardIterator __last, _Predicate __pred, const _Tp& __new_value)
 {
     __BeginEndIteratorPair(__first, __last);
-    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+    __ReduceVariable(__first, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
                      
     for (; __first != __last; ++__first)
@@ -741,7 +741,7 @@ replace_copy(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+    __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
                      
     for (; __first != __last; ++__first, (void) ++__result)
@@ -766,7 +766,7 @@ replace_copy_if(_ExecutionPolicy&& __exec, _InputIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
-    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+    __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
                      
     for (; __first != __last; ++__first, (void) ++__result)
@@ -936,27 +936,9 @@ __set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
     auto __result_start = __result;
     
     __BeginEndIteratorPair(__first1, __last1);
-    __ThreadLocalCopy(__first2);
+    __ReduceVariable(__result, ReductionType::OrderedAssign, 
+                     OperatorType::PreInc);
 
-    // TODO/FIXME: This implementation is very unoptimal, perhaps need to 
-    // rollback to the much faster, but perhaps less "correct" implementation.
-    //
-    // While this implementation creates the correct results it's not incredibly
-    // optimal as it makes use of a lock and then has to sort the results again
-    // and the sorting algorithm is not parallelized at the moment. 
-    //
-    // Implementing the sort segment inside of the compiler as a reduction 
-    // step via one of the wrapper functions like __ReduceVariable isn't simple 
-    // as it requires invoking the equality operation within the compiler on 
-    // each element to reorder the components. As for example having to reorder
-    // an object with an overloaded equality operator of arbitrary complexity 
-    // isn't feasible with a regular equality check (you could easily implement
-    // a sort inside the compielr for base types like int, float etc.).
-    //
-    // The lock basically makes this run around the same speed as the normal 
-    // set_intersection over a large set of values. The quick_sort algorithm
-    // makes it run a fair chunk slower. The previous more incorrect 
-    // implementation that worked without locks was quicker, but I'd have to
     for (; __first1 != __last1;) {
       if (__first2 == __last2)
         break;
@@ -966,19 +948,15 @@ __set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
       } else {
           if (!__comp(*__first2, *__first1))
           {
-              __ThreadLock();
               *__result = *__first1;
               ++__result;
-              __ThreadUnlock();
               ++__first1;
       
           }
           ++__first2;
       }
     }
-
-    __details::quick_sort(__result_start, __result);
-
+    
     return __result;
 }
 
@@ -1043,7 +1021,7 @@ __fill_n(_ExecutionPolicy&& __exec, _OutputIterator __first, _Size __n,
     int __end = 0;
     __PartitionUsingIndex(__n, __end, EqualityType::GT);
     __IteratorLoopStep(__first, 1, OperatorType::PreInc);
-    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+    __ReduceVariable(__first, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
                      
     for (; __n > __end; ++__first, (void) --__n)
@@ -1127,7 +1105,7 @@ remove(_ExecutionPolicy&& __exec, _ForwardIterator __first,
         
         __BeginEndIteratorPair(__i, __last);
         __IteratorLoopStep(__first, 1, OperatorType::PreInc);
-        __ReduceVariable(__first, ReductionType::OrderedAssign, 
+        __ReduceVariable(__first, ReductionType::PartitionedOrderedAssign, 
                          OperatorType::PreInc);
                      
         for (; ++__i != __last;)
@@ -1200,9 +1178,9 @@ swap_ranges(_ExecutionPolicy&& __exec, _ForwardIterator1 __first1,
 {
     __BeginEndIteratorPair(__first1, __last1);
     __IteratorLoopStep(__first2, 1, OperatorType::PreInc);
-    __ReduceVariable(__first1, ReductionType::OrderedAssign, 
+    __ReduceVariable(__first1, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
-    __ReduceVariable(__first2, ReductionType::OrderedAssign, 
+    __ReduceVariable(__first2, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
 
     for(; __first1 != __last1; ++__first1, (void) ++__first2)

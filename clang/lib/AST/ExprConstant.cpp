@@ -5988,7 +5988,7 @@ namespace {
 
   void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
                      llvm::Any ArgOrTemp, int64_t TySz, APValue APValPrev,
-                     bool Reverse) {
+                     bool Reverse, bool Partitioned) {
     // TODO: Need to check type its working on before we do this... 
     // the below code wont work for everything
     APValue* SubObjAPVal = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
@@ -6012,8 +6012,10 @@ namespace {
       int64_t ThreadPartitionSize = ArrSzChars / ThreadInfo.size();
       int64_t ArrStartIndex = 
           (SubObjAPVal->getLValueOffset().getQuantity() / TySz);
-      
+
       if (Reverse) {
+        int64_t PrevEndIndex = ArrStartIndex;
+      
         for (int i = ThreadInfo.size() - 1; i >= 0; --i) {
           APValue* ThreadSubObjAPVal = 
             GetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall);
@@ -6025,34 +6027,40 @@ namespace {
                 ThreadSubObjAPVal->getLValueOffset().getQuantity();
             int64_t ThreadEndIndex = IteratorEndPoint / TySz;
             // TODO/FIXME: This has to take into account overflow still
-            int64_t ThreadStartIndex = (ThreadPartitionSize * (i + 1)) / TySz;
-            
+//            int64_t ThreadStartIndex = (ThreadPartitionSize * (i + 1)) / TySz;
+            int64_t ThreadStartIndex = (Partitioned) ? PrevEndIndex : 0;
+                        
             for (int j = ThreadStartIndex; j > ThreadEndIndex; --j) {
               CompleteObjAPV->getArrayInitializedElt(ArrStartIndex - 1).swap(
                   ThreadObjAPV->getArrayInitializedElt(j - 1));
               --ArrStartIndex;
             }
+            
+            PrevEndIndex = ThreadEndIndex;
         }
       } else {
-
+        int64_t PrevEndIndex = 0;
         for (int i = 0; i < ThreadInfo.size(); ++i) {
           APValue* ThreadSubObjAPVal = 
             GetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall);
           APValue* ThreadObjAPV = FindSubobjectAPVal(*ThreadSubObjAPVal, 
-                                                   ThreadInfo[i]);
+                                                     ThreadInfo[i]);
+
           // In byte offset, not an index
           int64_t IteratorEndPoint = 
               ThreadSubObjAPVal->getLValueOffset().getQuantity();
           int64_t ThreadEndIndex = IteratorEndPoint / TySz;
           // TODO/FIXME: This has to take into account overflow still
-          int64_t ThreadStartIndex = (ThreadPartitionSize * i) / TySz;
-          
+//          int64_t ThreadStartIndex = (ThreadPartitionSize * i) / TySz;
+          int64_t ThreadStartIndex = (Partitioned) ? PrevEndIndex : 0;
           
             for (int j = ThreadStartIndex; j < ThreadEndIndex; ++j) {
               CompleteObjAPV->getArrayInitializedElt(ArrStartIndex).swap(
                   ThreadObjAPV->getArrayInitializedElt(j));
               ++ArrStartIndex;
             }
+            
+            PrevEndIndex = ThreadEndIndex;
          }
       }
       
@@ -6062,16 +6070,17 @@ namespace {
   
   void RedTypeOrdered(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
                       int OpType, llvm::Any ArgOrTemp, int64_t TySz, 
-                      APValue APValPrev) {
+                      APValue APValPrev, bool Partitioned) {
     switch (OpType) {
           case 1:
           case 2:
               OrderedAssign(Info, ThreadInfo, ArgOrTemp, TySz, APValPrev, 
-                            false);
+                            false, Partitioned);
             break;
           case 3:
           case 4:
-              OrderedAssign(Info, ThreadInfo, ArgOrTemp, TySz, APValPrev, true);
+              OrderedAssign(Info, ThreadInfo, ArgOrTemp, TySz, APValPrev, 
+                            true, Partitioned);
             break;
           default:
               llvm_unreachable("RedTypeAccumulate passed invalid OpType");
@@ -6096,10 +6105,15 @@ namespace {
           RedTypeAccumulate(Info, ThreadInfo, std::get<1>(RedVar), 
                             std::get<2>(RedVar));
           break;
-        case 1: // Ordered
+        case 1: // PartitionedOrderedAssign
           RedTypeOrdered(Info, ThreadInfo, std::get<1>(RedVar), 
                          std::get<2>(RedVar), std::get<3>(RedVar), 
-                         std::get<4>(RedVar));
+                         std::get<4>(RedVar), true);
+          break;
+        case 2: // OrderedAssign
+          RedTypeOrdered(Info, ThreadInfo, std::get<1>(RedVar), 
+                 std::get<2>(RedVar), std::get<3>(RedVar), 
+                 std::get<4>(RedVar), false);
           break;
         default:
           llvm_unreachable("Invald ReductionType passed to ParConstExprReduce");
