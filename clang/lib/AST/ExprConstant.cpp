@@ -5877,18 +5877,18 @@ namespace {
       // ideal.
       void CopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
         auto skip = [this](llvm::Any i) { 
-          for (auto v : NoCopyBackList)
+          for (auto v : NoCopyBackList) {
             if (llvm::any_isa<unsigned int>(v) && 
                 llvm::any_isa<unsigned int>(i) && 
                 llvm::any_cast<unsigned int>(v) == 
                 llvm::any_cast<unsigned int>(i))
               return true;
-            else if (llvm::any_isa<void*>(v) &&
-                     llvm::any_isa<void*>(i) &&
-                     llvm::any_cast<void*>(v) == 
-                     llvm::any_cast<void*>(i))
+            else if (llvm::any_isa<const void*>(v) &&
+                     llvm::any_isa<const void*>(i) &&
+                     llvm::any_cast<const void*>(v) == 
+                     llvm::any_cast<const void*>(i))
               return true;
-          
+          }
           return false;
         };
 
@@ -5900,7 +5900,11 @@ namespace {
           // as we may need the value after the loop ends e.g. to return from a 
           // function
           for (auto& OrigTemp : OrigFrame->Temporaries) {
-            // we only skip the current frame for the moment
+            // TODO: Very likely need to skip not just the pointer/iterator but 
+            // the thing it points too as well..
+            // TODO: Need to learn how to skip things outside of the current 
+            // frame, it's means recording the frame index as well, but really
+            // isn't a problem at the moment as we have no application for it.
             if ((To.CurrentCall == OrigFrame) && skip(OrigTemp.first.first))
               continue;
             OrigTemp.second =
@@ -5909,16 +5913,19 @@ namespace {
 
           // copy back arguments
           if (OrigFrame->Callee)
-            for (size_t i = 0; i < OrigFrame->Callee->getNumParams(); ++i){
-               
-              // we only skip the current frame for the moment
+            for (unsigned int i = 0; i < OrigFrame->Callee->getNumParams(); ++i){
+              // TODO: Very likely need to skip not just the pointer/iterator but 
+              // the thing it points too as well..
+              // TODO: Need to learn how to skip things outside of the current 
+              // frame, it's means recording the frame index as well, but really
+              // isn't a problem at the moment as we have no application for it.
               if ((To.CurrentCall == OrigFrame) && skip(i)) { 
                   continue;
               }
 
               OrigFrame->Arguments[i] = *PrimaryCopyFrame->getArguments(i);
             }
-            
+
           OrigFrame = OrigFrame->Caller;
           PrimaryCopyFrame = PrimaryCopyFrame->Caller;
         }
