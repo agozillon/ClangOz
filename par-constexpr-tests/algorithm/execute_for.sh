@@ -14,7 +14,7 @@ EXECUTE_COUNT="$1"
 FILE="$2"
 
 for ((i=0; i<=EXECUTE_COUNT; i++)); do
-  $CLANG_BIN/clang++ -fconstexpr-steps=2147483647 -std=c++2a -stdlib=libc++ \
+  $CLANGOZ/bin/clang++ -fconstexpr-steps=2147483647 -std=c++2a -stdlib=libc++ \
     -fexperimental-constexpr-parallel $FILE -o $FILE.out && ./$FILE.out 
 done
 

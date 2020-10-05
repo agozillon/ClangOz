@@ -23,13 +23,13 @@ using namespace __cep::experimental;
 //
 // With Parallelism: 
 //
-// $CLANG_BIN/clang++ -DCONSTEXPR_PAR -fconstexpr-steps=4294967295 -std=c++2a 
+// $CLANGOZ/bin/clang++ -DCONSTEXPR_PAR -fconstexpr-steps=4294967295 -std=c++2a 
 //  -stdlib=libc++ -fexperimental-constexpr-parallel 
 //  constexpr_transform_slow.cpp
 //
-// $CLANG_BIN/clang++ -DCONSTEXPR_PAR -ftime-report -fconstexpr-steps=4294967295 
-//  -std=c++2a -stdlib=libc++ -fexperimental-constexpr-parallel 
-//  constexpr_transform_slow.cpp
+// $CLANGOZ/bin/clang++ -DCONSTEXPR_PAR -ftime-report
+//  -fconstexpr-steps=4294967295 -std=c++2a -stdlib=libc++
+//  -fexperimental-constexpr-parallel constexpr_transform_slow.cpp
 //
 // I moved away from using -ftime-reprot to just using linux's time function, 
 // less verbose output.

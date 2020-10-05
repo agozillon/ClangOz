@@ -6,7 +6,7 @@
 #include <execution>
 #include <random>
 
-// $CLANG_BIN/clang++ -fconstexpr-steps=2147483647 -std=c++2a -stdlib=libc++ \
+// $CLANGOZ/bin/clang++ -fconstexpr-steps=2147483647 -std=c++2a -stdlib=libc++ \
 //   -DCONSTEXPR_PAR -fexperimental-constexpr-parallel set_intersection_par_vs_lin.cpp
 
 using namespace __cep::experimental;

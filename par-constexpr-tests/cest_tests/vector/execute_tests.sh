@@ -5,8 +5,8 @@ function constexpr_execute {
   echo " "
   echo " "
   echo " "
-  $CLANG_BIN/clang++ -fconstexpr-steps=4294967295 -std=c++2a -stdlib=libc++ \
-    -I$CEST -fexperimental-constexpr-parallel $1 -o $1.out && ./$1.out
+  $CLANGOZ/bin/clang++ -fconstexpr-steps=4294967295 -std=c++2a -stdlib=libc++ \
+    -I$CEST_INCLUDE -fexperimental-constexpr-parallel $1 -o $1.out && ./$1.out
   echo " "
   echo " "
   echo " "
