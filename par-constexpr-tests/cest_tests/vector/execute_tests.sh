@@ -14,7 +14,7 @@ function constexpr_execute {
 }
 
 
-# 25 passes
+# 29 passes
 constexpr_execute all_of.cpp
 constexpr_execute any_of.cpp
 constexpr_execute none_of.cpp
@@ -32,9 +32,7 @@ constexpr_execute find_if_not.cpp
 constexpr_execute for_each.cpp
 constexpr_execute for_each_n.cpp
 constexpr_execute mismatch.cpp
-#constexpr_execute set_intersection.cpp # currently broken, crashes when using a static vec 
-                                        # and doesn't quite work when using an array either
-                                        # needs a fix
+constexpr_execute set_intersection.cpp
 constexpr_execute transform.cpp
 constexpr_execute fill.cpp
 constexpr_execute fill_n.cpp
