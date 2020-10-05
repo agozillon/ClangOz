@@ -815,7 +815,7 @@ namespace {
       NextCallIndex(EI.NextCallIndex), StepsLeft(EI.StepsLeft), 
       EnableNewConstInterp(EI.EnableNewConstInterp),
       BottomFrame(*EI.CurrentCall, *this),
-      CleanupStack(EI.CleanupStack), EvaluatingDecl(EI.EvaluatingDecl), 
+      /*CleanupStack(EI.CleanupStack),*/ EvaluatingDecl(EI.EvaluatingDecl), 
       IsEvaluatingDecl(EI.IsEvaluatingDecl), 
       ObjectsUnderConstruction(EI.ObjectsUnderConstruction),
       HeapAllocs(EI.HeapAllocs), NumHeapAllocs(EI.NumHeapAllocs),
@@ -5075,30 +5075,14 @@ namespace {
       // was mainly built to duplicate an array that's part of a struct.
       APValue CopyAPValue(llvm::Any ArgOrTemp) {
         APValue* CandidateAPV = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
-
-        if (!CandidateAPV) {
-          return APValue();
-        }
         
-        if (CandidateAPV->isLValue()) {
-          LValue CandidateLVal;
-          CandidateLVal.setFrom(Info.Ctx, *CandidateAPV);
-          QualType CandidateQt = getType(CandidateAPV->getLValueBase());
-          CompleteObject Obj = findCompleteObject(Info, nullptr, 
-                                              AccessKinds::AK_Read, CandidateLVal, 
-                                              CandidateQt);
+        if (!CandidateAPV)
+          return APValue();
 
-          // TODO: This currently assumes its a field, but that isn't always the 
-          // case, it could be an array etc. look into findSubObject to get an idea.
-          if (const FieldDecl *Field = getAsField(CandidateAPV->getLValuePath()[0])){
-            APValue* O = &Obj.Value->getStructField(Field->getFieldIndex());
-            if (O->isArray()) {
-              return APValue(*O);
-            }
-          }
-        } else {
+        if (CandidateAPV->isLValue())
+          return APValue(*FindSubobjectAPVal(*CandidateAPV, Info)); 
+        else
           return APValue(*CandidateAPV);
-        }
       }
 
 
@@ -5155,7 +5139,16 @@ namespace {
                                CloneFrame->Callee, CloneFrame->This, 
                                SaveTheArgs.back().data())
           );
-          
+
+          // clone dynamically allocated data
+          for (auto& HA : Original.HeapAllocs) {
+            Clone.NumHeapAllocs++;
+            auto Result = Clone.HeapAllocs.emplace(std::piecewise_construct,
+                              std::forward_as_tuple(HA.first), std::tuple<>());
+            Result.first->second.AllocExpr = HA.second.AllocExpr;
+            Result.first->second.Value = HA.second.Value;
+          }
+
 
           // clone temporaries
           for (auto& CS : Original.CleanupStack) {
@@ -5895,6 +5888,26 @@ namespace {
         CallStackFrame *OrigFrame = To.CurrentCall;
         CallStackFrame *PrimaryCopyFrame = From.CurrentCall;
 
+        // clone dynamically allocated data, stored on EvalInfo rather than in
+        // the frame it was allocated
+        // TODO: Need to implement a skip for this as well...
+        for (auto& HA : From.HeapAllocs) {
+//          if (skip(HA.first))
+//            continue;
+
+          auto It = To.HeapAllocs.find(HA.first);
+          if (It != To.HeapAllocs.end()) {
+            It->second.AllocExpr = HA.second.AllocExpr;
+            It->second.Value = HA.second.Value;
+          } else {
+            To.NumHeapAllocs++;
+            auto Result = To.HeapAllocs.emplace(std::piecewise_construct,
+                              std::forward_as_tuple(HA.first), std::tuple<>());
+            Result.first->second.AllocExpr = HA.second.AllocExpr;
+            Result.first->second.Value = HA.second.Value;
+          }
+        }
+
         while (OrigFrame->Caller) {
           // copy back temporaries, this is important even for the current frame 
           // as we may need the value after the loop ends e.g. to return from a 
@@ -5913,7 +5926,8 @@ namespace {
 
           // copy back arguments
           if (OrigFrame->Callee)
-            for (unsigned int i = 0; i < OrigFrame->Callee->getNumParams(); ++i){
+            for (unsigned int i = 0; i < OrigFrame->Callee->getNumParams(); ++i)
+            {
               // TODO: Very likely need to skip not just the pointer/iterator but 
               // the thing it points too as well..
               // TODO: Need to learn how to skip things outside of the current 
@@ -6526,13 +6540,23 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
                                {ResAPV[2], Result.Slot}, 
                                {ResAPV[3], Result.Slot}};
 
+      Expr::EvalStatus EvalStatuses[4];
+
       EvalInfos.reserve(tp.getPoolSize()); // avoids some extra copy constructs
       for (size_t i = 0; i < tp.getPoolSize(); ++i) {
         EvalPromises.push_back(std::promise<EvalStmtResult>());
         EvalFutures.push_back(EvalPromises[i].get_future());
+        
+        // unsure if wise to give a reference to the current diags, may end up
+        // with repeat diagnostics...
+        EvalStatuses[i].Diag = Info.EvalStatus.Diag;
+        EvalStatuses[i].HasSideEffects = Info.EvalStatus.HasSideEffects;
+        EvalStatuses[i].HasUndefinedBehavior 
+            = Info.EvalStatus.HasUndefinedBehavior;
+
         // Note: This will call the copy constructor when it resizes and when it 
         // copies the value in
-        EvalInfos.push_back(EvalInfo(Info.Ctx, Info.EvalStatus, Info.EvalMode));
+        EvalInfos.push_back(EvalInfo(Info.Ctx, EvalStatuses[i], Info.EvalMode));
         EvalInfos[i].InConstantContext = Info.InConstantContext;
         EvalInfos[i].CheckingPotentialConstantExpression 
             = Info.CheckingPotentialConstantExpression;
