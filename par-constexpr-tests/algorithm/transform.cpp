@@ -44,7 +44,7 @@ int main() {
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";
-  /*
+
   for (auto ov : runtime_ov1)
     std::cout << ov << "\n";
         
@@ -52,7 +52,6 @@ int main() {
   
   for (auto ov : output_ov1)
     std::cout << ov << "\n";
-    */
   
   return 0;
 }

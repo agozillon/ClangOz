@@ -135,9 +135,11 @@ __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
 for_each(_ExecutionPolicy&& __exec, _ForwardIterator __first, 
          _ForwardIterator __last, _Function __f)
 {
+/*    __ThreadLocalCopy(__first);*/
     __BeginEndIteratorPair(__first, __last);
     __ReduceVariable(__first, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
+
     for (; __first != __last; ++__first)
         __f(*__first);
 }
@@ -657,6 +659,7 @@ __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
 transform(_ExecutionPolicy&& __exec, _InputIterator __first, 
           _InputIterator __last, _OutputIterator __result, _UnaryOperation __op)
 {
+/*    __ThreadLocalCopy(__result);*/
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
     __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
@@ -677,12 +680,17 @@ transform(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
           _InputIterator1 __last1, _InputIterator2 __first2, 
           _OutputIterator __result, _BinaryOperation __binary_op)
 {
+/*    __ThreadLocalCopy(__result);*/
+/*    __ThreadLocalCopy(__first2);*/
+/*    __ThreadLocalCopy(__first1);*/
+/*    */
     __BeginEndIteratorPair(__first1, __last1);
     __IteratorLoopStep(__first2, 1, OperatorType::PreInc);
     __IteratorLoopStep(__result, 1, OperatorType::PreInc);
     __ReduceVariable(__result, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
-                     
+
+
     for (; __first1 != __last1; ++__first1, (void) ++__first2, ++__result)
         *__result = __binary_op(*__first1, *__first2);
     return __result;
@@ -1504,8 +1512,6 @@ __includes(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
            _InputIterator2 __last2, _Compare __comp)
 {
     __BeginEndIteratorPair(__first2, __last2);
-/*    __IteratorLoopStep(__first1, 1, OperatorType::PreInc);*/
-    __ThreadLocalCopy(__first1);
 
     for (; __first2 != __last2; ++__first1)
     {

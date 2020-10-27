@@ -42,9 +42,9 @@ iota(_ExecutionPolicy&& __exec, _ForwardIterator __first,
 {
     __BeginEndIteratorPair(__first, __last);
     __IteratorLoopStep(__value_, 1, OperatorType::PreInc);
-    __ReduceVariable(__first, ReductionType::OrderedAssign, 
+    __ReduceVariable(__first, ReductionType::PartitionedOrderedAssign, 
                      OperatorType::PreInc);
-                     
+
     for (; __first != __last; ++__first, (void) ++__value_)
         *__first = __value_;
 }

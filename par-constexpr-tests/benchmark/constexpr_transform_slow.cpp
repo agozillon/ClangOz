@@ -34,7 +34,6 @@ using namespace __cep::experimental;
 // I moved away from using -ftime-reprot to just using linux's time function, 
 // less verbose output.
 
-
 template <typename T>
 constexpr auto test_constexpr_transform() {
     std::array<T, 320000> a = {0};
