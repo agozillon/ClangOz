@@ -1,10 +1,13 @@
 #include <array>
 #include <algorithm>
+#include <numeric>
 #include <iostream>
 #include <fstream>
 #include <type_traits>
 #include <execution>
 #include <complex>
+
+using namespace __cep::experimental;
 
 #include "cest/cmath.hpp"
 
@@ -74,33 +77,67 @@ namespace mandelbrot {
     return t;
   }
 
-  constexpr bool ComputeComplexIncr(auto& cs) {
-    for (unsigned int i = 0; i < width; ++i) {
-      for (unsigned int j = 0; j < height; ++j) {
+  // same function, just linear without the need for an id_range so it's 
+  // a more accurate benchmark (the parallel version needs it this does not, 
+  // so it's unfair to criple its time)
+  constexpr bool ComputeComplexIncrLinear(auto& cs) {
+    for (unsigned int i = 0; i < width; ++i)
+      for (unsigned int j = 0; j < height; ++j)
         cs[i][j] = fcomplex_t((i * xincr) + minx, (j * yincr) + miny);
-      }
-    }
+
+    return true;
+  }
+  
+  constexpr bool ComputeComplexIncr(auto& cs, auto id_range) {
+//    std::array<int, width> id_rangez{};
+//    std::iota(execution::ce_par, id_rangez.begin(), id_rangez.end(), 0);
     
+    // currently we do not parallelize more than 1 depth
+    std::for_each(execution::ce_par, id_range.begin(), id_range.end(), 
+      [&cs](auto id) mutable {
+        for (unsigned int j = 0; j < height; ++j)
+          cs[id][j] = fcomplex_t((id * xincr) + minx, (j * yincr) + miny);
+    });
+
     return true;
   }
 
-  constexpr bool ComputeMandelBrot(auto& cs, auto& sb) {
-    for (unsigned int i = 0; i < width; ++i) {  
-      for (unsigned int j = 0; j < height; ++j) {
+  // same function, just linear without the need for an id_range so it's 
+  // a more accurate benchmark (the parallel version needs it this does not, 
+  // so it's unfair to criple its time)
+  constexpr bool ComputeMandelBrotLinear(auto& cs, auto& sb) {
+    for (unsigned int i = 0; i < width; ++i)
+      for (unsigned int j = 0; j < height; ++j)
         sb[i][j] = mand_cmplx(cs[i][j]);
-      }
-    }
-    
+
+    return true;
+  }
+  
+  constexpr bool ComputeMandelBrot(auto& cs, auto& sb, auto id_range) {
+    // currently we do not parallelize more than 1 depth
+    std::for_each(execution::ce_par, id_range.begin(), id_range.end(), 
+      [&cs, &sb](auto id) mutable {
+        for (unsigned int j = 0; j < height; ++j)
+          sb[id][j] = mand_cmplx(cs[id][j]);
+    });
+
     return true;
   }
 
   constexpr auto calc() {
     std::array<std::array<int, height>, width> sb{};
     std::array<std::array<fcomplex_t, height>, width> cs{};
-    
-    ComputeComplexIncr(cs);
-    ComputeMandelBrot(cs, sb);
-    
+
+#ifdef CONSTEXPR_PARALLEL
+    std::array<int, width> id_range{};
+    std::iota(execution::ce_par, id_range.begin(), id_range.end(), 0);
+    ComputeComplexIncr(cs, id_range);
+    ComputeMandelBrot(cs, sb, id_range);
+#else
+    ComputeComplexIncrLinear(cs);
+    ComputeMandelBrotLinear(cs, sb);
+#endif
+
     return sb;
   }
 
