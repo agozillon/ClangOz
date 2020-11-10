@@ -5125,8 +5125,170 @@ namespace {
         return NoCopyBackList;
       }
 
+      // A poor attempt at simplifying the cloning of an APValue, needs further
+      // work and thought to work as intended
+      void RecursiveCloneAPValue(APValue& APV, EvalInfo& EIOrig,
+                                 EvalInfo& EIClone,
+                                 std::vector<APValue>& NewAPVs) {
+        switch (APV.getKind()) {
+          case APValue::LValue: {
+            if (APV.getLValueCallIndex() > 0) {
+              QualType Type = getType(APV.getLValueBase());
+              LValue ParentLVal;
+              ParentLVal.setFrom(EIOrig.Ctx, APV);
+              CompleteObject Obj = findCompleteObject(EIOrig, nullptr, 
+                                          AccessKinds::AK_Read, ParentLVal, 
+                                          Type);
+
+
+              CallStackFrame * CloneFrame = nullptr;
+              CallStackFrame * OrigFrame = nullptr;
+              unsigned Depth;
+              unsigned CallIndex = APV.getLValueCallIndex();
+
+              std::tie(OrigFrame, Depth) 
+                  = EIOrig.getCallFrameAndDepth(CallIndex);
+              std::tie(CloneFrame, Depth) 
+                  = EIClone.getCallFrameAndDepth(CallIndex);
+
+              // FIXME/TODO: This is a performance issue, I do not want to have 
+              // to clone all the arguments and the temporaries, i would like to
+              // find the EXACT argument or the EXACT temporary but it's hard to
+              // distinguish if it's a temporary or an argument, as copy by 
+              // value arrays seem to reside as an argument where as by 
+              // reference generally resides as a temporary. Then there is an 
+              // issue with the arguments where i cant tell which one actually 
+              // needs to be copied so I have to copy them all. There is no 
+              // APValue equallity check sadly and not all APValues have bases
+              // that I can equality check.
+              //
+              // is there anyway for me to distinguish exactly where it resides 
+              // i.e. temporary or pass by value arg? And if its an arg can I 
+              // restrict it to just that specfic argument index (perhaps copy
+              // defautl constructed APValues if I can find the specific arg 
+              // index)?
+              std::vector<APValue> NewArgsInternal;
+              for (unsigned i = 0; i < OrigFrame->Callee->getNumParams(); ++i) {
+                NewArgsInternal.push_back(OrigFrame->Arguments[i]);
+              }
+              SaveTheArgs.push_back(NewArgsInternal);
+              CloneFrame->Arguments = SaveTheArgs.back().data();
+              // FIXME/TODO: The LValue will only reside as a temporary or as a
+              // copy-by-val argument, ill need to work out how to tell which 
+              // location its stored
+              const void* PtrKey = nullptr;
+              APValue::LValueBase Base = Obj.Base;
+              if (Base.is<const ValueDecl*>()) 
+                PtrKey = static_cast<const void*>(Base.get<const ValueDecl*>());
+              else if (Base.is<const Expr*>()) 
+                PtrKey = static_cast<const void*>(Base.get<const Expr*>());
+
+ 
+                CloneFrame->Temporaries[std::pair<const void *, unsigned>(PtrKey,
+                                        Base.getVersion())] = *Obj.Value;
+
+
+            }
+          }
+          break;
+  
+          case APValue::Struct: {
+            NewAPVs.push_back(APV);
+            // for all bases
+            for (int i = 0; i < APV.getStructNumBases(); ++i)
+              RecursiveCloneAPValue(APV.getStructBase(i), EIOrig, EIClone, 
+                                    NewAPVs);
+
+            // for all member fields
+            for (int i = 0; i < APV.getStructNumFields(); ++i) {
+              RecursiveCloneAPValue(APV.getStructField(i), EIOrig, EIClone,
+                                    NewAPVs);
+            }
+          }
+          break;
+          
+          // default clone for now, although in some cases (e.g. union) something 
+          // further may be required
+          case APValue::Int:
+          case APValue::Float:
+          case APValue::Vector:
+          case APValue::ComplexInt:
+          case APValue::ComplexFloat:
+          case APValue::FixedPoint:
+          case APValue::Array:
+          case APValue::Union:
+          case APValue::MemberPointer:
+          case APValue::AddrLabelDiff:
+            NewAPVs.push_back(APV);
+          break;
+          
+          case APValue::None:
+          case APValue::Indeterminate:
+          break;
+        }
+      }
+      
+      void CloneLValueObject(APValue& APV, EvalInfo& EIOrig,
+                             EvalInfo& EIClone) {
+        QualType Type = getType(APV.getLValueBase());
+        LValue ParentLVal;
+        ParentLVal.setFrom(EIOrig.Ctx, APV);
+        CompleteObject Obj = findCompleteObject(EIOrig, nullptr, 
+                                    AccessKinds::AK_Read, ParentLVal, 
+                                    Type);
+
+
+        CallStackFrame * CloneFrame = nullptr;
+        CallStackFrame * OrigFrame = nullptr;
+        unsigned Depth;
+        unsigned CallIndex = APV.getLValueCallIndex();
+
+        std::tie(OrigFrame, Depth) 
+            = EIOrig.getCallFrameAndDepth(CallIndex);
+        std::tie(CloneFrame, Depth) 
+            = EIClone.getCallFrameAndDepth(CallIndex);
+
+        // FIXME/TODO: This is a performance issue, I do not want to have 
+        // to clone all the arguments and the temporaries, i would like to
+        // find the EXACT argument or the EXACT temporary but it's hard to
+        // distinguish if it's a temporary or an argument, as copy by 
+        // value arrays seem to reside as an argument where as by 
+        // reference generally resides as a temporary. Then there is an 
+        // issue with the arguments where i cant tell which one actually 
+        // needs to be copied so I have to copy them all. There is no 
+        // APValue equallity check sadly and not all APValues have bases
+        // that I can equality check.
+        //
+        // is there anyway for me to distinguish exactly where it resides 
+        // i.e. temporary or pass by value arg? And if its an arg can I 
+        // restrict it to just that specfic argument index (perhaps copy
+        // defautl constructed APValues if I can find the specific arg 
+        // index)?
+        std::vector<APValue> NewArgsInternal;
+        for (unsigned i = 0; i < OrigFrame->Callee->getNumParams(); ++i) {
+          NewArgsInternal.push_back(OrigFrame->Arguments[i]);
+        }
+        SaveTheArgs.push_back(NewArgsInternal);
+        CloneFrame->Arguments = SaveTheArgs.back().data();
+
+        // FIXME/TODO: The LValue will only reside as a temporary or as a
+        // copy-by-val argument, ill need to work out how to tell which 
+        // location its stored
+        const void* PtrKey = nullptr;
+        APValue::LValueBase Base = Obj.Base;
+        if (Base.is<const ValueDecl*>()) 
+          PtrKey = static_cast<const void*>(Base.get<const ValueDecl*>());
+        else if (Base.is<const Expr*>()) 
+          PtrKey = static_cast<const void*>(Base.get<const Expr*>());
+
+
+        CloneFrame->Temporaries[std::pair<const void *, unsigned>(PtrKey,
+                                Base.getVersion())] = *Obj.Value;
+      }
+      
       void RestrictedCloneEvalInfo(EvalInfo& Original, EvalInfo& Clone) {
         std::stack<CallStackFrame*> Frames;
+        
         CallStackFrame *OrigFrame = Original.CurrentCall;
         Frames.push(OrigFrame);
         while (OrigFrame->Caller) {
@@ -5141,10 +5303,7 @@ namespace {
         while (!Frames.empty()) {
           CallStackFrame *CloneFrame = Frames.top();
           Frames.pop();
-          
-//          if (CloneFrame->Callee)
-//            CloneFrame->Callee->dump();
-            
+
           // clone frame
           SaveTheFrames.back().push_back(
             CallStackFrame(Clone, CloneFrame->CallLoc, 
@@ -5174,44 +5333,50 @@ namespace {
         // 4x if we're aware the array is paritioned in 4 exactly).
         CallStackFrame *CloneFrame = Original.CurrentCall;
         std::vector<APValue> NewArgs;
-        if (CloneFrame->Callee)
+        std::vector<APValue::LValueBase> PrevCopiedLValueBases;
+        APValue::LValueBase ArgLValBase;
+        
+        auto skip = [](auto& LValBase, auto& PrevLVals) { 
+          for (auto LVBase : PrevLVals)
+            if (LVBase == LValBase)
+              return true;
+          return false;
+        };
+        
+        if (CloneFrame->Callee) {
           for (unsigned i = 0; i < CloneFrame->Callee->getNumParams(); ++i) {
             NewArgs.push_back(CloneFrame->Arguments[i]);
-            
-            // if LValue try to do "deep" clone
+
             if (CloneFrame->Arguments[i].isLValue() && 
                 CloneFrame->Arguments[i].getLValueCallIndex() > 0) {
-              QualType Type = getType(CloneFrame->Arguments[i].getLValueBase());
-              LValue ParentLVal;
-              ParentLVal.setFrom(Original.Ctx, CloneFrame->Arguments[i]);
-              CompleteObject Obj = findCompleteObject(Original, nullptr, 
-                                          AccessKinds::AK_Read, ParentLVal, 
-                                          Type);
+                // attempt to skip double copies/work in the case of functions
+                // that have lvalues that point to the same object e.g. begin/end
+                // iterators
+                ArgLValBase = CloneFrame->Arguments[i].getLValueBase();
+                if (skip(ArgLValBase, PrevCopiedLValueBases))
+                  continue;
+                PrevCopiedLValueBases.push_back(ArgLValBase);
 
-              CallStackFrame *Frame = nullptr;
-              const void* PtrKey = nullptr;
-              unsigned Depth = 0;
-
-              std::tie(Frame, Depth) =
-                Clone.getCallFrameAndDepth(
-                  CloneFrame->Arguments[i].getLValueCallIndex());
-
-             APValue::LValueBase Base = Obj.Base;
-             if (Base.is<const ValueDecl*>()) 
-               PtrKey = static_cast<const void*>(Base.get<const ValueDecl*>());
-             else if (Base.is<const Expr*>()) 
-               PtrKey = static_cast<const void*>(Base.get<const Expr*>());
-               
-             Frame->Temporaries[std::pair<const void *, unsigned>(PtrKey,
-                                               Base.getVersion())] = *Obj.Value;
-
+                CloneLValueObject(CloneFrame->Arguments[i], Original, Clone);
             }
+            
+            // mostly doing this for lambda captures, but it will also hopefully
+            // cover normal structs, this doesn't cover bases yet, so no 
+            // inheritance
+            if (CloneFrame->Arguments[i].isStruct()) {
+              for (int j = 0; j < CloneFrame->Arguments[i].getStructNumFields();
+                   ++j) {
+                 CloneLValueObject(CloneFrame->Arguments[i].getStructField(j),
+                                   Original, Clone);
+            }
+            
           }
+        }
+      }
 
-
+        
         SaveTheArgs.push_back(NewArgs);
         Clone.CurrentCall->Arguments = SaveTheArgs.back().data();
-
       }
 
 
@@ -5259,48 +5424,83 @@ namespace {
         // 4x if we're aware the array is paritioned in 4 exactly).
         CallStackFrame *CloneFrame = Original.CurrentCall;
         std::vector<APValue> NewArgs;
+        APValue::LValueBase ArgLValBase;
+                
         if (CloneFrame->Callee)
           for (unsigned i = 0; i < CloneFrame->Callee->getNumParams(); ++i) {
             NewArgs.push_back(CloneFrame->Arguments[i]);
-            
-            // if LValue try to do "deep" clone
+            auto APV = CloneFrame->Arguments[i];
             if (CloneFrame->Arguments[i].isLValue() && 
                 CloneFrame->Arguments[i].getLValueCallIndex() > 0) {
-              QualType Type = getType(CloneFrame->Arguments[i].getLValueBase());
-              LValue ParentLVal;
-              ParentLVal.setFrom(Original.Ctx, CloneFrame->Arguments[i]);
-              CompleteObject Obj = findCompleteObject(Original, nullptr, 
-                                          AccessKinds::AK_Read, ParentLVal, 
-                                          Type);
-              
-               one way to fix the over sizing assertion maybe to just make 
-               sure the array is already filled to its max size, but I dont 
-               know if this will work for dynamically sized data
-              Obj.Value->dump();
+                // attempt to skip double copies/work in the case of functions
+                // that have lvalues that point to the same object e.g. begin/end
+                // iterators
+                ArgLValBase = CloneFrame->Arguments[i].getLValueBase();
+//                if (skip(ArgLValBase, PrevCopiedLValueBases))
+//                  continue;
+//                PrevCopiedLValueBases.push_back(ArgLValBase);
 
-              remember this isn't an array it's a struct wrapping an array at 
-              the moment
-              llvm::errs() << Obj.Value->getArrayInitializedElts() << "\n";
 
-//              CallStackFrame *Frame = nullptr;
-//              const void* PtrKey = nullptr;
-//              unsigned Depth = 0;
+                QualType Type = getType(ArgLValBase);
+                LValue ParentLVal;
+                ParentLVal.setFrom(Original.Ctx, APV);
+                CompleteObject Obj = findCompleteObject(Original, nullptr, 
+                                            AccessKinds::AK_Read, ParentLVal, 
+                                            Type);
+//                Obj.Value->dump();
 
-//              std::tie(Frame, Depth) =
-//                Clone.getCallFrameAndDepth(
-//                  CloneFrame->Arguments[i].getLValueCallIndex());
+//              auto Test = FindSubobjectAPVal(*Obj.Value, Info);
+//              llvm::errs() << "Test Kind: " << Test->getKind() << "\n";
 
-//             APValue::LValueBase Base = Obj.Base;
-//             if (Base.is<const ValueDecl*>()) 
-//               PtrKey = static_cast<const void*>(Base.get<const ValueDecl*>());
-//             else if (Base.is<const Expr*>()) 
-//               PtrKey = static_cast<const void*>(Base.get<const Expr*>());
-//               
-//             Frame->Temporaries[std::pair<const void *, unsigned>(PtrKey,
-//                                               Base.getVersion())] = *Obj.Value;
+              // hardcoded unwinding of a std::array to test
+              if (Obj.Value->isStruct()) {
+                auto Arr = Obj.Value->getStructField(0);
+                if (Arr.isArray()) {
+                    if (Arr.getArraySize() > Arr.getArrayInitializedElts()) {
+                      expandArray(Arr, Arr.getArraySize() - 1);
+                  }
+                }
+              }
 
+//                CallStackFrame * CloneFrame = nullptr;
+//                CallStackFrame * OrigFrame = nullptr;
+//                unsigned Depth;
+//                unsigned CallIndex = APV.getLValueCallIndex();
+
+////                std::tie(OrigFrame, Depth) 
+////                    = EIOrig.getCallFrameAndDepth(CallIndex);
+//                std::tie(CloneFrame, Depth) 
+//                    = Clone.getCallFrameAndDepth(CallIndex);
+            
+//                CloneLValueObject(CloneFrame->Arguments[i], Original, Clone);
+            }
+            
+            // mostly doing this for lambda captures, but it will also hopefully
+            // cover normal structs, this doesn't cover bases yet, so no 
+            // inheritance
+            if (CloneFrame->Arguments[i].isStruct()) {
+              for (int j = 0; j < CloneFrame->Arguments[i].getStructNumFields();
+                   ++j) {
+                   APV = CloneFrame->Arguments[i].getStructField(j);
+                QualType Type = getType(APV.getLValueBase());
+                LValue ParentLVal;
+                ParentLVal.setFrom(Original.Ctx, APV);
+                CompleteObject Obj = findCompleteObject(Original, nullptr, 
+                                            AccessKinds::AK_Read, ParentLVal, 
+                                            Type);
+                // try print the object before as well as 
+                // after the diagnoses is emitted
+                if (Obj.Value->isStruct()) {
+                  auto Arr = Obj.Value->getStructField(0);
+                  if (Arr.isArray()) {
+                      if (Arr.getArraySize() > Arr.getArrayInitializedElts()) {
+                        expandArray(Arr, Arr.getArraySize() - 1);
+                    }
+                  }
+                }
             }
           }
+        }
 
         SaveTheArgs.push_back(NewArgs);
         Clone.CurrentCall->Arguments = SaveTheArgs.back().data();
@@ -5558,6 +5758,14 @@ namespace {
           APVEnd = *GetArgOrTemp(EndArgOrTemp, Info.CurrentCall);
           QTEnd = VD->getType();
         }
+
+      // Need to implement special handling for this, these should be 
+      // updated/reduced specially in the reduction phase rather than using the 
+      // fallback copy behaviour as we wish to use the original offsets of these
+      // DURING the reduction of other things (alternatively we could also just 
+      // keep track of the offsets)
+      NoCopyBackList.push_back(BeginArgOrTemp);
+      NoCopyBackList.push_back(EndArgOrTemp);
 
       if (APVBegin.isLValue() && APVEnd.isLValue()) {
         int64_t EndTySz = 
@@ -6315,34 +6523,114 @@ namespace {
         PrimaryCopyFrame = PrimaryCopyFrame->Caller;
       }
   }
-  
-   void RestrictedCopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
-//      auto skip = [this](llvm::Any i) { 
-//        for (auto v : NoCopyBackList) {
-//          if (llvm::any_isa<unsigned int>(v) && 
-//              llvm::any_isa<unsigned int>(i) && 
-//              llvm::any_cast<unsigned int>(v) == 
-//              llvm::any_cast<unsigned int>(i))
-//            return true;
-//          else if (llvm::any_isa<const void*>(v) &&
-//                   llvm::any_isa<const void*>(i) &&
-//                   llvm::any_cast<const void*>(v) == 
-//                   llvm::any_cast<const void*>(i))
-//            return true;
-//        }
-//        return false;
-//      };
 
+  void RecursiveArrayCopyback(APValue& ToAPV, APValue& FromAPV, EvalInfo &To, 
+                            EvalInfo &From, int ThreadCount, int ThreadNumber) {
+    switch (FromAPV.getKind()) {
+      case APValue::LValue: {
+        RecursiveArrayCopyback(*FindSubobjectAPVal(ToAPV, To),
+                               *FindSubobjectAPVal(FromAPV, From),
+                               To, From, ThreadCount, ThreadNumber);
+      }
+      break;
 
-//      for (size_t i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
-//        if (skip(i)) {
-//          continue;
-//        }
-//       
-//        To.CurrentCall->Arguments[i] = *From.CurrentCall->getArguments(i);
-//      }
+      case APValue::Struct: {
+        for (unsigned int i = 0; i < FromAPV.getStructNumFields(); ++i)
+          RecursiveArrayCopyback(ToAPV.getStructField(i), 
+                                 FromAPV.getStructField(i), To, From, 
+                                 ThreadCount, ThreadNumber);
+      }
+      break;
+      
+      case APValue::Array: {
+        auto SegmentSize = FromAPV.getArraySize() / ThreadCount; 
+        size_t Offset = ThreadNumber * SegmentSize;
+        
+        if (FromAPV.getArrayInitializedElts() > ToAPV.getArrayInitializedElts())
+          expandArray(ToAPV, FromAPV.getArrayInitializedElts() 
+                          == FromAPV.getArraySize() ? FromAPV.getArraySize() - 1
+                                           : FromAPV.getArrayInitializedElts());
+
+        for (unsigned int j = Offset; j < Offset + SegmentSize; ++j) {
+          if (j < FromAPV.getArrayInitializedElts())
+            ToAPV.getArrayInitializedElt(j) =
+               FromAPV.getArrayInitializedElt(j);
+        }
+      }
+      break;
+      
+      // default clone for now, although in some cases (e.g. union) something 
+      // further may be required
+      case APValue::Int:
+      case APValue::Float:
+      case APValue::Vector:
+      case APValue::ComplexInt:
+      case APValue::ComplexFloat:
+      case APValue::FixedPoint:
+      case APValue::Union:
+      case APValue::MemberPointer:
+      case APValue::AddrLabelDiff:
+      case APValue::None:
+      case APValue::Indeterminate:
+      break;
+    }
   }
+  
+  // This is a special case for arrays currently, that I'm not a huge fan of
+  void DefaultArrayCopyback(EvalInfo &To) {
+    auto skip = [this](llvm::Any i) {
+      for (auto v : NoCopyBackList) {
+        if (llvm::any_isa<unsigned int>(v) && 
+            llvm::any_isa<unsigned int>(i) && 
+            llvm::any_cast<unsigned int>(v) == 
+            llvm::any_cast<unsigned int>(i))
+          return true;
+        else if (llvm::any_isa<const void*>(v) &&
+                 llvm::any_isa<const void*>(i) &&
+                 llvm::any_cast<const void*>(v) == 
+                 llvm::any_cast<const void*>(i))
+          return true;
+      }
+      return false;
+    };
+    
+    for (unsigned int i = 0; i < To.CurrentCall->Callee->getNumParams(); ++i) {
+      if (skip(i))
+        continue;
+      for (unsigned int j = 0; j < ThreadInfo.size(); ++j) {
+        RecursiveArrayCopyback(*To.CurrentCall->getArguments(i), 
+                               *ThreadInfo[j].CurrentCall->getArguments(i), 
+                               Info, ThreadInfo[j], ThreadInfo.size(), j);
+      }
+    }
+  }
+  
+  void RestrictedCopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
+    auto skip = [this](llvm::Any i) { 
+      for (auto v : NoCopyBackList) {
+        if (llvm::any_isa<unsigned int>(v) && 
+            llvm::any_isa<unsigned int>(i) && 
+            llvm::any_cast<unsigned int>(v) == 
+            llvm::any_cast<unsigned int>(i))
+          return true;
+        else if (llvm::any_isa<const void*>(v) &&
+                 llvm::any_isa<const void*>(i) &&
+                 llvm::any_cast<const void*>(v) == 
+                 llvm::any_cast<const void*>(i))
+          return true;
+      }
+      return false;
+    };
 
+    for (unsigned int i = 0; i < From.CurrentCall->Callee->getNumParams(); 
+         ++i) {
+
+      if (skip(i))
+        continue;
+
+      To.CurrentCall->Arguments[i] = *From.CurrentCall->getArguments(i);
+    }
+  }
 };
 
   // realistically if a lot look like this we can squash them into a macro...
@@ -6969,7 +7257,9 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       auto lwg = LoopWrapperGatherer(Info, EvalInfos, RedList);
  
       for (size_t i = 0; i < tp.getPoolSize(); ++i) {
-        lwg.RestrictedCloneEvalInfoTwo(Info, EvalInfos[i]);
+          // WIP better implementation
+//        lwg.RestrictedCloneEvalInfoTwo(Info, EvalInfos[i]); 
+          lwg.RestrictedCloneEvalInfo(Info, EvalInfos[i]);
       }
  
       lwg.SearchBody(Info.CurrentCall->Callee->getBody());
@@ -7073,11 +7363,13 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
           Result.Slot = StmtResults[i].Slot;
         }
       }
+      
+      lwg.DefaultArrayCopyback(Info);
 
       
       // This idea of a reduce isn't superb it only really handles simple cases
       // what happens if its a complex user defined function?
-//      ParConstExprReduce(Info, EvalInfos, RedList);
+      ParConstExprReduce(Info, EvalInfos, RedList);
 
       // Destroy ForScope here
       return ForScope.destroy() ? ESR_Ret : ESR_Failed;
