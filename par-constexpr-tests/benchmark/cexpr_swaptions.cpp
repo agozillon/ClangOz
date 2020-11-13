@@ -13,16 +13,21 @@ using namespace __cep::experimental;
 #include "cest/cmath.hpp"
 
 namespace swaptions {
-  constexpr int num_trials = 102400;
-  constexpr int nswaptions = 1; /*the default is 1 but it is likely this should be higher*/
+  constexpr int num_trials = 512;//102400; // 102400, is default
+  constexpr int nswaptions = 4; /*the original swaptions has a caveat that this 
+                                  has to be the same number as there are cores
+                                  presumably as it's the main parallelization 
+                                  point, for us it cannot go below the numbers 
+                                  of cores and ideally should be a multiple of
+                                  the core count*/
   constexpr int ki = 4;
-  constexpr int m_in = 10;// used to be 11;
+  constexpr int m_in = 11;
   constexpr int m_ifactors = 3;
   constexpr int block_size = 16;
   constexpr double m_dyears = 5.5f;
 
   struct parm {
-    constexpr inline parm () {}
+    constexpr inline parm() {}
 
     double dstrike;
     double dcompounding;
@@ -31,13 +36,13 @@ namespace swaptions {
     double dpaymentinterval;
     double dyears;
 
-    std::array<double, m_in> pdyield;
-    std::array<std::array<double, m_in>, m_ifactors> ppdfactors;
+    std::array<double, m_in - 1> pdyield;
+    std::array<std::array<double, m_in - 1>, m_ifactors> ppdfactors;
   };
 
   struct price {
-    constexpr inline price () {}
-    
+    constexpr inline price() {}
+
     double dsimswaptionmeanprice;
     double dsimswaptionstderror;
   };
@@ -51,29 +56,30 @@ namespace swaptions {
   
   constexpr void HJM_Drifts(auto &pdtotaldrift, const double &dyears, 
                             const auto &ppdfactors) {
-    std::array<std::array<double, m_in>, m_ifactors> ppddrifts;
+    std::array<std::array<double, m_in - 1>, m_ifactors> ppddrifts;
     double ddelt = (double)(dyears / m_in);
-    double dsumvol;
-
-    for (int i = 0; i < m_ifactors; ++i)
+    double dsumvol = 0;
+    
+    for (int i = 0; i < ppddrifts.size(); ++i)
       ppddrifts[i][0] = 0.5 * ddelt * ppdfactors[i][0] * ppdfactors[i][0];
 
-    for (int i = 0; i < m_ifactors; ++i)
-      for (int j = 1; j < m_in; ++j) {
+   int test = 0;
+    for (int i = 0; i < ppddrifts.size(); ++i)
+      for (int j = 1; j < ppddrifts[i].size(); ++j) {
         ppddrifts[i][j] = 0;
         for(int l = 0; l < j; ++l)
           ppddrifts[i][j] -= ppddrifts[i][l];
 
         dsumvol = 0;
-        for(int l = 0; l < j; ++l) // might have to be <= j
+        for (int l = 0; l <= j; ++l)
           dsumvol += ppdfactors[i][l];
-          
+        
         ppddrifts[i][j] += 0.5* ddelt * dsumvol * dsumvol;
       }
 
-    for(int i = 0; i < m_in; ++i) {
+    for(int i = 0; i < pdtotaldrift.size(); ++i) {
       pdtotaldrift[i] = 0;
-      for(int j = 0; j < m_ifactors; ++j)
+      for(int j = 0; j < ppddrifts.size(); ++j)
         pdtotaldrift[i] += ppddrifts[j][i];
     }
   }
@@ -88,15 +94,15 @@ namespace swaptions {
     return (ix * 4.656612875e-10);
   }
 
-    constexpr static double a[4] = { 2.50662823884, -18.61500062529, 
-                                     41.39119773534, -25.44106049637 };
-    constexpr static double b[4] = { -8.47351093090, 23.08336743743, 
-                                     -21.06224101826, 3.13082909833 };
-    constexpr static double c[9] = { 0.3374754822726147, 0.9761690190917186, 
-                           0.1607979714918209, 0.0276438810333863,
-                           0.0038405729373609, 0.0003951896511919,
-                           0.0000321767881768, 0.0000002888167364,
-                           0.0000003960315187 };
+  constexpr static double a[4] = { 2.50662823884, -18.61500062529, 
+                                   41.39119773534, -25.44106049637 };
+  constexpr static double b[4] = { -8.47351093090, 23.08336743743, 
+                                   -21.06224101826, 3.13082909833 };
+  constexpr static double c[9] = { 0.3374754822726147, 0.9761690190917186, 
+                         0.1607979714918209, 0.0276438810333863,
+                         0.0038405729373609, 0.0003951896511919,
+                         0.0000321767881768, 0.0000002888167364,
+                         0.0000003960315187 };
 
   constexpr double CumNormalInv(double u) {
     double r, x = u - 0.5;
@@ -123,10 +129,10 @@ namespace swaptions {
   }
 
   constexpr void SerialB(auto& pdz, auto& randz) {
-    for(int l = 0; l < m_ifactors; ++l)
-      for(int b = 0; b < block_size; b++)
-        for (int j = 1; j < m_in; ++j)
-          pdz[l][block_size * j + b]= CumNormalInv(randz[l][block_size * j + b]);
+    for(int l = 0; l < pdz.size(); ++l)
+      for(int b = 0; b < block_size; ++b)
+        for (int j = 1; j < m_in - 1; ++j)
+          pdz[l][block_size * j + b] = CumNormalInv(randz[l][block_size * j + b]);
   }
 
   constexpr void HJM_SimPath_Forward_Blocking(auto &ppdhjmpath/*2d array*/,
@@ -135,38 +141,49 @@ namespace swaptions {
                                               const auto &pdtotaldrift/*array*/,
                                               const auto &ppdfactors/*2d array*/,
                                               long &lrndseed) {
-    std::array<std::array<double, m_in * block_size>, m_ifactors> pdz;
-    std::array<std::array<double, m_in * block_size>, m_ifactors> randz;
+    std::array<std::array<double, m_in * block_size>, m_ifactors> pdz{};
+    std::array<std::array<double, m_in * block_size>, m_ifactors> randz{};
     
     double dtotalshock = 0;
     double ddelt = dyears / m_in;
     double sqrt_ddelt = cest::sqrt(ddelt);
-    
-    for(int b = 0; b < block_size; ++b)
-      for(int j = 0; j < m_in; ++j) {
-        ppdhjmpath[0][block_size * j + b] = pdforward[j];
 
-        for(int i = 1; i < m_in; ++i)
-          ppdhjmpath[i][block_size * j + b] = 0;
-      }
+    // changed this segment so it gives appropriate results, the original had 
+    // some slightly weird index generation for the size of the array it created
+    // which means it indexes off the side by 1. which is fine for their 
+    // dynamically sized special vector, but is no bueno for the std::array.
+    int index = 0;
+    for (int i = 0; i < ppdhjmpath[0].size(); ++i) {
+      if (i > 0 && i % block_size == 0)
+        ++index;
+      ppdhjmpath[0][i] = pdforward[index];
+    }
 
-    // compute random number in exact same sequence, apparently around 10% of 
-    // the total executition time
+    for(int i = 1; i < ppdhjmpath.size(); ++i)
+      for (int j = 0; j < ppdhjmpath[i].size(); ++j)
+        ppdhjmpath[i][j] = 0;
+
+    // same problem as the loop with ppdhjmpath, the offset calculation is 
+    // incorrect for the size so it goes off the side... the fix this time is to
+    // just resize randz and ignore the final two values, the alternative would 
+    // be to have an if to check when we're over indexing, not assign but still
+    // call RanUnif, so we continue to maintain the appropriate seed value.
     for(int b = 0; b < block_size; ++b)
       for (int j = 1; j < m_in; ++j)
-        for (int l = 0; l < m_ifactors; ++l)
+        for (int l = 0; l < m_ifactors; ++l) {
           randz[l][block_size * j + b] = RanUnif(lrndseed);
+        }
 
     /* apparently 18% of the total executition time */
     SerialB(pdz, randz);
 
     for(int b = 0; b < block_size; ++b)
-      for (int j = 1; j < m_in; ++j)
-        for (int l = 0; l < m_in - j; ++l) {
+      for (int j = 1; j < (m_in - 1); ++j)
+        for (int l = 0; l < (m_in - 1) - j; ++l) {
           dtotalshock = 0;
           for (int i = 0; i < m_ifactors; ++i)
             dtotalshock += ppdfactors[i][l] * pdz[i][block_size * j + b];
-
+          
           ppdhjmpath[j][block_size * l + b] = 
             ppdhjmpath[j - 1][block_size * (l + 1) + b] + 
             pdtotaldrift[l] * ddelt + sqrt_ddelt * dtotalshock;
@@ -178,7 +195,7 @@ namespace swaptions {
                                            const double &dyears,
                                            const auto &pdratepath /*array*/) {
     cest::vector<double> pdexpres;
-    pdexpres.resize(in*block_size);
+    pdexpres.resize((in - 1)*block_size);
     
     double ddelt = (double) (dyears/in);
 
@@ -190,23 +207,23 @@ namespace swaptions {
     for (int i = 0; i < pddiscountfactors.size(); ++i)
       pddiscountfactors[i] = 1.0;
 
-    for (int i = 1; i < in; ++i)
+    for (int i = 1; i < in - 1; ++i)
       for (int b = 0; b < block_size; b++)
         for (int j = 0; j < i; ++j)
           pddiscountfactors[i* block_size + b] *= pdexpres[j * block_size + b];
   }
 
   constexpr price HJM_Swaption_Blocking(const parm& swaption,
-                                        long irndseed,
-                                        const int& ltrials) {
+                                         long irndseed,
+                                         const int& ltrials) {
     price pdswaptionprice;
     double dstrikecont;
 
-    std::array<std::array<double, m_in * block_size>, m_in> ppdhjmpath; 
-    std::array<double, m_in> pdforward;
-    std::array<double, m_in> pdtotaldrift;
-    std::array<double, m_in * block_size> pddiscountingratepath;
-    std::array<double, m_in * block_size> pdpayoffdiscountfactors;
+    std::array<std::array<double, (m_in - 1) * block_size>, m_in - 1> ppdhjmpath; 
+    std::array<double, m_in - 1> pdforward;
+    std::array<double, m_in - 1> pdtotaldrift;
+    std::array<double, (m_in - 1) * block_size> pddiscountingratepath;
+    std::array<double, (m_in - 1) * block_size> pdpayoffdiscountfactors;
 
     double dswaptionpayoff;
     double ddiscswaptionpayoff, dfixedlegvalue;
@@ -220,9 +237,9 @@ namespace swaptions {
       dstrikecont = (1 / swaption.dcompounding) * 
                     cest::log(1 + swaption.dstrike * swaption.dcompounding);
     }
-    
+
     int iswapvectorlength = m_in - swaption.dmaturity / ddelt + 0.5f;
-    
+
     cest::vector<double> pdswapratepath;
     pdswapratepath.resize(iswapvectorlength * block_size);
     cest::vector<double> pdswapdiscountfactors;
@@ -245,6 +262,7 @@ namespace swaptions {
     }
 
     HJM_Yield_To_Forward(pdforward, swaption.pdyield);
+    
     HJM_Drifts(pdtotaldrift, swaption.dyears, swaption.ppdfactors);
     
     double dsumsimswaptionprice = 0.0f;
@@ -252,14 +270,15 @@ namespace swaptions {
 
     for (int l = 0; l < ltrials; l += block_size) {
       // 51% of the time in this one function
+      // should now be correct just slight precision errors possibly caused by 
+      // the cest functions inside of CumNormalInv
       HJM_SimPath_Forward_Blocking(ppdhjmpath, swaption.dyears, pdforward, 
                                    pdtotaldrift, swaption.ppdfactors, irndseed);
 
-      for (int i = 0; i < m_in; ++i)
+      for (int i = 0; i < m_in - 1; ++i)
         for (int b = 0; b < block_size; ++b)
           pddiscountingratepath[block_size * i + b] = ppdhjmpath[i][b];
 
-      /* 15% of the time goes here */
       Discount_Factors_Blocking(pdpayoffdiscountfactors, m_in, swaption.dyears,
                                 pddiscountingratepath);
 
@@ -276,6 +295,7 @@ namespace swaptions {
         for (int i = 0; i < iswapvectorlength; ++i)
           dfixedlegvalue += pdswappayoffs[i] * 
                             pdswapdiscountfactors[i * block_size + b];
+
         dswaptionpayoff = std::max(dfixedlegvalue - 1.0, 0.0);
         ddiscswaptionpayoff = dswaptionpayoff 
                 * pdpayoffdiscountfactors[iswapstarttimeindex * block_size + b];
@@ -286,16 +306,16 @@ namespace swaptions {
     }
 
     pdswaptionprice.dsimswaptionmeanprice = dsumsimswaptionprice / ltrials;
-    pdswaptionprice.dsimswaptionstderror = cest::sqrt(
+    pdswaptionprice.dsimswaptionstderror = (double)cest::sqrt(
       (dsumsquaresimswaptionprice - dsumsimswaptionprice 
-       * dsumsimswaptionprice / ltrials) / (ltrials - 1.0))
-        / sqrt((double)ltrials);
+       * dsumsimswaptionprice / (double)ltrials) / ((double)ltrials - 1.0f))
+        / cest::sqrt((double)ltrials);
 
     return pdswaptionprice;
   }
 
   constexpr auto calc() {
-    std::array<std::array<double, m_in>, m_ifactors> factors;
+    std::array<std::array<double, m_in - 1>, m_ifactors> factors{};
     std::array<parm, nswaptions> swaptions;
     std::array<price, nswaptions> prices;
 
@@ -351,39 +371,53 @@ namespace swaptions {
         swaptions[i].pdyield[j] = swaptions[i].pdyield[j-1] + .005;
     
       for(int k = 0; k < swaptions[i].ppdfactors.size(); ++k)
-         for(int j = 0; j < swaptions[i].ppdfactors[k].size(); ++j)
+         for(int j = 0; j < swaptions[i].ppdfactors[k].size(); ++j) {;
            swaptions[i].ppdfactors[k][j] = factors[k][j];
+         }
     }
 
-    // this looks paralellizeable, but the default is 1... perhaps it'd be more
-    // interesting to do it more fine grained inside of the blocking function?
-    //
-    // I'm actually not 100% sure if it is, because HJM_SimPath_Forward_Blocking
-    // uses RanUnif which will make this undeterministic. You could perhaps in 
-    // generate all of the ran values ahead of time?
-    
-    // some issues with this swaptions benchmark:
-    // 1) Where should i parallelize when there is a RanUnif function in use? 
-    //    Can i just make an array of them for usage that's indexable so it's
-    //    deterministic?
-    // 2) How do I tell the results are correct there appears to be no golden
-    //    values to compare against or visual test performable
+  // change to par for_each, i can either do it the simple way by doing it 
+  // slightly differently from their loop, we can attach the price to the struct
+  // and print that out instead, do the generate iota and index the 
+  // struct/prices array, that could be less efficient though. Go path of least
+  // resistance in this case!
+#ifdef CONSTEXPR_PARALLEL
+    std::for_each(/*execution::ce_par, */data.begin(), data.end(), 
+      [=](auto& data) mutable {
+          data.price = BlkSchlsEqEuroNoDiv(data);
+    });
+#else
     for (int i = 0; i < swaptions.size(); ++i)
       prices[i] = HJM_Swaption_Blocking(swaptions[i], swaption_seed+i, 
                                         num_trials);
-
-    // how do I benchmark this?
+#endif
 
     return prices;
   }
 } // namespace swaptions
 
 int main() {
-  /*constexpr*/ auto out = swaptions::calc();
+  constexpr auto out = swaptions::calc();
 
-  for (auto price : out) { 
-    std::cout << "dsimswaptionmeanprice: " << price.dsimswaptionmeanprice << "\n";
-    std::cout << "dsimswaptionstderror: " << price.dsimswaptionstderror << "\n";
+  // I've compared the results against the original ParSec benchmark (blocking 
+  // version) and the results are correct, but a little off due to some 
+  // precision errors caused by the use of cest:: functions rather than std::
+  // functions (can't use std:: library for somethings as they are not 
+  // constexpr). You can verify the accuracy by executing at runtime and 
+  // changing all the cest:: functions to std:: functions, at which point the 
+  // results should be identical (may vary with more than 1 thread as there's 
+  // a random number generator involved, but I think it should still be correct)
+  //
+  // It is possibly of note that this may be doing slightly more work than 
+  // it needs to do, the original ParSec benchmark has some very bad index 
+  // issues where it indexes off the edge of dynamically allocated arrays 
+  // (misallocates values and causes segfaults in certain cases). This doesn't 
+  // really fly with contigious array and also doesn't really work with 
+  // constexpr functions at all, it's a compiler error.
+  for (int i = 0; i < out.size(); ++i) { 
+     fprintf(stderr,"Swaption %d: [SwaptionPrice: %.10lf StdError: %.10lf] \n", 
+             i, out[i].dsimswaptionmeanprice, 
+                out[i].dsimswaptionstderror);
   }
   
   return 0;
