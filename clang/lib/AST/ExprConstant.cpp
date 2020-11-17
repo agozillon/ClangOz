@@ -5366,8 +5366,10 @@ namespace {
             if (CloneFrame->Arguments[i].isStruct()) {
               for (int j = 0; j < CloneFrame->Arguments[i].getStructNumFields();
                    ++j) {
-                 CloneLValueObject(CloneFrame->Arguments[i].getStructField(j),
-                                   Original, Clone);
+                if (CloneFrame->Arguments[i].getStructField(j).isLValue()) {
+                   CloneLValueObject(CloneFrame->Arguments[i].getStructField(j),
+                                     Original, Clone);
+                } 
             }
             
           }

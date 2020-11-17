@@ -13,7 +13,7 @@ using namespace __cep::experimental;
 #include "cest/cmath.hpp"
 
 namespace swaptions {
-  constexpr int num_trials = 512;//102400; // 102400, is default
+  constexpr int num_trials = 10240; // 102400, was the default
   constexpr int nswaptions = 4; /*the original swaptions has a caveat that this 
                                   has to be the same number as there are cores
                                   presumably as it's the main parallelization 
@@ -382,9 +382,14 @@ namespace swaptions {
   // struct/prices array, that could be less efficient though. Go path of least
   // resistance in this case!
 #ifdef CONSTEXPR_PARALLEL
-    std::for_each(/*execution::ce_par, */data.begin(), data.end(), 
-      [=](auto& data) mutable {
-          data.price = BlkSchlsEqEuroNoDiv(data);
+    // The range will very likely be small with minimal work, no real reason to
+    // parallelize it. 
+    std::array<int, nswaptions> id_range{};
+    std::iota(id_range.begin(), id_range.end(), 0); 
+    std::for_each(execution::ce_par, id_range.begin(), id_range.end(), 
+      [&prices, &swaptions, swaption_seed](auto& id) mutable {
+          prices[id] = HJM_Swaption_Blocking(swaptions[id], swaption_seed + id, 
+                                             num_trials);
     });
 #else
     for (int i = 0; i < swaptions.size(); ++i)
