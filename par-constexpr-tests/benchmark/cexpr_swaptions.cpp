@@ -9,6 +9,8 @@
 
 using namespace __cep::experimental;
 
+#include "../helpers/sqrt/cexpr_sqrt.hpp"
+
 #include "cest/vector.hpp"
 #include "cest/cmath.hpp"
 
@@ -146,7 +148,7 @@ namespace swaptions {
     
     double dtotalshock = 0;
     double ddelt = dyears / m_in;
-    double sqrt_ddelt = cest::sqrt(ddelt);
+    double sqrt_ddelt = cexpr_sqrt(ddelt);
 
     // changed this segment so it gives appropriate results, the original had 
     // some slightly weird index generation for the size of the array it created
@@ -306,10 +308,10 @@ namespace swaptions {
     }
 
     pdswaptionprice.dsimswaptionmeanprice = dsumsimswaptionprice / ltrials;
-    pdswaptionprice.dsimswaptionstderror = (double)cest::sqrt(
+    pdswaptionprice.dsimswaptionstderror = (double)cexpr_sqrt(
       (dsumsquaresimswaptionprice - dsumsimswaptionprice 
        * dsumsimswaptionprice / (double)ltrials) / ((double)ltrials - 1.0f))
-        / cest::sqrt((double)ltrials);
+        / cexpr_sqrt((double)ltrials);
 
     return pdswaptionprice;
   }

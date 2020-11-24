@@ -8,6 +8,7 @@
 
 using namespace __cep::experimental;
 
+#include "../helpers/sqrt/cexpr_sqrt.hpp"
 #include "cest/cmath.hpp"
 
 #define inv_sqrt_2xPI 0.39894228040143270286
@@ -188,7 +189,7 @@ namespace blackscholes {
 
     double xd1 = (((dat.r + (dat.v * dat.v * 0.5f)) * dat.t) + 
                     cest::log(dat.s / dat.strike));
-    double xden = dat.v * cest::sqrt(dat.t);
+    double xden = dat.v * cexpr_sqrt(dat.t);
     xd1 = xd1 / xden;
     double xd2 = xd1 - xden;
     

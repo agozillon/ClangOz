@@ -14,6 +14,8 @@ using namespace __cep::experimental;
 // need to set: ulimit -s unlimited for this
 //even with 4294967295 steps 2048x2048 is too big 
 
+#include "../helpers/sqrt/cexpr_sqrt.hpp"
+
 namespace mandelbrot {
   using fcomplex_t = std::complex<double>;
 
@@ -54,7 +56,7 @@ namespace mandelbrot {
   
   template<typename T>
   inline constexpr T complex_abs(const std::complex<T>& v) {
-    return cest::sqrt(v.real()*v.real() + v.imag()*v.imag());
+    return cexpr_sqrt(v.real()*v.real() + v.imag()*v.imag());
   }
   
   constexpr int mand_cmplx(fcomplex_t& c) {
