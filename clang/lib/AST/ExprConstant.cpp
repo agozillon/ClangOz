@@ -6545,9 +6545,13 @@ namespace {
       break;
       
       case APValue::Array: {
-        auto SegmentSize = FromAPV.getArraySize() / ThreadCount; 
+        auto SegmentSize = FromAPV.getArraySize() / ThreadCount;
         size_t Offset = ThreadNumber * SegmentSize;
         
+        // Note: important that this comes after the offsets calculated the way
+        // this is currently written.
+        if (ThreadNumber == ThreadCount - 1)
+          SegmentSize += FromAPV.getArraySize() % ThreadCount;
         if (FromAPV.getArrayInitializedElts() > ToAPV.getArrayInitializedElts())
           expandArray(ToAPV, FromAPV.getArrayInitializedElts() 
                           == FromAPV.getArraySize() ? FromAPV.getArraySize() - 1

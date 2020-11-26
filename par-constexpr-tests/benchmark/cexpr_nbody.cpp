@@ -1,5 +1,6 @@
 #include <array>
 #include <algorithm>
+#include <numeric>
 #include <iostream>
 #include <fstream>
 #include <type_traits>
@@ -8,6 +9,7 @@
 
 using namespace __cep::experimental;
 
+#include "../helpers/sqrt/cexpr_sqrt.hpp"
 #include "cest/cmath.hpp"
 
 namespace nbody {
@@ -68,135 +70,71 @@ namespace nbody {
     }
   }};
 
-//https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-31-fast-n-body-simulation-cuda 
-//  __device__ float3 bodyBodyInteraction(float4 bi, float4 bj, float3 ai) {   
-//    float3 r;
-//    r.x = bj.x - bi.x;
-//    r.y = bj.y - bi.y;
-//    r.z = bj.z - bi.z;
-//    float distSqr = r.x * r.x + r.y * r.y + r.z * r.z + EPS2;   
-//    float distSixth = distSqr * distSqr * distSqr;   
-//    float invDistCube = 1.0f/sqrtf(distSixth);
-//    float s = bj.w * invDistCube; // mass * mag
-//    ai.x += r.x * s;   
-//    ai.y += r.y * s;   
-//    ai.z += r.z * s;   
-//    return ai; 
-//  } 
-
-//  // the cuda version executes one of these per thread
-//  __device__ float3 tile_calculation(float4 myPosition, float3 accel) {   
-//    int i;   
-//    extern __shared__ float4[] shPosition;   
-//    
-//    for (i = 0; i < blockDim.x; i++) {     
-//      accel = bodyBodyInteraction(myPosition, shPosition[i], accel);   
-//    }   
-//    
-//    return accel; 
-//  }
-//  
-//  __global__ void calculate_forces(void *devX, void *devA) {   
-//    extern __shared__ float4[] shPosition;   
-//    float4 *globalX = (float4 *)devX;
-//   float4 *globalA = (float4 *)devA;
-//   float4 myPosition;   
-//   int i, tile;   
-//   float3 acc = {0.0f, 0.0f, 0.0f};
-//   int gtid = blockIdx.x * blockDim.x + threadIdx.x; 
-//   myPosition = globalX[gtid];   
-//   for (i = 0, tile = 0; i < N; i += p, tile++) {     
-//      int idx = tile * blockDim.x + threadIdx.x;     
-//      shPosition[threadIdx.x] = globalX[idx];
-//      __syncthreads();     
-//      acc = tile_calculation(myPosition, acc);    
-//      __syncthreads();   
-//    }   
-//    
-//      // Save the result in global memory for the integration step.    
-//      float4 acc4 = {acc.x, acc.y, acc.z, 0.0f};   
-//      globalA[gtid] = acc4; 
-//    }
-//      
-
-//  template <typename T, unsigned long N>
-//  constexpr void Advance(std::array<planet<T>, N>& bodies, T dt) {
-//    int i, j;
-
-//    auto body_work = [](auto bi, auto bj) {
-
-//    };
-
-//    for (i = 0; i < bodies.size(); ++i)
-//      for (j = i + 1; j < bodies.size(); j++)
-//        body_work(bodies[i], bodies[j], );
-
-//    for (i = 0; i < bodies.size(); ++i)
-//      for (j = i + 1; j < bodies.size(); j++) {
-////        if (i == j)
-////          continue;
-//        planet<T> &b = bodies[i];
-//        planet<T> &b2 = bodies[j];
-//        T dx = b.x - b2.x;
-//        T dy = b.y - b2.y;
-//        T dz = b.z - b2.z;
-//        T distance = cest::sqrt(dx * dx + dy * dy + dz * dz);
-//        T mag = dt / (distance * distance * distance);
-//        b.vx  -= dx * b2.mass * mag;
-//        b.vy  -= dy * b2.mass * mag;
-//        b.vz  -= dz * b2.mass * mag;
-//        b2.vx += dx * b.mass  * mag;
-//        b2.vy += dy * b.mass  * mag;
-//        b2.vz += dz * b.mass  * mag;
-//      }
-//      
-//    for (i = 0; i < bodies.size(); ++i) {
-//      planet<T> &b = bodies[i];
-//      b.x += dt * b.vx;
-//      b.y += dt * b.vy;
-//      b.z += dt * b.vz;
-//    }
-//  }
-  
-  
   // perhaps look into softening and better sqrt for cest
   template <typename T, unsigned long N>
   constexpr void Advance(std::array<planet<T>, N>& bodies, T dt) {
-    int i, j;
+    const T eps = T{0.1}; // softening factor
 
-    // traverse as a triangle update two at time
-    // OR
-    // use if (i == j) to prevent it updating twice
-    for (i = 0; i < bodies.size(); ++i) {
-      planet<T> &b = bodies[i];
-      for (j = i + 1; j < bodies.size(); j++) {
-        planet<T> &b2 = bodies[j];
-        T dx = b.x - b2.x;
-        T dy = b.y - b2.y;
-        T dz = b.z - b2.z;
-        T distance = cest::sqrt(dx * dx + dy * dy + dz * dz);
+#ifdef CONSTEXPR_PARALLEL
+    std::array<int, N> id_range{};
+    std::iota(execution::ce_par, id_range.begin(), id_range.end(), 0);
+
+    std::for_each(execution::ce_par, id_range.begin(), id_range.end(), 
+        [dt, eps, &bodies](auto id) mutable {
+        for (int j = 0; j < bodies.size(); j++) {
+          if (id==j)
+            continue;
+          T dx = bodies[id].x - bodies[j].x;
+          T dy = bodies[id].y - bodies[j].y;
+          T dz = bodies[id].z - bodies[j].z;
+          T distance = cexpr_sqrt(dx * dx + dy * dy + dz * dz/* + eps*/);
+          T mag = dt / (distance * distance * distance);
+          bodies[id].vx  -= dx * bodies[j].mass * mag;
+          bodies[id].vy  -= dy * bodies[j].mass * mag;
+          bodies[id].vz  -= dz * bodies[j].mass * mag;
+        }
+    });
+#else
+    for (int i = 0; i < bodies.size(); ++i) {
+      for (int j = 0; j < bodies.size(); j++) {
+        if (i==j)
+          continue;
+        T dx = bodies[i].x - bodies[j].x;
+        T dy = bodies[i].y - bodies[j].y;
+        T dz = bodies[i].z - bodies[j].z;
+        T distance = cexpr_sqrt(dx * dx + dy * dy + dz * dz /*+ eps*/);
         T mag = dt / (distance * distance * distance);
-        b.vx  -= dx * b2.mass * mag;
-        b.vy  -= dy * b2.mass * mag;
-        b.vz  -= dz * b2.mass * mag;
-        b2.vx += dx * b.mass  * mag;
-        b2.vy += dy * b.mass  * mag;
-        b2.vz += dz * b.mass  * mag;
+        bodies[i].vx  -= dx * bodies[j].mass * mag;
+        bodies[i].vy  -= dy * bodies[j].mass * mag;
+        bodies[i].vz  -= dz * bodies[j].mass * mag;
       }
     }
-    
-    for (i = 0; i < bodies.size(); ++i) {
+#endif
+
+#ifdef CONSTEXPR_PARALLEL
+    std::for_each(execution::ce_par, bodies.begin(), bodies.end(), 
+      [dt](auto& b) mutable {
+        b.x += dt * b.vx;
+        b.y += dt * b.vy;
+        b.z += dt * b.vz;
+    });
+#else
+    for (int i = 0; i < bodies.size(); ++i) {
       planet<T> &b = bodies[i];
       b.x += dt * b.vx;
       b.y += dt * b.vy;
       b.z += dt * b.vz;
     }
+#endif
   }
 
   template <typename T, unsigned long N>
   constexpr T Energy(std::array<planet<T>, N> bodies) {
     T e = 0.0;
-    
+
+    // this can be converted to something similar to the loops in the Advance
+    // function, however the accumulation and decrementation of energy in e
+    // makes this difficult to parallelize sadly.
     for (int i = 0; i < bodies.size(); ++i) {
       planet<T> &b = bodies[i];
       e += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy + b.vz * b.vz);
@@ -205,7 +143,7 @@ namespace nbody {
         T dx = b.x - b2.x;
         T dy = b.y - b2.y;
         T dz = b.z - b2.z;
-        T distance = cest::sqrt(dx * dx + dy * dy + dz * dz);
+        T distance = cexpr_sqrt(dx * dx + dy * dy + dz * dz);
         e -= (b.mass * b2.mass) / distance;
       }
     }
@@ -228,18 +166,27 @@ namespace nbody {
     bodies[0].vz = - pz / solar_mass;
   }
 
+  constexpr double RanUnif(long &s) {
+    long ix = s;
+    long k1 = ix / 127773L;
+    ix = 16807L * (ix - k1 * 127773L) - k1 * 2836L;
+    if (ix < 0) 
+      ix = ix + 2147483647L;
+    s = ix;
+    return (ix * 4.656612875e-10);
+  }
+  
   template <typename T, unsigned long N>
   constexpr void Init_Random_Bodies(std::array<planet<T>, N>& bodies) {
-    // TODO: Implement or reuse a random number gen from swaptions or 
-    // somewhere else
+    long seed = 1992;
     for (int i = 0; i < bodies.size(); ++i) {
-      bodies[i].x    = 1.0; //d1(generator);
-      bodies[i].y    = 1.0; //d1(generator);
-      bodies[i].z    = 1.0; //d1(generator);
-      bodies[i].vx   = 1.0;//d1(generator);
-      bodies[i].vy   = 1.0;//d1(generator);
-      bodies[i].vz   = 1.0;//d1(generator);
-      bodies[i].mass = 1.0;//d1(generator);
+      bodies[i].x    = RanUnif(seed);
+      bodies[i].y    = RanUnif(seed);
+      bodies[i].z    = RanUnif(seed);
+      bodies[i].vx   = RanUnif(seed);
+      bodies[i].vy   = RanUnif(seed);
+      bodies[i].vz   = RanUnif(seed);
+      bodies[i].mass = RanUnif(seed);
     }
   }
 
@@ -270,18 +217,19 @@ namespace nbody {
     return std::pair<type, type>(e1, e2);
   }
 }
-Look into std::sqrt copy from libc
-then look into fixing / parallelizing advance above, Paul gave some tips i have 
-written inline and the nbody_brute_force.c might give some ideas 
-then find mandelbrot source or just not care and say its from benchmarksgame as well..
+
 // The source for this is the benchmarks game, the progenitor of which is 
 // the alioth benchmarks (mandelbrot also came from here): 
 // https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/nbody-gcc-1.html
+//
+// //The code began as "C gcc #2":
+//http://benchmarksgame.alioth.debian.org/u64q/program.php?test=nbody&lang=gcc&id=2
+//Actually, this "C gcc (#1)" is a better (simpler) base version:
+//https://benchmarksgame.alioth.debian.org/u64q/program.php?test=nbody&lang=gcc&id=
+
+
 int main() {
   constexpr auto outData = nbody::Calc();
-
-  //Returned Energy 1: -0.169073732
-  //Returned Energy 2: -0.169085017 
   
   // The results are a little different from the runtime version this is based 
   // on, mainly due to the use of cest::sqrt over std::sqrt as there is no 
