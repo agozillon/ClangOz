@@ -10,6 +10,8 @@
 using namespace __cep::experimental;
 
 #include "../helpers/sqrt/cexpr_sqrt.hpp"
+#include "../helpers/exp/cexpr_exp.hpp"
+#include "../helpers/log/cexpr_log.hpp"
 
 #include "cest/vector.hpp"
 #include "cest/cmath.hpp"
@@ -119,7 +121,7 @@ namespace swaptions {
     else 
       r = u;
 
-    r = cest::log(-cest::log(r));
+    r = cexpr_log(-cexpr_log(r));
     r = c[0] + r * (c[1] + r * 
          (c[2] + r * (c[3] + r * 
          (c[4] + r * (c[5] + r * (c[6] + r * (c[7] + r*c[8])))))));
@@ -204,7 +206,7 @@ namespace swaptions {
     for (int i = 0; i < pdexpres.size(); ++i)
       pdexpres[i] = -pdratepath[i] * ddelt;
     for (int i = 0; i < pdexpres.size(); ++i)
-      pdexpres[i] = cest::exp(pdexpres[i]);
+      pdexpres[i] = cexpr_exp(pdexpres[i]);
 
     for (int i = 0; i < pddiscountfactors.size(); ++i)
       pddiscountfactors[i] = 1.0;
@@ -237,7 +239,7 @@ namespace swaptions {
       dstrikecont = swaption.dstrike;
     } else {
       dstrikecont = (1 / swaption.dcompounding) * 
-                    cest::log(1 + swaption.dstrike * swaption.dcompounding);
+                    cexpr_log(1 + swaption.dstrike * swaption.dcompounding);
     }
 
     int iswapvectorlength = m_in - swaption.dmaturity / ddelt + 0.5f;
@@ -258,9 +260,9 @@ namespace swaptions {
 
     for (int i = ifreqratio; i <= iswaptimepoints; i += ifreqratio) {
       if (i != iswaptimepoints)
-        pdswappayoffs[i] = cest::exp(dstrikecont * swaption.dpaymentinterval)-1;
+        pdswappayoffs[i] = cexpr_exp(dstrikecont * swaption.dpaymentinterval)-1;
       if (i == iswaptimepoints)
-        pdswappayoffs[i] = cest::exp(dstrikecont * swaption.dpaymentinterval);
+        pdswappayoffs[i] = cexpr_exp(dstrikecont * swaption.dpaymentinterval);
     }
 
     HJM_Yield_To_Forward(pdforward, swaption.pdyield);
@@ -407,20 +409,14 @@ int main() {
   constexpr auto out = swaptions::calc();
 
   // I've compared the results against the original ParSec benchmark (blocking 
-  // version) and the results are correct, but a little off due to some 
-  // precision errors caused by the use of cest:: functions rather than std::
-  // functions (can't use std:: library for somethings as they are not 
-  // constexpr). You can verify the accuracy by executing at runtime and 
-  // changing all the cest:: functions to std:: functions, at which point the 
-  // results should be identical (may vary with more than 1 thread as there's 
-  // a random number generator involved, but I think it should still be correct)
+  // version) and the results are correct. Compared with the following 
+  // invocation: ./swaptions -ns 4 -sd 1979 -sm 10240
   //
-  // It is possibly of note that this may be doing slightly more work than 
-  // it needs to do, the original ParSec benchmark has some very bad index 
-  // issues where it indexes off the edge of dynamically allocated arrays 
-  // (misallocates values and causes segfaults in certain cases). This doesn't 
-  // really fly with contigious array and also doesn't really work with 
-  // constexpr functions at all, it's a compiler error.
+  // results were:
+  //  Swaption 0: [SwaptionPrice: 6.9320352370 StdError: 0.0012609785] 
+  //  Swaption 1: [SwaptionPrice: 3.2389479790 StdError: 0.0008797101] 
+  //  Swaption 2: [SwaptionPrice: 0.8545941705 StdError: 0.0003274391] 
+  //  Swaption 3: [SwaptionPrice: 6.4801674240 StdError: 0.0016718084]
   for (int i = 0; i < out.size(); ++i) { 
      fprintf(stderr,"Swaption %d: [SwaptionPrice: %.10lf StdError: %.10lf] \n", 
              i, out[i].dsimswaptionmeanprice, 

@@ -15,7 +15,7 @@ using namespace __cep::experimental;
 namespace nbody {
   using type = double;
 
-  constexpr int niters = 1000;
+  constexpr int niters = 500000; // 22 mins~
   constexpr int nbodies = 5;
   
   constexpr type pi = 3.141592653589793;
@@ -230,7 +230,16 @@ namespace nbody {
 
 int main() {
   constexpr auto outData = nbody::Calc();
-  
+
+  // the golden values from the alioth benchmark for 500000 iterations, the 
+  // provided number of iterations in the test on the website are a little too 
+  // large for constexpr tests, we run out of steps after an hour:
+  //
+  // -0.169075164
+  // -0.169096567
+  //
+  // the results appear to be accurate at compile time and runtime!
+
   // The results are a little different from the runtime version this is based 
   // on, mainly due to the use of cest::sqrt over std::sqrt as there is no 
   // constexpr std::sqrt at this time. I have however tested the runtime output

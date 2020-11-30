@@ -9,6 +9,9 @@
 using namespace __cep::experimental;
 
 #include "../helpers/sqrt/cexpr_sqrt.hpp"
+#include "../helpers/exp/cexpr_exp.hpp"
+#include "../helpers/log/cexpr_log.hpp"
+
 #include "cest/cmath.hpp"
 
 #define inv_sqrt_2xPI 0.39894228040143270286
@@ -172,7 +175,7 @@ namespace blackscholes {
     for (int i = 0; i < 5; ++i)
       local += kpow2[i] * magic[i];
 
-    local = 1.0f - (local * cest::exp(-(0.5f * xinput * xinput)) 
+    local = 1.0f - (local * cexpr_exp(-(0.5f * xinput * xinput)) 
                     * inv_sqrt_2xPI);
 
     if (sgn)
@@ -188,7 +191,7 @@ namespace blackscholes {
     char otype = (dat.optiontype == 'P') ? 1 : 0;
 
     double xd1 = (((dat.r + (dat.v * dat.v * 0.5f)) * dat.t) + 
-                    cest::log(dat.s / dat.strike));
+                    cexpr_log(dat.s / dat.strike));
     double xden = dat.v * cexpr_sqrt(dat.t);
     xd1 = xd1 / xden;
     double xd2 = xd1 - xden;
@@ -196,7 +199,7 @@ namespace blackscholes {
     double nofxd1 = CndF(xd1);
     double nofxd2 =  CndF(xd2);
 
-    double futurevaluex = (dat.strike * cest::exp(-(dat.r * dat.t)));
+    double futurevaluex = (dat.strike * cexpr_exp(-(dat.r * dat.t)));
     if (otype == 0) {
       return (dat.s * nofxd1) - (futurevaluex * nofxd2);
     } else {
@@ -319,7 +322,8 @@ bool WritePricesToFile(auto buffer, std::string fname) {
   ofs << "count: " << buffer.size() << "\n";
 
   for (int i = 0; i < buffer.size(); ++i)
-    ofs << buffer[i].price << "  " << buffer[i].error << "\n";
+    ofs << std::setprecision(std::numeric_limits<double>::digits10 + 1) 
+        << buffer[i].price << "  " << buffer[i].error << "\n";
 
   ofs.close(); 
 

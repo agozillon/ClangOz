@@ -5245,32 +5245,39 @@ namespace {
 
         std::tie(OrigFrame, Depth) 
             = EIOrig.getCallFrameAndDepth(CallIndex);
+
+        if (!OrigFrame)
+          return;
+
         std::tie(CloneFrame, Depth) 
             = EIClone.getCallFrameAndDepth(CallIndex);
 
-        // FIXME/TODO: This is a performance issue, I do not want to have 
-        // to clone all the arguments and the temporaries, i would like to
-        // find the EXACT argument or the EXACT temporary but it's hard to
-        // distinguish if it's a temporary or an argument, as copy by 
-        // value arrays seem to reside as an argument where as by 
-        // reference generally resides as a temporary. Then there is an 
-        // issue with the arguments where i cant tell which one actually 
-        // needs to be copied so I have to copy them all. There is no 
-        // APValue equallity check sadly and not all APValues have bases
-        // that I can equality check.
-        //
-        // is there anyway for me to distinguish exactly where it resides 
-        // i.e. temporary or pass by value arg? And if its an arg can I 
-        // restrict it to just that specfic argument index (perhaps copy
-        // defautl constructed APValues if I can find the specific arg 
-        // index)?
-        std::vector<APValue> NewArgsInternal;
-        for (unsigned i = 0; i < OrigFrame->Callee->getNumParams(); ++i) {
-          NewArgsInternal.push_back(OrigFrame->Arguments[i]);
+        // it appears in certain cases we can get a frame with no Callee...
+        if (OrigFrame->Callee) {
+          // FIXME/TODO: This is a performance issue, I do not want to have 
+          // to clone all the arguments and the temporaries, i would like to
+          // find the EXACT argument or the EXACT temporary but it's hard to
+          // distinguish if it's a temporary or an argument, as copy by 
+          // value arrays seem to reside as an argument where as by 
+          // reference generally resides as a temporary. Then there is an 
+          // issue with the arguments where i cant tell which one actually 
+          // needs to be copied so I have to copy them all. There is no 
+          // APValue equallity check sadly and not all APValues have bases
+          // that I can equality check.
+          //
+          // is there anyway for me to distinguish exactly where it resides 
+          // i.e. temporary or pass by value arg? And if its an arg can I 
+          // restrict it to just that specfic argument index (perhaps copy
+          // defautl constructed APValues if I can find the specific arg 
+          // index)?
+          std::vector<APValue> NewArgsInternal;
+          for (unsigned i = 0; i < OrigFrame->Callee->getNumParams(); ++i) {
+            NewArgsInternal.push_back(OrigFrame->Arguments[i]);
+          }
+          SaveTheArgs.push_back(NewArgsInternal);
+          CloneFrame->Arguments = SaveTheArgs.back().data();
         }
-        SaveTheArgs.push_back(NewArgsInternal);
-        CloneFrame->Arguments = SaveTheArgs.back().data();
-
+ 
         // FIXME/TODO: The LValue will only reside as a temporary or as a
         // copy-by-val argument, ill need to work out how to tell which 
         // location its stored
@@ -5347,23 +5354,34 @@ namespace {
           for (unsigned i = 0; i < CloneFrame->Callee->getNumParams(); ++i) {
             NewArgs.push_back(CloneFrame->Arguments[i]);
 
-            if (CloneFrame->Arguments[i].isLValue() && 
-                CloneFrame->Arguments[i].getLValueCallIndex() > 0) {
-                // attempt to skip double copies/work in the case of functions
-                // that have lvalues that point to the same object e.g. begin/end
-                // iterators
-                ArgLValBase = CloneFrame->Arguments[i].getLValueBase();
-                if (skip(ArgLValBase, PrevCopiedLValueBases))
-                  continue;
-                PrevCopiedLValueBases.push_back(ArgLValBase);
+            if (CloneFrame->Arguments[i].isLValue()) { 
+              if (CloneFrame->Arguments[i].getLValueCallIndex() > 0) {
+                   // attempt to skip double copies/work in the case of functions
+                  // that have lvalues that point to the same object e.g. begin/end
+                  // iterators
+                  ArgLValBase = CloneFrame->Arguments[i].getLValueBase();
 
-                CloneLValueObject(CloneFrame->Arguments[i], Original, Clone);
-            }
-            
-            // mostly doing this for lambda captures, but it will also hopefully
-            // cover normal structs, this doesn't cover bases yet, so no 
-            // inheritance
-            if (CloneFrame->Arguments[i].isStruct()) {
+                  if (skip(ArgLValBase, PrevCopiedLValueBases))
+                    continue;
+                  PrevCopiedLValueBases.push_back(ArgLValBase);
+
+                  CloneLValueObject(CloneFrame->Arguments[i], Original, Clone);
+              
+              } else {
+               // has to be somewhere... perhaps its a dynamic alloca or temp?
+               if (auto DA = CloneFrame->Arguments[i].getLValueBase().dyn_cast<DynamicAllocLValue>()) {
+                 auto iter = Original.HeapAllocs.find(DA);
+                 if (iter != Original.HeapAllocs.end()) {
+                    auto HA = *iter;
+                    Clone.NumHeapAllocs++;
+                    auto Result = Clone.HeapAllocs.emplace(std::piecewise_construct,
+                                    std::forward_as_tuple(DA), std::tuple<>());
+                    Result.first->second.AllocExpr = HA.second.AllocExpr;
+                    Result.first->second.Value = HA.second.Value;
+                 }
+               }
+              }
+            } else if (CloneFrame->Arguments[i].isStruct()) {
               for (int j = 0; j < CloneFrame->Arguments[i].getStructNumFields();
                    ++j) {
                 if (CloneFrame->Arguments[i].getStructField(j).isLValue()) {
@@ -5371,14 +5389,20 @@ namespace {
                                      Original, Clone);
                 } 
             }
-            
           }
         }
       }
 
-        
         SaveTheArgs.push_back(NewArgs);
         Clone.CurrentCall->Arguments = SaveTheArgs.back().data();
+
+        // if our current frame (the one the parallel loop resides in) has 
+        // temporaries we must make copies as well
+        if (Original.CurrentCall->Temporaries.size() > 0) {
+          for (auto Tmp : Original.CurrentCall->Temporaries) {
+            Clone.CurrentCall->Temporaries[std::get<0>(Tmp)] = std::get<1>(Tmp);
+          }
+        }
       }
 
 
@@ -5761,13 +5785,6 @@ namespace {
           QTEnd = VD->getType();
         }
 
-      // Need to implement special handling for this, these should be 
-      // updated/reduced specially in the reduction phase rather than using the 
-      // fallback copy behaviour as we wish to use the original offsets of these
-      // DURING the reduction of other things (alternatively we could also just 
-      // keep track of the offsets)
-      NoCopyBackList.push_back(BeginArgOrTemp);
-      NoCopyBackList.push_back(EndArgOrTemp);
 
       if (APVBegin.isLValue() && APVEnd.isLValue()) {
         int64_t EndTySz = 

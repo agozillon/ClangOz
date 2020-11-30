@@ -21,6 +21,11 @@ constexpr auto find_ov1() {
               << std::is_constant_evaluated() << "\n";
     found = std::find(arr.begin(), arr.end(), 27);
   } else {
+    // Note: a little interesting thing about this test is that it will try to 
+    // compute the results of std::find twice and fail the first time. It 
+    // appears to be because of the return value, it's checking it for overflow.
+    // This unfortunately means some small little caveats might occur in the 
+    // first pass that don't occur in the second.
     found = std::find(execution::ce_par, arr.begin(), arr.end(), 27);
   }
   

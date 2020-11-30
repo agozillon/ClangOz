@@ -225,7 +225,7 @@ constexpr double cexpr_sqrt(double x) {
       if (x == 0)
         return x;       /* sqrt(+0)=+0, sqrt(-0)=-0 */
 
-      if (k < 0)
+      if (k < 0) // this guarantees a divide by 0 which is a compile time error
         return (x - x) / (x - x); /* sqrt(-ve)=sNaN */
             
 //      the result of cexpr_sqrtf appears to be incorrect, it returns inf
