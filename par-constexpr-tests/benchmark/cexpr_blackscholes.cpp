@@ -2,12 +2,14 @@
 #include <algorithm>
 #include <iostream>
 #include <fstream>
+#include <cstdio>
 #include <type_traits>
 #include <execution>
 #include <complex>
 
 using namespace __cep::experimental;
 
+#include "../helpers/strtof/cexpr_strtof.hpp"
 #include "../helpers/sqrt/cexpr_sqrt.hpp"
 #include "../helpers/exp/cexpr_exp.hpp"
 #include "../helpers/log/cexpr_log.hpp"
@@ -15,7 +17,7 @@ using namespace __cep::experimental;
 #include "cest/cmath.hpp"
 
 #define inv_sqrt_2xPI 0.39894228040143270286
-  
+
 #ifdef BLACKSCHOLES_4
 #include "blackscholes-input/in_4.hpp"
 #elif BLACKSCHOLES_16
@@ -32,104 +34,23 @@ using namespace __cep::experimental;
 #include "blackscholes-input/in_4.hpp"
 #endif
 
-// this implementation was taken from: 
-//  https://codereview.stackexchange.com/questions/44869/implement-strtod-parsing
-// thanks to the user that wrote this!
-constexpr double strtodouble(const char* str, char** endptr){
-    double result = 0.0;
-    char signedResult = '\0';
-    char signedExponent = '\0';
-    double decimals = 0;
-    bool isExponent = false;
-    bool hasExponent = false;
-    bool hasResult = false;
-    // exponent is logically int but is coded as double so that its eventual
-    // overflow detection can be the same as for double result
-    double exponent = 0;
-    char c;
-
-    for (; '\0' != (c = *str); ++str) {
-        if ((c >= '0') && (c <= '9')) {
-            int digit = c - '0';
-            if (isExponent) {
-                exponent = (10 * exponent) + digit;
-                hasExponent = true;
-            } else if (decimals == 0) {
-                result = (10 * result) + digit;
-                hasResult = true;
-            } else {
-                result += (double)digit / decimals;
-                decimals *= 10;
-            }
-            continue;
-        }
-
-        if (c == '.') {
-            if (!hasResult) break; // don't allow leading '.'
-            if (isExponent) break; // don't allow decimal places in exponent
-            if (decimals != 0) break; // this is the 2nd time we've found a '.'
-
-            decimals = 10;
-            continue;
-        }
-
-        if ((c == '-') || (c == '+')) {
-            if (isExponent) {
-                if (signedExponent || (exponent != 0)) break;
-                else signedExponent = c;
-            } else {
-                if (signedResult || (result != 0)) break;
-                else signedResult = c;
-            }
-            continue;
-        }
-
-        if (c == 'E') {
-            if (!hasResult) break; // don't allow leading 'E'
-            if (isExponent) break;
-            else isExponent = true;
-            continue;
-        }
-
-        break; // unexpected character
-    }
-
-    if (isExponent && !hasExponent) {
-        while (*str != 'E')
-            --str;
-    }
-
-    if (!hasResult && signedResult) --str;
-
-    if (endptr) *endptr = const_cast<char*>(str);
-
-    for (; exponent != 0; --exponent) {
-        if (signedExponent == '-') result /= 10;
-        else result *= 10;
-    }
-
-    if (signedResult == '-' && result != 0) result = -result;
-
-    return result;
-}
-
 namespace blackscholes {
   constexpr int nruns = 1; // need to find a good number for this
   
-  template <typename T = double/*fortran real*/> 
+  template <typename T = float/*fortran real*/> 
   struct OptionData {
-      inline constexpr OptionData () {
+      constexpr OptionData () {
         optiontype = 1;
         error = false;
         price = 0;
       }
       
-      inline constexpr OptionData(const T& s, const T& strike, const T& r,
+      constexpr OptionData(const T& s, const T& strike, const T& r,
                         const T& v, const T& t, const char& optiontype) 
           : s(s), strike(strike), r(r), v(v), t(t), optiontype(optiontype) {
       }
 
-      inline constexpr OptionData<T> &operator=(const OptionData<T> &rhs) {
+      constexpr OptionData<T> &operator=(const OptionData<T> &rhs) {
         s = rhs.s;
         strike = rhs.strike;
         r = rhs.r;
@@ -149,13 +70,13 @@ namespace blackscholes {
       bool error;
   };
 
-  template <typename T = double>
-  inline constexpr T CndF (const T& input) {
+  template <typename T = float>
+  constexpr T CndF (const T& input) {
     T xinput;
     T kpow2[5];
     bool sgn;
     
-    if (input < 0.0f) {
+    if (input < 0.0) {
       xinput = -input;
       sgn = true;
     } else {
@@ -165,41 +86,44 @@ namespace blackscholes {
 
     // computing some powers optimally like the original, even if it degrades 
     // reading a bit
-    kpow2[0] = (1.0f / (1.0f + (0.2316419f * xinput)));
+    kpow2[0] = (1.0 / (1.0 + (0.2316419 * xinput)));
     for (int i = 0; i < 4; ++i) 
       kpow2[i + 1] = kpow2[i] * kpow2[0];
 
-    const double magic[5] = {0.31938154f, -0.35656378f, 1.7814779f, -1.8212559f, 
-                             1.3302745f};
+    // these need to be doubles even if the result / inputs are floats otherwise
+    // they lose precision or are at least not the same as if you typed them in
+    // as a constant
+    const double magic[5] = {0.319381530, -0.356563782, 1.781477937, 
+                            -1.821255978, 1.330274429};
+
     T local = 0;
     for (int i = 0; i < 5; ++i)
       local += kpow2[i] * magic[i];
-
-    local = 1.0f - (local * cexpr_exp(-(0.5f * xinput * xinput)) 
-                    * inv_sqrt_2xPI);
+      
+    local = 1.0 - (local * (cexpr_expf(-0.5f * xinput * xinput) 
+                    * inv_sqrt_2xPI));
 
     if (sgn)
-      local = 1.0f - local;
+      local = 1.0 - local;
 
     return local;
   }
 
-  // I have no idea what the Sequrono segment of this means, so the 
-  // capitlization is arbitrary for now
-  template <typename T = double> 
-  inline constexpr double BlkSchlsEqEuroNoDiv(const OptionData<T>& dat) {
+  template <typename T = float> 
+  constexpr T BlkSchlsEqEuroNoDiv(const OptionData<T>& dat) {
     char otype = (dat.optiontype == 'P') ? 1 : 0;
 
-    double xd1 = (((dat.r + (dat.v * dat.v * 0.5f)) * dat.t) + 
-                    cexpr_log(dat.s / dat.strike));
-    double xden = dat.v * cexpr_sqrt(dat.t);
+    float xd1 = (((dat.r + (dat.v * dat.v * 0.5)) * dat.t) + 
+                    cexpr_logf(dat.s / dat.strike));
+    float xden = dat.v * cexpr_sqrtf(dat.t);
     xd1 = xd1 / xden;
-    double xd2 = xd1 - xden;
-    
-    double nofxd1 = CndF(xd1);
-    double nofxd2 =  CndF(xd2);
+    float xd2 = xd1 - xden;
 
-    double futurevaluex = (dat.strike * cexpr_exp(-(dat.r * dat.t)));
+    float nofxd1 = CndF(xd1);
+    float nofxd2 =  CndF(xd2);
+
+    float futurevaluex = (dat.strike * cexpr_expf(-(dat.r * dat.t)));
+
     if (otype == 0) {
       return (dat.s * nofxd1) - (futurevaluex * nofxd2);
     } else {
@@ -211,8 +135,8 @@ namespace blackscholes {
   // to char arrays and don't seem to be able to use things like string stream and 
   // anything string related that relies on C functionallity!
   constexpr auto ParseInputData() { 
-    std::array<OptionData<double>, numOfData> data{}; // input data
-    
+    std::array<OptionData<float>, numOfData> data{}; // input data
+
     int i = 0, sz = 0;
     char tmp[32]; // this means if a number happens to be bigger than 32 digits
                   // we have a bit of a problem
@@ -224,21 +148,21 @@ namespace blackscholes {
       if (inputData[i] == ' ' || inputData[i] == '\n') {
         switch (currentVal) {
           case 0:
-              data[currentData].s = strtodouble(tmp, nullptr);
+              data[currentData].s = cexpr_strtof(tmp, nullptr);
             break;
           case 1:
-              data[currentData].strike = strtodouble(tmp, nullptr);
+              data[currentData].strike = cexpr_strtof(tmp, nullptr);
             break;
           case 2:
-              data[currentData].r = strtodouble(tmp, nullptr);
+              data[currentData].r = cexpr_strtof(tmp, nullptr);
             break;
           case 3: // divq, doesn't seem to be used
             break;
           case 4:
-              data[currentData].v = strtodouble(tmp, nullptr);
+              data[currentData].v = cexpr_strtof(tmp, nullptr);
             break;
           case 5:
-              data[currentData].t = strtodouble(tmp, nullptr);
+              data[currentData].t = cexpr_strtof(tmp, nullptr);
             break;
           case 6:
               data[currentData].optiontype = tmp[0];
@@ -246,8 +170,7 @@ namespace blackscholes {
           case 7: // divs, doesn't seem to be used
             break;
           case 8: // dgrefval, reference/golden value for calculated price
-//              std::cout << tmp <<"\n";
-              data[currentData].dgrefval = strtodouble(tmp, nullptr);
+              data[currentData].dgrefval = cexpr_strtof(tmp, nullptr);
             break;
         }
 
@@ -269,7 +192,7 @@ namespace blackscholes {
 
   constexpr auto Calc() {
     auto data = ParseInputData();
-
+    
 #ifdef CONSTEXPR_PARALLEL
   // This top level loop really adds nothing to the calculation it just forces
   // an extra iteration of the same calculation, so I've chosen to leave it as
@@ -289,24 +212,20 @@ namespace blackscholes {
 
     // error checking, it's very difficult to do this as a compile time error 
     // using static_assert right now. I've also tested this against the Parsec
-    // version, it's the same output minus some precision from rounding errors.
-    //
-    // The 1e-4 may be a little stringent, we get a decent pass rate but still 
-    // a lot of failures from being slightly off (1e-3 is a lot better (3836 are 
-    // off) with 1e-2 having little to no errors).
-    //
-    // This is likely due to reading it all in from strings using a non-standard
-    // string to double implementation and likely some good old fashioned 
-    // rounding errors, but it appears to be within reasonable approximation.
+    // version, it's the similar output minus some precision from rounding 
+    // errors and order of operations as I refactored the functions. 
+    // 
+    // Unfortunately we can only get within 1e-4 margin of error the same as 
+    // ParSec can manage, 1e-5 is a little too strict
 #ifdef CONSTEXPR_PARALLEL
     std::for_each(execution::ce_par, data.begin(), data.end(), 
       [](auto& data) mutable {
-        if (cest::fabs(data.dgrefval - data.price) >= 1e-3)
+        if (cest::fabs(data.dgrefval - data.price) >= 1e-4)
           data.error = true;
     });
 #else
     for (int i = 0; i < data.size(); ++i)
-      if (cest::fabs(data[i].dgrefval - data[i].price) >= 1e-3)
+      if (cest::fabs(data[i].dgrefval - data[i].price) >= 1e-4)
         data[i].error = true;
 #endif
 
@@ -322,7 +241,7 @@ bool WritePricesToFile(auto buffer, std::string fname) {
   ofs << "count: " << buffer.size() << "\n";
 
   for (int i = 0; i < buffer.size(); ++i)
-    ofs << std::setprecision(std::numeric_limits<double>::digits10 + 1) 
+    ofs << std::setprecision(std::numeric_limits<float>::digits10 + 1) 
         << buffer[i].price << "  " << buffer[i].error << "\n";
 
   ofs.close(); 
@@ -330,9 +249,38 @@ bool WritePricesToFile(auto buffer, std::string fname) {
   return true;
 }
 
+bool WritePricesToFilePrintf(auto buffer, std::string fname) {
+    //Write prices to output file
+    auto file = fopen(fname.c_str(), "w");
+
+    fprintf(file, "%zu\n", buffer.size());
+
+    for (int i = 0; i < buffer.size(); i++) {
+      fprintf(file, "%.18f\n", buffer[i].price);
+    }
+    
+    fclose(file);
+
+    return true;
+}
+
+//the problem may be the scuffed way we have to read in input data at compile time
+//test it at runtime by replacing all functions with their std:: variants and reading
+//in the input at runtime the same as we'd normally do in the parsec benchmark / pauls
+
+//if it's still wrong then there is a problem in the code, if it's correct then we just
+//have to live with the fact that our constexpr read in is killing some of the precision
 int main() {
   constexpr auto outData = blackscholes::Calc();
-  WritePricesToFile(outData, "blackscholes_out.dat");
+  
+  for (auto dat : outData) {
+    if (dat.error == true)
+      std::cout << "error was detected \n";
+  }
 
+//  prints with less precision
+//  WritePricesToFile(outData, "blackscholes_out.dat");
+
+  WritePricesToFilePrintf(outData, "blackscholes_out.dat");
   return 0;
 }
