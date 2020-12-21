@@ -515,29 +515,7 @@ namespace {
     /// parameters' function scope indices.
     APValue *Arguments;
     
-    /// TODO/FIXME: Convert to vector or array, no real need for this to be a
-    /// map anymore
-    /// Similar to temporaries these are created within the current scope a loop
-    /// that's being parallelized is found in and we wish to maintain 
-    /// appropriate ownership of the values. So these essentially "shadow" 
-    /// existing variables on a per thread basis
-    typedef std::map<unsigned, APValue> ThreadArgMapTy;
-    ThreadArgMapTy ThreadArgumentsMap;
-
     APValue* getArguments(unsigned Index) {
-      // TODO: This is a naive implementation that's going to check the
-      // ThreadArgumentsMap first, then if nothing is found it'll check the 
-      // Arguments array, this isn't ideal as it impacts all code paths, ideally
-      // there will be a new ThreadedContext boolean that is set by a RAII 
-      // Scope when we're about to do some constexpr eval in a threaded context 
-      // and then the Scope will release it apon destruction
-      // OR....
-      // Just check theres something actually in the map before looking
-      auto val = ThreadArgumentsMap.find(Index);
-      if (val != ThreadArgumentsMap.end()) {
-        return &val->second; 
-      }
-
       return &Arguments[Index];
     }
     
@@ -551,9 +529,7 @@ namespace {
     typedef std::map<MapKeyTy, APValue> MapTy;
     /// Temporaries - Temporary lvalues materialized within this stack frame.
     MapTy Temporaries;
-    
-    MapTy ThreadTemporaries;
-    
+
     /// CallLoc - The location of the call expression for this call.
     SourceLocation CallLoc;
 
@@ -596,10 +572,6 @@ namespace {
     APValue *getTemporary(const void *Key, unsigned Version) {
       MapKeyTy KV(Key, Version);
 
-      auto val = ThreadTemporaries.find(KV);
-      if (val != ThreadTemporaries.end() && val->first == KV) {
-        return &val->second; 
-      }
       auto LB = Temporaries.lower_bound(KV);
       if (LB != Temporaries.end() && LB->first == KV)
         return &LB->second;
@@ -613,10 +585,6 @@ namespace {
 
     // Return the current temporary for Key in the map.
     APValue *getCurrentTemporary(const void *Key) {
-      auto val = ThreadTemporaries.upper_bound(MapKeyTy(Key, UINT_MAX));
-      if (val != ThreadTemporaries.end() && std::prev(val)->first.first == Key){
-        return &std::prev(val)->second; 
-      }
       auto UB = Temporaries.upper_bound(MapKeyTy(Key, UINT_MAX));
       if (UB != Temporaries.begin() && std::prev(UB)->first.first == Key)
         return &std::prev(UB)->second;
@@ -625,10 +593,6 @@ namespace {
 
     // Return the version number of the current temporary for Key.
     unsigned getCurrentTemporaryVersion(const void *Key) const {
-      auto val = ThreadTemporaries.find(MapKeyTy(Key, UINT_MAX));
-      if (val != ThreadTemporaries.end() && std::prev(val)->first.first == Key){
-        return std::prev(val)->first.second;
-      }
       auto UB = Temporaries.upper_bound(MapKeyTy(Key, UINT_MAX));
       if (UB != Temporaries.begin() && std::prev(UB)->first.first == Key)
         return std::prev(UB)->first.second;
@@ -1468,9 +1432,9 @@ void SubobjectDesignator::diagnosePointerArithmetic(EvalInfo &Info,
 CallStackFrame::CallStackFrame(const CallStackFrame& CSF, EvalInfo& EI)
       : Info(EI), Caller(CSF.Caller),
       Callee(CSF.Callee), This(CSF.This), Arguments(CSF.Arguments), 
-      ThreadArgumentsMap(CSF.ThreadArgumentsMap), Temporaries(CSF.Temporaries), 
-      ThreadTemporaries(CSF.ThreadTemporaries), CallLoc(CSF.CallLoc), 
-      Index(CSF.Index), TempVersionStack(CSF.TempVersionStack),
+      Temporaries(CSF.Temporaries), 
+      CallLoc(CSF.CallLoc), Index(CSF.Index), 
+      TempVersionStack(CSF.TempVersionStack), 
       CurTempVersion(CSF.CurTempVersion), 
       LambdaCaptureFields(CSF.LambdaCaptureFields), 
       LambdaThisCaptureField(CSF.LambdaThisCaptureField)
@@ -4971,10 +4935,7 @@ void SetArgOrTemp(llvm::Any ArgOrTemp, CallStackFrame *CSF, APValue SetTo,
   // lifetime easier. This is opposed to the temporarys which are owned by the
   // CallStackFrame and can be handled simpler.
   auto index = llvm::any_cast<unsigned int>(ArgOrTemp);
-  if (ThreadLocal)
-    CSF->ThreadArgumentsMap[index] = SetTo;
-  else
-    CSF->Arguments[index] = SetTo;
+  CSF->Arguments[index] = SetTo;
 }
 
 // This is a helper for offsetting contigious array iterators and limiting
@@ -5933,7 +5894,7 @@ public:
           break;
         }
 
-        ThreadInfo[i].CurrentCall->ThreadArgumentsMap[FuncIndex] = APV;
+        ThreadInfo[i].CurrentCall->Arguments[FuncIndex] = APV;
       } else if (APV.isStruct()) {
         int64_t TySz = 0;
         if (auto RT = dyn_cast<RecordType>(QT->getUnqualifiedDesugaredType())) {
@@ -5971,7 +5932,7 @@ public:
           break;
         }
 
-        ThreadInfo[i].CurrentCall->ThreadArgumentsMap[FuncIndex] = APV;
+        ThreadInfo[i].CurrentCall->Arguments[FuncIndex] = APV;
       } else if (APV.isInt()) {
         switch (OpTyInt) {
         case 1: // PostInc
@@ -5992,12 +5953,12 @@ public:
           break;
         }
 
-        ThreadInfo[i].CurrentCall->ThreadArgumentsMap[FuncIndex] = APV;
+        ThreadInfo[i].CurrentCall->Arguments[FuncIndex] = APV;
       } else if (APV.isAbsent()) {
         // Unsure how this should technically be handled, the object is
         // outside of its lifetime, but is it possible its lifetime will
         // start later?
-        ThreadInfo[i].CurrentCall->ThreadArgumentsMap[FuncIndex] = APV;
+        ThreadInfo[i].CurrentCall->Arguments[FuncIndex] = APV;
       } else {
         llvm_unreachable("Unhandled Loop Dependents Case");
       }
