@@ -895,8 +895,12 @@ def fconstant_cfstrings : Flag<["-"], "fconstant-cfstrings">, Group<f_Group>;
 def fconstant_string_class_EQ : Joined<["-"], "fconstant-string-class=">, Group<f_Group>;
 def fconstexpr_depth_EQ : Joined<["-"], "fconstexpr-depth=">, Group<f_Group>;
 def fconstexpr_steps_EQ : Joined<["-"], "fconstexpr-steps=">, Group<f_Group>;
-def fexperimental_constexpr_parallel : Flag<["-"], "fexperimental-constexpr-parallel">,  Group<f_Group>,
-    HelpText<"Compile Time Parallelism">, Flags<[CC1Option]>;
+
+def fexperimental_constexpr_parallel : Flag<["-"], "fexperimental-constexpr-parallel">,  Group<f_Group>, HelpText<"Compile Time Parallelism">, Flags<[CC1Option]>;
+def fconstexpr_parallel_partition_size : Separate<["-"], "fconstexpr-parallel-partition-size">,
+  HelpText<"Set number of threads allowable for compile time parallelism">, Flags<[CC1Option]>;
+def fconstexpr_parallel_partition_size_EQ : Joined<["-"], "fconstexpr-parallel-partition-size=">, Group<f_Group>, Flags<[CC1Option]>;
+
 def fexperimental_new_constant_interpreter : Flag<["-"], "fexperimental-new-constant-interpreter">, Group<f_Group>,
   HelpText<"Enable the experimental new constant interpreter">, Flags<[CC1Option]>;
 def fconstexpr_backtrace_limit_EQ : Joined<["-"], "fconstexpr-backtrace-limit=">,

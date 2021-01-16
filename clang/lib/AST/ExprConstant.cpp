@@ -6975,7 +6975,9 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
     /// TODO/FIXME: The threading "manager" state and class could be stored
     /// inside of the ASTContext similar to interp::Context which is accessible
     /// through EvalInfo
-    static llvm::ThreadPool tp;
+    static llvm::ThreadPool tp(
+        llvm::hardware_concurrency(
+          Info.getLangOpts().ConstexprParallelPartitionSize));
 
     // I also need to know the context it's in, not just that its named
     // transform e.g. I need to know its defined in the standard library and not

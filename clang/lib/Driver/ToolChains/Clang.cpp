@@ -5090,6 +5090,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(A->getValue());
   }
 
+  if (Arg *A = Args.getLastArg(options::OPT_fconstexpr_parallel_partition_size_EQ)) {
+    CmdArgs.push_back("-fconstexpr-parallel-partition-size");
+    CmdArgs.push_back(A->getValue());
+  }
+  
   if (Arg *A = Args.getLastArg(options::OPT_fconstexpr_steps_EQ)) {
     CmdArgs.push_back("-fconstexpr-steps");
     CmdArgs.push_back(A->getValue());

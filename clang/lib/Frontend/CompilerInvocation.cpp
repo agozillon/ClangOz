@@ -3204,6 +3204,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
   Opts.ExperimentalConstexprParallel = 
         Args.hasArg(options::OPT_fexperimental_constexpr_parallel);
+  Opts.ConstexprParallelPartitionSize =
+      getLastArgUIntValue(Args, options::OPT_fconstexpr_parallel_partition_size, 
+                    4, Diags);
 
   // Set CUDA mode for OpenMP target NVPTX/AMDGCN if specified in options
   Opts.OpenMPCUDAMode = Opts.OpenMPIsDevice && (T.isNVPTX() || T.isAMDGCN()) &&

@@ -148,7 +148,9 @@ LANGOPT(RelaxedTemplateTemplateArgs, 1, 0, "C++17 relaxed matching of template t
 
 LANGOPT(ExperimentalConstexprParallel, 1, 0, 
   "enable compile time multithreading for certain standard library functions")
-
+VALUE_LANGOPT(ConstexprParallelPartitionSize, 32, 4, 
+  "specify thread pool size and level of work partitioning for constexpr parallelism")
+              
 LANGOPT(DoubleSquareBracketAttributes, 1, 0, "'[[]]' attributes extension for all language standard modes")
 
 COMPATIBLE_LANGOPT(RecoveryAST, 1, 0, "Preserve expressions in AST when encountering errors")
