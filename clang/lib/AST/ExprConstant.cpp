@@ -63,6 +63,7 @@
 #include <future>
 #include <functional>
 #include <stack>
+#include <chrono>
 #include <thread>
 #include <iostream>
 
@@ -76,6 +77,8 @@ using llvm::Optional;
   
 static std::mutex eval_lock;
 static std::recursive_mutex eval_lock2;
+std::chrono::time_point<std::chrono::system_clock> first_stamp;
+std::chrono::time_point<std::chrono::system_clock> second_stamp;
 
 namespace {
   struct LValue;
@@ -7917,6 +7920,28 @@ static bool HandleFunctionCall(SourceLocation CallLoc,
   if (Info.getLangOpts().ExperimentalConstexprParallel &&
       Callee->getNameAsString() == "__ThreadUnlock")
     eval_lock.unlock();
+
+  typedef std::chrono::high_resolution_clock Time;
+  typedef std::chrono::milliseconds ms;
+  typedef std::chrono::duration<float> fsec;
+
+  // trying a little trick to print times with minimum overhead...but this will
+  // cause some inbuilt delay as it's likely going to have to parse the AST a 
+  // bit within the const interpreter before it gets the start and end times 
+  if (Callee->getNameAsString() == "__GetTimeStampStart")
+    first_stamp = Time::now();
+
+  if (Callee->getNameAsString() == "__GetTimeStampEnd")
+    second_stamp = Time::now();
+  
+  // currently will double print/always print once
+  if (Callee->getNameAsString() == "__PrintTimeStamp") {
+      fsec fs = second_stamp - first_stamp;
+      ms d = std::chrono::duration_cast<ms>(fs);
+      std::cout << "Print Time Stamp: " << fs.count() << "s\n";
+      std::cout << "Print Time Stamp: " << d.count() << "ms\n";
+      std::cout << std::endl;
+  }
 
   ArgVector ArgValues(Args.size());
   if (!EvaluateArgs(Args, ArgValues, Info, Callee))

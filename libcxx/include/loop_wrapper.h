@@ -108,6 +108,30 @@ namespace cest::loop_wrapper {
     Releases the lock that __ThreadLock has aquired.
   */
   constexpr bool __ThreadUnlock(){ return true; }
+
+  /*
+    Not really wrappers that affect anything other than taking some time stamps
+    can only track one stamp at a time
+    
+    Should only really be used out with a constexpr parallel section.
+  */
+  constexpr bool __GetTimeStampStart(){ return true; }
+
+  /*
+    Not really wrappers that affect anything other than taking some time stamps
+    can only track one stamp at a time.
+    
+    Should only really be used out with a constexpr parallel section.
+  */
+  constexpr bool __GetTimeStampEnd(){ return true; }
+  
+  /*
+    Asks the compiler to print a time stamp at the current point based on the
+    currently recorded Start and End.
+    
+    Should only really be used out with a constexpr parallel section.
+  */
+  constexpr bool __PrintTimeStamp(){ return true; }
   
   /*
     Equivelant of __IteratorLoopStep/__BeginEndIteratorPair for normal loops 
