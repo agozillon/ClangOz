@@ -817,7 +817,7 @@ namespace {
     /// StepsLeft - The remaining number of evaluation steps we're permitted
     /// to perform. This is essentially a limit for the number of statements
     /// we will evaluate.
-    unsigned StepsLeft;
+    uint64_t StepsLeft;
 
     /// Enable the experimental new constant interpreter. If an expression is
     /// not supported by the interpreter, an error is triggered.
@@ -5870,24 +5870,20 @@ public:
                            .getQuantity();
 
         switch (OpTyInt) {
-        case 1: // PostInc
-          OffsetLValue(Info.Ctx, APV, TySz, (ThreadPartitionSize * i), true,
-                       BoundArrSz);
+        case 1:   // PostInc
+        case 2: { // PreInc
+          int64_t LValOffset = ThreadPartitionSize * i;
+          OffsetLValue(Info.Ctx, APV, TySz, LValOffset, true, BoundArrSz);
           break;
-        case 2: // PreInc
-          OffsetLValue(Info.Ctx, APV, TySz, (ThreadPartitionSize * i), true,
-                       BoundArrSz);
+        }
+        case 3:   // PostDec
+        case 4: { // PreDec
+          int64_t LValOffset = ThreadPartitionSize * 
+                                  (ThreadInfo.size() - (i + 1));
+          if (i != ThreadInfo.size() - 1) LValOffset += ThreadPartitionOverflow;
+          OffsetLValue(Info.Ctx, APV, TySz,-LValOffset, true, BoundArrSz);
           break;
-        case 3: // PostDec
-          OffsetLValue(Info.Ctx, APV, TySz,
-                       -(ThreadPartitionSize * (ThreadInfo.size() - (i + 1))),
-                       true, BoundArrSz);
-          break;
-        case 4: // PreDec
-          OffsetLValue(Info.Ctx, APV, TySz,
-                       -(ThreadPartitionSize * (ThreadInfo.size() - (i + 1))),
-                       true, BoundArrSz);
-          break;
+        }
         default:
           llvm_unreachable("Incorrect OperationType passed to "
                            "IteratorLoopStep");
@@ -5908,24 +5904,22 @@ public:
         }
 
         switch (OpTyInt) {
-        case 1: // PostInc
-          OffsetLValue(Info.Ctx, APV.getStructField(0), TySz,
-                       (ThreadPartitionSize * i), true, BoundArrSz);
-          break;
-        case 2: // PreInc
-          OffsetLValue(Info.Ctx, APV.getStructField(0), TySz,
-                       (ThreadPartitionSize * i), true, BoundArrSz);
-          break;
-        case 3: // PostDec
-          OffsetLValue(Info.Ctx, APV.getStructField(0), TySz,
-                       -(ThreadPartitionSize * (ThreadInfo.size() - (i + 1))),
+        case 1:   // PostInc
+        case 2: { // PreInc
+          int64_t LValOffset = ThreadPartitionSize * i;
+          OffsetLValue(Info.Ctx,  APV.getStructField(0), TySz, LValOffset, 
                        true, BoundArrSz);
           break;
-        case 4: // PreDec
-          OffsetLValue(Info.Ctx, APV.getStructField(0), TySz,
-                       -(ThreadPartitionSize * (ThreadInfo.size() - (i + 1))),
+        }
+        case 3:   // PostDec
+        case 4: { // PreDec 
+          int64_t LValOffset = ThreadPartitionSize * 
+                                  (ThreadInfo.size() - (i + 1));
+          if (i != ThreadInfo.size() - 1) LValOffset += ThreadPartitionOverflow;
+          OffsetLValue(Info.Ctx,  APV.getStructField(0), TySz, -LValOffset, 
                        true, BoundArrSz);
           break;
+        }
         default:
           llvm_unreachable("Incorrect OperationType passed to "
                            "IteratorLoopStep");
