@@ -34,9 +34,19 @@ using namespace __cep::experimental;
 #include "blackscholes-input/in_4.hpp"
 #endif
 
-namespace blackscholes {
-  constexpr int nruns = 1; // need to find a good number for this
-  
+#ifdef NRUN_1
+  constexpr int nruns = 1;
+#elif NRUN_2
+  constexpr int nruns = 2;
+#elif NRUN_3
+  constexpr int nruns = 3;
+#elif NRUN_4
+  constexpr int nruns = 4;
+#else
+  constexpr int nruns = 1;
+#endif
+
+namespace blackscholes {  
   template <typename T = float/*fortran real*/> 
   struct OptionData {
       constexpr OptionData () {
@@ -193,6 +203,8 @@ namespace blackscholes {
   constexpr auto Calc() {
     auto data = ParseInputData();
     
+    __GetTimeStampStart();
+    
 #ifdef CONSTEXPR_PARALLEL
   // This top level loop really adds nothing to the calculation it just forces
   // an extra iteration of the same calculation, so I've chosen to leave it as
@@ -210,6 +222,10 @@ namespace blackscholes {
         data[j].price = BlkSchlsEqEuroNoDiv(data[j]);
 #endif
 
+    __GetTimeStampEnd();
+    __PrintTimeStamp();
+
+    __GetTimeStampStart();
     // error checking, it's very difficult to do this as a compile time error 
     // using static_assert right now. I've also tested this against the Parsec
     // version, it's the similar output minus some precision from rounding 
@@ -229,6 +245,9 @@ namespace blackscholes {
         data[i].error = true;
 #endif
 
+    __GetTimeStampEnd();
+    __PrintTimeStamp();
+    
     return data;
   }
   

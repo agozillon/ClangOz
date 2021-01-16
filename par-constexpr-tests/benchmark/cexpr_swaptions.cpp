@@ -16,14 +16,50 @@ using namespace __cep::experimental;
 #include "cest/vector.hpp"
 #include "cest/cmath.hpp"
 
-namespace swaptions {
-  constexpr int num_trials = 10240; // 102400, was the default
-  constexpr int nswaptions = 4; /*the original swaptions has a caveat that this 
-                                  has to be the same number as there are cores
-                                  presumably as it's the main parallelization 
-                                  point, for us it cannot go below the numbers 
-                                  of cores and ideally should be a multiple of
-                                  the core count*/
+namespace swaptions {                  
+// 102400, was the default
+#ifdef NTRIALS_5120
+  constexpr int num_trials = 5120;
+#elif NTRIALS_10240
+  constexpr int num_trials = 10240;
+#elif NTRIALS_20480
+  constexpr int num_trials = 20480;
+#elif NTRIALS_40960
+  constexpr int num_trials = 40960;
+#elif NTRIALS_81920
+  constexpr int num_trials = 81920;
+#elif NTRIALS_102400
+  constexpr int num_trials = 102400;
+#else
+  constexpr int num_trials = 10240;
+#endif
+
+/* 
+   The original swaptions has a caveat that this 
+   has to be the same number as there are cores
+   presumably as it's the main parallelization 
+   point, for us it cannot go below the numbers 
+   of cores and ideally should be a multiple of
+   the core count
+*/
+#ifdef NSWAPTIONS_4
+  constexpr int nswaptions = 4;
+#elif NSWAPTIONS_8
+  constexpr int nswaptions = 8;
+#elif NSWAPTIONS_16
+  constexpr int nswaptions = 16;
+#elif NSWAPTIONS_32
+  constexpr int nswaptions = 32;
+#elif NSWAPTIONS_64
+  constexpr int nswaptions = 64;
+#elif NSWAPTIONS_128
+  constexpr int nswaptions = 128;
+#elif NSWAPTIONS_256
+  constexpr int nswaptions = 256;
+#else
+  constexpr int nswaptions = 4;
+#endif
+
   constexpr int ki = 4;
   constexpr int m_in = 11;
   constexpr int m_ifactors = 3;
@@ -380,6 +416,7 @@ namespace swaptions {
          }
     }
 
+  __GetTimeStampStart();
   // change to par for_each, i can either do it the simple way by doing it 
   // slightly differently from their loop, we can attach the price to the struct
   // and print that out instead, do the generate iota and index the 
@@ -400,7 +437,9 @@ namespace swaptions {
       prices[i] = HJM_Swaption_Blocking(swaptions[i], swaption_seed+i, 
                                         num_trials);
 #endif
-
+  __GetTimeStampEnd();
+  __PrintTimeStamp();
+    
     return prices;
   }
 } // namespace swaptions

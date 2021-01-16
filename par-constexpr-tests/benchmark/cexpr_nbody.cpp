@@ -15,9 +15,34 @@ using namespace __cep::experimental;
 namespace nbody {
   using type = double;
 
+#ifdef NITERS_62500
+  constexpr int niters = 62500;
+#elif NITERS_125000
+  constexpr int niters = 125000;
+#elif NITERS_250000
+  constexpr int niters = 250000;
+#elif NITERS_500000
+  constexpr int niters = 500000;
+#elif NITERS_1000000
+  constexpr int niters = 1000000;
+#else
   constexpr int niters = 500000; // 22 mins~
+#endif
+
+#ifdef NBODIES_5
   constexpr int nbodies = 5;
-  
+#elif NBODIES_10
+  constexpr int nbodies = 10;
+#elif NBODIES_15
+  constexpr int nbodies = 15;
+#elif NBODIES_20
+  constexpr int nbodies = 20;
+#elif NBODIES_25
+  constexpr int nbodies = 25;
+#else
+  constexpr int nbodies = 5;
+#endif
+
   constexpr type pi = 3.141592653589793;
   constexpr type solar_mass = 4 * pi * pi;
   constexpr type days_per_year = 365.24;
@@ -75,6 +100,8 @@ namespace nbody {
   constexpr void Advance(std::array<planet<T>, N>& bodies, T dt) {
     const T eps = T{0.1}; // softening factor
 
+    __GetTimeStampStart();
+    
 #ifdef CONSTEXPR_PARALLEL
     std::array<int, N> id_range{};
     std::iota(execution::ce_par, id_range.begin(), id_range.end(), 0);
@@ -126,6 +153,9 @@ namespace nbody {
       b.z += dt * b.vz;
     }
 #endif
+
+    __GetTimeStampEnd();
+    __PrintTimeStamp();
   }
 
   template <typename T, unsigned long N>
