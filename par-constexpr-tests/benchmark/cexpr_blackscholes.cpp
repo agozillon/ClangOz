@@ -203,7 +203,13 @@ namespace blackscholes {
   constexpr auto Calc() {
     auto data = ParseInputData();
     
+#ifdef CONSTEXPR_TRACK_TIME
     __GetTimeStampStart();
+#endif
+
+#ifdef CONSTEXPR_TRACK_STEPS
+    __TrackConstExprStepsStart();
+#endif CONSTEXPR_TRACK_STEPS
     
 #ifdef CONSTEXPR_PARALLEL
   // This top level loop really adds nothing to the calculation it just forces
@@ -222,10 +228,6 @@ namespace blackscholes {
         data[j].price = BlkSchlsEqEuroNoDiv(data[j]);
 #endif
 
-    __GetTimeStampEnd();
-    __PrintTimeStamp();
-
-    __GetTimeStampStart();
     // error checking, it's very difficult to do this as a compile time error 
     // using static_assert right now. I've also tested this against the Parsec
     // version, it's the similar output minus some precision from rounding 
@@ -245,9 +247,15 @@ namespace blackscholes {
         data[i].error = true;
 #endif
 
+#ifdef CONSTEXPR_TRACK_STEPS
+    __PrintConstExprSteps(); 
+#endif CONSTEXPR_TRACK_STEPS
+
+#ifdef CONSTEXPR_TRACK_TIME
     __GetTimeStampEnd();
     __PrintTimeStamp();
-    
+#endif
+
     return data;
   }
   

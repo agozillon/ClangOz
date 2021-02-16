@@ -15,8 +15,8 @@
    You should have received a copy of the GNU Lesser General Public
    License along with the GNU C Library; if not, see
    <https://www.gnu.org/licenses/>.  */
-#ifndef __CEXPR_EXPF_
-#define __CEXPR_EXPF_
+#ifndef __CEXPR_E_EXPF_
+#define __CEXPR_E_EXPF_
 
 // This file contains all the code segments from glibc required to make 
 // the float variation of the IEEE754 e_expf.c file from glibc constexpr!

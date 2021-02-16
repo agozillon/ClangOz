@@ -6988,21 +6988,30 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         Info.CurrentCall->Callee &&
         HasConstexprParExecutor(Info.CurrentCall->Callee) &&
         !tp.threadsAreActive() && LLVM_ENABLE_THREADS == 1) {
+
       std::vector<EvalInfo> EvalInfos;
-      llvm::SmallVector<StmtResult, 4> StmtResults;
-      llvm::SmallVector<std::promise<EvalStmtResult>, 4> EvalPromises;
-      llvm::SmallVector<std::future<EvalStmtResult>, 4> EvalFutures;
+      std::vector<StmtResult> StmtResults;
+      std::vector<std::promise<EvalStmtResult>> EvalPromises;
+      std::vector<std::future<EvalStmtResult>> EvalFutures;
+      std::vector<Expr::EvalStatus> EvalStatuses;
+      std::vector<APValue> ResAPV;
+      std::vector<StmtResult> ResStmt;
 
-      APValue ResAPV[4] = {Result.Value, Result.Value, Result.Value,
-                           Result.Value};
-      StmtResult ResStmt[4] = {{ResAPV[0], Result.Slot},
-                               {ResAPV[1], Result.Slot},
-                               {ResAPV[2], Result.Slot},
-                               {ResAPV[3], Result.Slot}};
-
-      Expr::EvalStatus EvalStatuses[4];
-
+      ResAPV.reserve(tp.getPoolSize());
+      for (size_t i = 0; i < tp.getPoolSize(); ++i)
+        ResAPV.push_back(APValue(Result.Value));
+      
+      ResStmt.reserve(tp.getPoolSize());
+      for (size_t i = 0; i < tp.getPoolSize(); ++i) {
+        ResStmt.push_back({ResAPV[i], Result.Slot});
+      }
+      
+      EvalStatuses.reserve(tp.getPoolSize());
       EvalInfos.reserve(tp.getPoolSize()); // avoids some extra copy constructs
+      StmtResults.reserve(tp.getPoolSize());
+      EvalPromises.reserve(tp.getPoolSize());
+      EvalFutures.reserve(tp.getPoolSize());
+
       for (size_t i = 0; i < tp.getPoolSize(); ++i) {
         EvalPromises.push_back(std::promise<EvalStmtResult>());
         EvalFutures.push_back(EvalPromises[i].get_future());
@@ -7029,13 +7038,13 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
 
       std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> RedList;
       auto lwg = LoopWrapperGatherer(Info, EvalInfos, RedList);
-
+      
       for (size_t i = 0; i < tp.getPoolSize(); ++i) {
         // WIP better implementation
         //        lwg.RestrictedCloneEvalInfoTwo(Info, EvalInfos[i]);
         lwg.RestrictedCloneEvalInfo(Info, EvalInfos[i]);
       }
-
+      
       lwg.SearchBody(Info.CurrentCall->Callee->getBody());
       lwg.HandleFoundWrappers();
 
@@ -7140,6 +7149,13 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       // This idea of a reduce isn't superb it only really handles simple cases
       // what happens if its a complex user defined function?
       ParConstExprReduce(Info, EvalInfos, RedList);
+
+      auto StepCountForLoop = 0;
+      for (size_t i = 0; i < tp.getPoolSize(); ++i) {
+        StepCountForLoop += Info.getLangOpts().ConstexprStepLimit - EvalInfos[i].StepsLeft;
+      }
+
+      Info.StepsLeft = Info.StepsLeft - StepCountForLoop;
 
       // Destroy ForScope here
       return ForScope.destroy() ? ESR_Ret : ESR_Failed;
@@ -7911,37 +7927,6 @@ static bool HandleFunctionCall(SourceLocation CallLoc,
                                ArrayRef<const Expr*> Args, const Stmt *Body,
                                EvalInfo &Info, APValue &Result,
                                const LValue *ResultSlot) {
-                               
-                      
-  if (Info.getLangOpts().ExperimentalConstexprParallel  && 
-      Callee->getNameAsString() == "__ThreadLock")
-    eval_lock.lock();
-  
-  if (Info.getLangOpts().ExperimentalConstexprParallel &&
-      Callee->getNameAsString() == "__ThreadUnlock")
-    eval_lock.unlock();
-
-  typedef std::chrono::high_resolution_clock Time;
-  typedef std::chrono::milliseconds ms;
-  typedef std::chrono::duration<float> fsec;
-
-  // trying a little trick to print times with minimum overhead...but this will
-  // cause some inbuilt delay as it's likely going to have to parse the AST a 
-  // bit within the const interpreter before it gets the start and end times 
-  if (Callee->getNameAsString() == "__GetTimeStampStart")
-    first_stamp = Time::now();
-
-  if (Callee->getNameAsString() == "__GetTimeStampEnd")
-    second_stamp = Time::now();
-  
-  // currently will double print/always print once
-  if (Callee->getNameAsString() == "__PrintTimeStamp") {
-      fsec fs = second_stamp - first_stamp;
-      ms d = std::chrono::duration_cast<ms>(fs);
-      std::cout << "Print Time Stamp: " << fs.count() << "s\n";
-      std::cout << "Print Time Stamp: " << d.count() << "ms\n";
-      std::cout << std::endl;
-  }
 
   ArgVector ArgValues(Args.size());
   if (!EvaluateArgs(Args, ArgValues, Info, Callee))
@@ -9511,6 +9496,54 @@ public:
                                          CovariantAdjustmentPath))
       return false;
 
+    // test how badly this affects times by moving it back and trying with one of the non-broken ones
+    if (Definition) {
+      if (Info.getLangOpts().ExperimentalConstexprParallel  && 
+          Definition->getNameAsString() == "__ThreadLock")
+        eval_lock.lock();
+      
+      if (Info.getLangOpts().ExperimentalConstexprParallel &&
+          Definition->getNameAsString() == "__ThreadUnlock")
+        eval_lock.unlock();
+
+      typedef std::chrono::high_resolution_clock Time;
+      typedef std::chrono::milliseconds ms;
+      typedef std::chrono::duration<float> fsec;
+
+      // trying a little trick to print times with minimum overhead...but this will
+      // cause some inbuilt delay as it's likely going to have to parse the AST a 
+      // bit within the const interpreter before it gets the start and end times 
+      if (Definition->getNameAsString() == "__GetTimeStampStart")
+        first_stamp = Time::now();
+
+      if (Definition->getNameAsString() == "__GetTimeStampEnd")
+        second_stamp = Time::now();
+ 
+      // currently will double print/always print once
+      if (Definition->getNameAsString() == "__PrintTimeStamp") {
+          fsec fs = second_stamp - first_stamp;
+          ms d = std::chrono::duration_cast<ms>(fs);
+          std::cout << fs.count() << "\n";
+          std::cout << d.count() << "\n";
+//          std::cout << std::endl;
+      }
+
+      // cost appears to be 15 steps~?
+      if (Definition->getNameAsString() == "__TrackConstExprStepsStart") {
+        StepCounterStart = Info.StepsLeft;
+//        llvm::errs() << "Start Size at Track Function: " << (Info.getLangOpts().ConstexprStepLimit - Info.StepsLeft) << "\n";
+      }
+
+      // cost appears to be 3 steps~? so cost appears to be 3 - 15, which totals to 18
+      // I should try stick these two functions next to each other adn test the cost
+      if (Definition->getNameAsString() == "__PrintConstExprSteps") {
+//        llvm::errs() << "StepsLeft From Funciton: " << Info.StepsLeft << "\n";
+//        llvm::errs() << "StepCounterStart: " << StepCounterStart << "\n";
+        std::cout << (StepCounterStart - Info.StepsLeft)  << "\n";
+      }
+
+    }
+    
     return true;
   }
 

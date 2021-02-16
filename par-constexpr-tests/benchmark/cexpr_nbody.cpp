@@ -15,18 +15,18 @@ using namespace __cep::experimental;
 namespace nbody {
   using type = double;
 
-#ifdef NITERS_62500
-  constexpr int niters = 62500;
-#elif NITERS_125000
-  constexpr int niters = 125000;
-#elif NITERS_250000
-  constexpr int niters = 250000;
-#elif NITERS_500000
-  constexpr int niters = 500000;
-#elif NITERS_1000000
-  constexpr int niters = 1000000;
+#ifdef NITERS_10000
+  constexpr int niters = 10000;
+#elif NITERS_20000
+  constexpr int niters = 20000;
+#elif NITERS_30000
+  constexpr int niters = 30000;
+#elif NITERS_40000
+  constexpr int niters = 40000;
+#elif NITERS_50000
+  constexpr int niters = 50000;
 #else
-  constexpr int niters = 500000; // 22 mins~
+  constexpr int niters = 50000; 
 #endif
 
 #ifdef NBODIES_5
@@ -100,8 +100,6 @@ namespace nbody {
   constexpr void Advance(std::array<planet<T>, N>& bodies, T dt) {
     const T eps = T{0.1}; // softening factor
 
-    __GetTimeStampStart();
-    
 #ifdef CONSTEXPR_PARALLEL
     std::array<int, N> id_range{};
     std::iota(execution::ce_par, id_range.begin(), id_range.end(), 0);
@@ -153,9 +151,6 @@ namespace nbody {
       b.z += dt * b.vz;
     }
 #endif
-
-    __GetTimeStampEnd();
-    __PrintTimeStamp();
   }
 
   template <typename T, unsigned long N>
@@ -239,8 +234,25 @@ namespace nbody {
     Offset_Momentum(bodies);
     auto e1 = Energy(bodies);
 
+#ifdef CONSTEXPR_TRACK_TIME
+    __GetTimeStampStart();
+#endif
+
+#ifdef CONSTEXPR_TRACK_STEPS
+    __TrackConstExprStepsStart();
+#endif CONSTEXPR_TRACK_STEPS
+
     for (int i = 1; i <= niters; ++i)
       Advance(bodies, dt);
+
+#ifdef CONSTEXPR_TRACK_STEPS
+    __PrintConstExprSteps(); 
+#endif CONSTEXPR_TRACK_STEPS
+
+#ifdef CONSTEXPR_TRACK_TIME
+    __GetTimeStampEnd();
+    __PrintTimeStamp();
+#endif 
 
     auto e2 = Energy(bodies);
 

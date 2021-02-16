@@ -134,6 +134,19 @@ namespace cest::loop_wrapper {
   constexpr bool __PrintTimeStamp(){ return true; }
   
   /*
+    Will mark a place to start tracking constexpr steps taken from, that allows
+    __PrintConstExprSteps to later calculate and print out an approximation of
+    the number of steps.
+  */
+  constexpr bool __TrackConstExprStepsStart(){ return true; }
+  
+  /*
+    Will try to calculate approximate numbers of CExpr Steps taken since last 
+    __TrackConstExprStepsStart invocation.
+  */
+  constexpr bool __PrintConstExprSteps(){ return true; }
+  
+  /*
     Equivelant of __IteratorLoopStep/__BeginEndIteratorPair for normal loops 
     that make use of integers indexes rather than iterators
   */

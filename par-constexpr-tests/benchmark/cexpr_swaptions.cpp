@@ -9,29 +9,28 @@
 
 using namespace __cep::experimental;
 
+#include "cest/vector.hpp"
+#include "cest/cmath.hpp"
+
 #include "../helpers/sqrt/cexpr_sqrt.hpp"
 #include "../helpers/exp/cexpr_exp.hpp"
 #include "../helpers/log/cexpr_log.hpp"
 
-#include "cest/vector.hpp"
-#include "cest/cmath.hpp"
+namespace swaptions {
 
-namespace swaptions {                  
-// 102400, was the default
-#ifdef NTRIALS_5120
-  constexpr int num_trials = 5120;
-#elif NTRIALS_10240
-  constexpr int num_trials = 10240;
-#elif NTRIALS_20480
-  constexpr int num_trials = 20480;
-#elif NTRIALS_40960
-  constexpr int num_trials = 40960;
-#elif NTRIALS_81920
-  constexpr int num_trials = 81920;
-#elif NTRIALS_102400
-  constexpr int num_trials = 102400;
+// 102400, was the default but its a bit too high for the number of steps
+#ifdef NTRIALS_2000
+  constexpr int num_trials = 2000;
+#elif NTRIALS_4000
+  constexpr int num_trials = 4000;
+#elif NTRIALS_6000
+  constexpr int num_trials = 6000;
+#elif NTRIALS_8000
+  constexpr int num_trials = 8000;
+#elif NTRIALS_10000
+  constexpr int num_trials = 10000;
 #else
-  constexpr int num_trials = 10240;
+  constexpr int num_trials = 2000;
 #endif
 
 /* 
@@ -42,20 +41,16 @@ namespace swaptions {
    of cores and ideally should be a multiple of
    the core count
 */
-#ifdef NSWAPTIONS_4
+#ifdef NSWAPTIONS_2
+  constexpr int nswaptions = 2;
+#elif NSWAPTIONS_4
   constexpr int nswaptions = 4;
+#elif NSWAPTIONS_6
+  constexpr int nswaptions = 6;
 #elif NSWAPTIONS_8
   constexpr int nswaptions = 8;
-#elif NSWAPTIONS_16
-  constexpr int nswaptions = 16;
-#elif NSWAPTIONS_32
-  constexpr int nswaptions = 32;
-#elif NSWAPTIONS_64
-  constexpr int nswaptions = 64;
-#elif NSWAPTIONS_128
-  constexpr int nswaptions = 128;
-#elif NSWAPTIONS_256
-  constexpr int nswaptions = 256;
+#elif NSWAPTIONS_10
+  constexpr int nswaptions = 10;
 #else
   constexpr int nswaptions = 4;
 #endif
@@ -416,12 +411,17 @@ namespace swaptions {
          }
     }
 
-  __GetTimeStampStart();
-  // change to par for_each, i can either do it the simple way by doing it 
-  // slightly differently from their loop, we can attach the price to the struct
-  // and print that out instead, do the generate iota and index the 
-  // struct/prices array, that could be less efficient though. Go path of least
-  // resistance in this case!
+
+#ifdef CONSTEXPR_TRACK_TIME
+    __GetTimeStampStart();
+#endif
+
+// Remember the extra steps over the linear version in this case are for the 
+// "marshalling"/preparation of data, the two functions cost about 15 steps
+#ifdef CONSTEXPR_TRACK_STEPS
+    __TrackConstExprStepsStart();
+#endif CONSTEXPR_TRACK_STEPS
+
 #ifdef CONSTEXPR_PARALLEL
     // The range will very likely be small with minimal work, no real reason to
     // parallelize it. 
@@ -437,9 +437,16 @@ namespace swaptions {
       prices[i] = HJM_Swaption_Blocking(swaptions[i], swaption_seed+i, 
                                         num_trials);
 #endif
-  __GetTimeStampEnd();
-  __PrintTimeStamp();
-    
+
+#ifdef CONSTEXPR_TRACK_STEPS
+    __PrintConstExprSteps(); 
+#endif CONSTEXPR_TRACK_STEPS
+
+#ifdef CONSTEXPR_TRACK_TIME
+    __GetTimeStampEnd();
+    __PrintTimeStamp();
+#endif 
+
     return prices;
   }
 } // namespace swaptions
