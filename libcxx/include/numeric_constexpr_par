@@ -16,6 +16,7 @@
 #include <functional>
 #include <cmath> // for isnormal
 #include <version>
+#include <__cep_execution>
 
 #include "loop_wrapper.h"
 

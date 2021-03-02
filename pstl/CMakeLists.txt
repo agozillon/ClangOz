@@ -7,6 +7,8 @@
 #===----------------------------------------------------------------------===##
 cmake_minimum_required(VERSION 3.13.4)
 
+set (CMAKE_CXX_STANDARD 17)
+
 set(PARALLELSTL_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/include/pstl/internal/pstl_config.h")
 file(STRINGS "${PARALLELSTL_VERSION_FILE}" PARALLELSTL_VERSION_SOURCE REGEX "#define _PSTL_VERSION .*$")
 string(REGEX REPLACE "#define _PSTL_VERSION (.*)$" "\\1" PARALLELSTL_VERSION_SOURCE "${PARALLELSTL_VERSION_SOURCE}")
