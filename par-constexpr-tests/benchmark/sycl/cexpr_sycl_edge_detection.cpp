@@ -38,7 +38,6 @@
 
 using namespace cl::sycl;
 
-
 bool WriteToPPM(auto buffer, std::string fname) {
   std::ofstream ofs; 
   ofs.open(fname);
@@ -52,6 +51,7 @@ bool WriteToPPM(auto buffer, std::string fname) {
     for (size_t y = 0; y < height; ++y)
      ofs << buffer[x + width * y] << " " << buffer[x + width * y] << " " << buffer[x + width * y] << "\n";
     
+    
   ofs.close(); 
 
   return true;
@@ -63,7 +63,8 @@ constexpr auto perform_horizontal_conv(cl::sycl::queue &myQueue,
   // horizontal convolution
     std::array<float, height * width> tmp{};
     buffer<float, 1> dx_tmp{tmp.data(), width * height};
-     
+  
+  {
     // Extract a 3x1 window around (x, y) and compute the dot product
     // between the window and the kernel [1, 0, -1]
     myQueue.submit([&](handler& cgh) {
@@ -84,10 +85,12 @@ constexpr auto perform_horizontal_conv(cl::sycl::queue &myQueue,
            out[id(offset)] = left - right;
         });
     });
+  }
 
-
+  // fails within the first 8 elements, the last 4 are not assigned
   myQueue.wait();
-  
+
+  {
   // Extract a 1x3 window around (x, y) and compute the dot product
   // between the window and the kernel [1, 2, 1]    
   myQueue.submit([&](handler& cgh) {
@@ -110,6 +113,8 @@ constexpr auto perform_horizontal_conv(cl::sycl::queue &myQueue,
       });
   });
   
+  }
+  
   myQueue.wait();
 }
  
@@ -118,48 +123,52 @@ constexpr void perform_vertical_conv(cl::sycl::queue &myQueue,
   // vertical convolution
   std::array<float, height * width> tmp{};
   buffer<float, 1> dy_tmp{tmp.data(), width * height};
+  
+  {
+    myQueue.submit([&](handler& cgh) {
+  #if defined(SYCL_LANGUAGE_VERSION) && defined(__MOTORSYCL__)
+    auto data = a.get_access<access_mode::read>(cgh);
+    auto out  = dy_tmp.get_access<access_mode::discard_write>(cgh);
+  #else
+    auto data = a.get_access<access::mode::read>(cgh);
+    auto out  = dy_tmp.get_access<access::mode::discard_write>(cgh);
+  #endif
 
-  myQueue.submit([&](handler& cgh) {
-#if defined(SYCL_LANGUAGE_VERSION) && defined(__MOTORSYCL__)
-  auto data = a.get_access<access_mode::read>(cgh);
-  auto out  = dy_tmp.get_access<access_mode::discard_write>(cgh);
-#else
-  auto data = a.get_access<access::mode::read>(cgh);
-  auto out  = dy_tmp.get_access<access::mode::discard_write>(cgh);
-#endif
-
-  // Create a scratch buffer for the intermediate computation
-  cgh.parallel_for(range<2>(width, height), 
-      [=](id<2> idx) {
-         // Convolve horizontally
-         int offset = idx[1] * width + idx[0];
-         float left = idx[0] == 0 ? 0 : data[id(offset - 1)];
-         float right = idx[0] == width - 1 ? 0 : data[id(offset + 1)];
-         float center = data[id(offset)];
-         out[id(offset)]  = left + 2 * center + right;
-      });
-  });
-
+    // Create a scratch buffer for the intermediate computation
+    cgh.parallel_for(range<2>(width, height), 
+        [=](id<2> idx) {
+           // Convolve horizontally
+           int offset = idx[1] * width + idx[0];
+           float left = idx[0] == 0 ? 0 : data[id(offset - 1)];
+           float right = idx[0] == width - 1 ? 0 : data[id(offset + 1)];
+           float center = data[id(offset)];
+           out[id(offset)]  = left + 2 * center + right;
+        });
+    });
+  }
+  
   myQueue.wait();
+  
+  {
+    myQueue.submit([&](handler& cgh) {
+  #if defined(SYCL_LANGUAGE_VERSION) && defined(__MOTORSYCL__)
+      auto data = dy_tmp.get_access<access_mode::read>(cgh);
+      auto out  = dy.get_access<access_mode::discard_write>(cgh);
+  #else
+      auto data = dy_tmp.get_access<access::mode::read>(h);
+      auto out  = dy.get_access<access::mode::discard_write>(h);
+  #endif
 
-  myQueue.submit([&](handler& cgh) {
-#if defined(SYCL_LANGUAGE_VERSION) && defined(__MOTORSYCL__)
-    auto data = dy_tmp.get_access<access_mode::read>(cgh);
-    auto out  = dy.get_access<access_mode::discard_write>(cgh);
-#else
-    auto data = dy_tmp.get_access<access::mode::read>(h);
-    auto out  = dy.get_access<access::mode::discard_write>(h);
-#endif
-
-      cgh.parallel_for(range<2>(width, height),
-          [=](id<2> idx) {
-              // Convolve vertically
-              int offset = idx[1] * width + idx[0];
-              float up   = idx[1] == 0 ? 0 : data[id(offset - width)];
-              float down = idx[1] == height - 1 ? 0 : data[id(offset + width)];
-              out[id(offset)] = up - down;
-          });
-  });
+        cgh.parallel_for(range<2>(width, height),
+            [=](id<2> idx) {
+                // Convolve vertically
+                int offset = idx[1] * width + idx[0];
+                float up   = idx[1] == 0 ? 0 : data[id(offset - width)];
+                float down = idx[1] == height - 1 ? 0 : data[id(offset + width)];
+                out[id(offset)] = up - down;
+            });
+    });
+  }
   
   myQueue.wait();
 }
@@ -169,36 +178,35 @@ constexpr auto apply_filter(cl::sycl::queue &myQueue,
                             cl::sycl::buffer<unsigned int, 1>& b,
                             cl::sycl::buffer<float, 1>& dx,
                             cl::sycl::buffer<float, 1>& dy) {
-  myQueue.submit([&](handler& cgh) {
-#if defined(SYCL_LANGUAGE_VERSION) && defined(__MOTORSYCL__)
-      auto dx_d = dx.get_access<access_mode::read>(cgh);
-      auto dy_d = dy.get_access<access_mode::read>(cgh);
-      // this was previously shared memory, so I hope this doesn't affect the 
-      // outcome of the program at least for CPU
-      auto out = b.get_access<access_mode::write>(cgh);
-#else
-      auto dx_d = dx.get_access<access::mode::read>(cgh);
-      auto dy_d = dy.get_access<access::mode::read>(cgh);
-      // this was previously shared memory, so I hope this doesn't affect the 
-      // outcome of the program at least for CPU
-      auto out = b.get_access<access::mode::write>(cgh);
-#endif
-      cgh.parallel_for(range<1>(width * height), [=](id<1> idx) {
-          float dx_val = dx_d[id(idx[0])];
-          float dy_val = dy_d[id(idx[0])];
-        
-          // in the original dpc++ sycl example this was multiplied by 255, 
-          // but that yields incorrect results here. This may be due to the 
-          // lack of shared memory, or there is perhaps a difference in the 
-          // way we handle input data
-          out[id(idx[0])] = cexpr_sqrtf(dx_val * dx_val + dy_val * dy_val);
-      });
- });
-
+  {
+    myQueue.submit([&](handler& cgh) {
+  #if defined(SYCL_LANGUAGE_VERSION) && defined(__MOTORSYCL__)
+        auto dx_d = dx.get_access<access_mode::read>(cgh);
+        auto dy_d = dy.get_access<access_mode::read>(cgh);
+        // this was previously shared memory, so I hope this doesn't affect the 
+        // outcome of the program at least for CPU
+        auto out = b.get_access<access_mode::write>(cgh);
+  #else
+        auto dx_d = dx.get_access<access::mode::read>(cgh);
+        auto dy_d = dy.get_access<access::mode::read>(cgh);
+        // this was previously shared memory, so I hope this doesn't affect the 
+        // outcome of the program at least for CPU
+        auto out = b.get_access<access::mode::write>(cgh);
+  #endif
+        cgh.parallel_for(range<1>(width * height), [=](id<1> idx) {
+            float dx_val = dx_d[id(idx[0])];
+            float dy_val = dy_d[id(idx[0])];
+          
+            // in the original dpc++ sycl example this was multiplied by 255, 
+            // but that yields incorrect results here. This may be due to the 
+            // lack of shared memory, or there is perhaps a difference in the 
+            // way we handle input data
+            out[id(idx[0])] = cexpr_sqrtf(dx_val * dx_val + dy_val * dy_val);
+        });
+   });
+  }
   myQueue.wait();
 
-//  1) Back to shared_ptr?
-// 2) I don't think i completed buffer/accessor constructor...
 #if defined(SYCL_LANGUAGE_VERSION) && defined(__MOTORSYCL__)
   host_accessor B { b, read_only };
 #else
@@ -235,13 +243,9 @@ constexpr auto edge_detect() {
 
   buffer<float, 1> dx{dx_data.data(), width * height};
   buffer<float, 1> dy{dy_data.data(), width * height};
-  
-  // expects a data and dx data, needs to return dx or perhaps can just be taken
-  // as a ref
+
   perform_horizontal_conv(myQueue, a, dx);
   perform_vertical_conv(myQueue, a, dy);
-//   return perform_horizontal_conv(myQueue, a, dx);
-   
   return apply_filter(myQueue, a, b, dx, dy);
 }
 

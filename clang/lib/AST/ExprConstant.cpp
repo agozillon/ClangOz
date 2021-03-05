@@ -74,7 +74,8 @@ using llvm::APInt;
 using llvm::APSInt;
 using llvm::APFloat;
 using llvm::Optional;
-  
+
+uint64_t StepCounterStart = 0;
 static std::mutex eval_lock;
 static std::recursive_mutex eval_lock2;
 std::chrono::time_point<std::chrono::system_clock> first_stamp;
@@ -5044,6 +5045,8 @@ class LoopWrapperGatherer : public ConstStmtVisitor<LoopWrapperGatherer, bool> {
   llvm::SmallVector<queue_t, 8> queue;
   llvm::SmallVector<int, 8> CopiedFrames;
 
+  std::vector<APValue::LValueBase> PrevCopiedLValueBases;
+
   // Could likely make these llvm vectors
   std::vector<EvalInfo> &ThreadInfo;
   std::vector<llvm::Any> NoCopyBackList;
@@ -5078,97 +5081,6 @@ public:
   }
 
   std::vector<llvm::Any> GetNoCopyBackList() { return NoCopyBackList; }
-
-  // A poor attempt at simplifying the cloning of an APValue, needs further
-  // work and thought to work as intended
-  void RecursiveCloneAPValue(APValue &APV, EvalInfo &EIOrig, EvalInfo &EIClone,
-                             std::vector<APValue> &NewAPVs) {
-    switch (APV.getKind()) {
-    case APValue::LValue: {
-      if (APV.getLValueCallIndex() > 0) {
-        QualType Type = getType(APV.getLValueBase());
-        LValue ParentLVal;
-        ParentLVal.setFrom(EIOrig.Ctx, APV);
-        CompleteObject Obj = findCompleteObject(
-            EIOrig, nullptr, AccessKinds::AK_Read, ParentLVal, Type);
-
-        CallStackFrame *CloneFrame = nullptr;
-        CallStackFrame *OrigFrame = nullptr;
-        unsigned Depth;
-        unsigned CallIndex = APV.getLValueCallIndex();
-
-        std::tie(OrigFrame, Depth) = EIOrig.getCallFrameAndDepth(CallIndex);
-        std::tie(CloneFrame, Depth) = EIClone.getCallFrameAndDepth(CallIndex);
-
-        // FIXME/TODO: This is a performance issue, I do not want to have
-        // to clone all the arguments and the temporaries, i would like to
-        // find the EXACT argument or the EXACT temporary but it's hard to
-        // distinguish if it's a temporary or an argument, as copy by
-        // value arrays seem to reside as an argument where as by
-        // reference generally resides as a temporary. Then there is an
-        // issue with the arguments where i cant tell which one actually
-        // needs to be copied so I have to copy them all. There is no
-        // APValue equallity check sadly and not all APValues have bases
-        // that I can equality check.
-        //
-        // is there anyway for me to distinguish exactly where it resides
-        // i.e. temporary or pass by value arg? And if its an arg can I
-        // restrict it to just that specfic argument index (perhaps copy
-        // defautl constructed APValues if I can find the specific arg
-        // index)?
-        std::vector<APValue> NewArgsInternal;
-        for (unsigned i = 0; i < OrigFrame->Callee->getNumParams(); ++i) {
-          NewArgsInternal.push_back(OrigFrame->Arguments[i]);
-        }
-        SaveTheArgs.push_back(NewArgsInternal);
-        CloneFrame->Arguments = SaveTheArgs.back().data();
-        // FIXME/TODO: The LValue will only reside as a temporary or as a
-        // copy-by-val argument, ill need to work out how to tell which
-        // location its stored
-        const void *PtrKey = nullptr;
-        APValue::LValueBase Base = Obj.Base;
-        if (Base.is<const ValueDecl *>())
-          PtrKey = static_cast<const void *>(Base.get<const ValueDecl *>());
-        else if (Base.is<const Expr *>())
-          PtrKey = static_cast<const void *>(Base.get<const Expr *>());
-
-        CloneFrame->Temporaries[std::pair<const void *, unsigned>(
-            PtrKey, Base.getVersion())] = *Obj.Value;
-      }
-    } break;
-
-    case APValue::Struct: {
-      NewAPVs.push_back(APV);
-      // for all bases
-      for (int i = 0; i < APV.getStructNumBases(); ++i)
-        RecursiveCloneAPValue(APV.getStructBase(i), EIOrig, EIClone, NewAPVs);
-
-      // for all member fields
-      for (int i = 0; i < APV.getStructNumFields(); ++i) {
-        RecursiveCloneAPValue(APV.getStructField(i), EIOrig, EIClone, NewAPVs);
-      }
-    } break;
-
-    // default clone for now, although in some cases (e.g. union) something
-    // further may be required
-    case APValue::Int:
-    case APValue::Float:
-    case APValue::Vector:
-    case APValue::ComplexInt:
-    case APValue::ComplexFloat:
-    case APValue::FixedPoint:
-    case APValue::Array:
-    case APValue::Union:
-    case APValue::MemberPointer:
-    case APValue::AddrLabelDiff:
-      NewAPVs.push_back(APV);
-      break;
-
-    case APValue::None:
-    case APValue::Indeterminate:
-      break;
-    }
-  }
 
   void CloneLValueObject(APValue &APV, EvalInfo &EIOrig, EvalInfo &EIClone) {
     QualType Type = getType(APV.getLValueBase());
@@ -5229,8 +5141,90 @@ public:
         PtrKey, Base.getVersion())] = *Obj.Value;
   }
 
+  void RecursiveCloneAPValue(APValue& APV, 
+                             CallStackFrame* CloneFrame, EvalInfo& Original, 
+                             EvalInfo& Clone) {
+    // might be worth making this static or external if it's recreated each call
+    auto skip = [](auto &LValBase, auto &PrevLVals) {
+      for (auto LVBase : PrevLVals)
+        if (LVBase == LValBase)
+          return true;
+      return false;
+    };
+
+    switch (APV.getKind()) {
+      case APValue::LValue: {
+        if (APV.getLValueCallIndex() > 0) {
+          // attempt to skip double copies/work in the case of functions
+          // that have lvalues that point to the same object e.g. begin/end
+          // iterators
+          APValue::LValueBase ArgLValBase = 
+              APV.getLValueBase();
+
+          if (skip(ArgLValBase, PrevCopiedLValueBases))
+            return;
+          PrevCopiedLValueBases.push_back(ArgLValBase);
+
+          CloneLValueObject(APV, Original, Clone);
+
+        } else {
+          // has to be somewhere... perhaps its a dynamic alloca or temp?
+          if (auto DA = APV.getLValueBase()
+                            .dyn_cast<DynamicAllocLValue>()) {
+            auto iter = Original.HeapAllocs.find(DA);
+            if (iter != Original.HeapAllocs.end()) {
+              auto HA = *iter;
+              Clone.NumHeapAllocs++;
+              auto Result = Clone.HeapAllocs.emplace(
+                  std::piecewise_construct, std::forward_as_tuple(DA),
+                  std::tuple<>());
+              Result.first->second.AllocExpr = HA.second.AllocExpr;
+              Result.first->second.Value = HA.second.Value;
+            }
+          }
+        }
+      } break;
+      
+      case APValue::Struct: {
+        // for all bases
+        for (int i = 0; i < APV.getStructNumBases(); ++i)
+          RecursiveCloneAPValue(APV.getStructBase(i), 
+                                CloneFrame, Original, Clone);
+                                
+        for (int i = 0; i < APV.getStructNumFields(); ++i)
+          RecursiveCloneAPValue(APV.getStructField(i), 
+                                CloneFrame, Original, Clone);
+      } break;
+    
+      // possibly part of the problem
+     
+      // default clone for now, although in some cases (e.g. union) something
+      // further may be required
+      case APValue::Array:
+      case APValue::Int:
+      case APValue::Float:
+      case APValue::Vector:
+      case APValue::ComplexInt:
+      case APValue::ComplexFloat:
+      case APValue::FixedPoint:
+      case APValue::Union:
+      case APValue::MemberPointer:
+      case APValue::AddrLabelDiff:
+        llvm_unreachable("not handled yet");
+      break;
+
+      case APValue::None:
+     
+      case APValue::Indeterminate:
+      break;
+      
+    }
+  }
+
   void RestrictedCloneEvalInfo(EvalInfo &Original, EvalInfo &Clone) {
     std::stack<CallStackFrame *> Frames;
+    
+    PrevCopiedLValueBases.clear();
 
     CallStackFrame *OrigFrame = Original.CurrentCall;
     Frames.push(OrigFrame);
@@ -5287,7 +5281,6 @@ public:
     if (CloneFrame->Callee) {
       for (unsigned i = 0; i < CloneFrame->Callee->getNumParams(); ++i) {
         NewArgs.push_back(CloneFrame->Arguments[i]);
-
         if (CloneFrame->Arguments[i].isLValue()) {
           if (CloneFrame->Arguments[i].getLValueCallIndex() > 0) {
             // attempt to skip double copies/work in the case of functions
@@ -5324,6 +5317,9 @@ public:
             if (CloneFrame->Arguments[i].getStructField(j).isLValue()) {
               CloneLValueObject(CloneFrame->Arguments[i].getStructField(j),
                                 Original, Clone);
+            } else if (CloneFrame->Arguments[i].getStructField(j).isStruct()) {
+              RecursiveCloneAPValue(CloneFrame->Arguments[i], CloneFrame,
+                                    Original, Clone);
             }
           }
         }
@@ -6311,57 +6307,164 @@ public:
     }
   }
 
-  void RecursiveArrayCopyback(APValue &ToAPV, APValue &FromAPV, EvalInfo &To,
-                              EvalInfo &From, int ThreadCount,
-                              int ThreadNumber) {
-    switch (FromAPV.getKind()) {
-    case APValue::LValue: {
-      RecursiveArrayCopyback(*FindSubobjectAPVal(ToAPV, To),
-                             *FindSubobjectAPVal(FromAPV, From), To, From,
-                             ThreadCount, ThreadNumber);
-    } break;
+  bool APValueEqual(APValue& APV, APValue& APV2, 
+                    EvalInfo& APVInfo, EvalInfo& APV2Info) {
+    // either one is indeterminate or none or it's a misuse of the function
+    if (APV.getKind() != APV2.getKind())
+      return false;
+      
+    switch (APV.getKind()) {
+      case APValue::LValue: {
+        if (APV.getLValueBase() != APV2.getLValueBase() || 
+            APV.getLValueCallIndex() != APV2.getLValueCallIndex() ||
+            APV.getLValueOffset() != APV2.getLValueOffset() ||
+            APV.getLValueVersion() != APV2.getLValueVersion())
+          return false;
+        
+        return APValueEqual(*FindSubobjectAPVal(APV, APVInfo), 
+                            *FindSubobjectAPVal(APV2, APV2Info),
+                            APVInfo, APV2Info);
+      } break;
+      
+      case APValue::Struct: {
+        // you can't really add new fields, so this one is technically an error
+        if (APV.getStructNumFields() != APV2.getStructNumFields())
+          llvm_unreachable("One Struct APValue has more fields");
+      
+        for (size_t i = 0; i < APV.getStructNumFields(); ++i)
+          if (!APValueEqual(APV.getStructField(i), APV2.getStructField(i),
+                            APVInfo, APV2Info))
+            return false;
+        
+         for (size_t i = 0; i < APV.getStructNumBases(); ++i)
+           if (!APValueEqual(APV.getStructBase(i), APV2.getStructBase(i),
+                             APVInfo, APV2Info))
+            return false;
+      } break;
+      
+      case APValue::Array: {
+        if (APV.getArrayInitializedElts() != APV2.getArrayInitializedElts())
+          return false;
+          
+        for (size_t i = 0; i < APV.getArrayInitializedElts(); ++i)
+          if (!APValueEqual(APV.getArrayInitializedElt(i), 
+                            APV2.getArrayInitializedElt(i),
+                            APVInfo, APV2Info))
+            return false;
+      } break;
+      
+      case APValue::Int:  {
+        return APV.getInt() == APV2.getInt();
+      } break;
+      
+      case APValue::Float: {
+        return APV.getFloat() == APV2.getFloat();
+      } break;
 
-    case APValue::Struct: {
-      for (unsigned int i = 0; i < FromAPV.getStructNumFields(); ++i)
-        RecursiveArrayCopyback(ToAPV.getStructField(i),
-                               FromAPV.getStructField(i), To, From, ThreadCount,
-                               ThreadNumber);
-    } break;
+      case APValue::ComplexInt: {
+        return (APV.getComplexIntReal() == APV2.getComplexIntReal() && 
+                APV.getComplexIntImag() == APV2.getComplexIntImag());
+      } break;
+      
+      case APValue::ComplexFloat: {
+        return (APV.getComplexFloatReal() == APV2.getComplexFloatReal() && 
+                APV.getComplexFloatImag() == APV2.getComplexFloatImag());
+      } break;
+      
+      case APValue::Indeterminate: {
+        return APV.isIndeterminate() == APV2.isIndeterminate();
+      } break;
+      
+      case APValue::Vector:
+      case APValue::FixedPoint:
+      case APValue::Union:
+      case APValue::MemberPointer:
+      case APValue::AddrLabelDiff:
+      case APValue::None:
+        llvm_unreachable("unimplemented APValue Case in APValueEqual");
+        break;
+    }
 
-    case APValue::Array: {
-      auto SegmentSize = FromAPV.getArraySize() / ThreadCount;
-      size_t Offset = ThreadNumber * SegmentSize;
+    return true;
+  }
+  
+  void RecursiveArrayCopyback(APValue &ToAPV, std::vector<APValue*> FromAPV) {
+    std::vector<APValue*> NewFromAPVs;
+    switch (ToAPV.getKind()) {
+      case APValue::LValue: {
+        for (int i = 0; i < FromAPV.size(); ++i)
+          NewFromAPVs.push_back(FindSubobjectAPVal(*FromAPV[i], ThreadInfo[i]));
+      
+        RecursiveArrayCopyback(*FindSubobjectAPVal(ToAPV, Info),
+                                  NewFromAPVs);
+      } break;
 
-      // Note: important that this comes after the offsets calculated the way
-      // this is currently written.
-      if (ThreadNumber == ThreadCount - 1)
-        SegmentSize += FromAPV.getArraySize() % ThreadCount;
-      if (FromAPV.getArrayInitializedElts() > ToAPV.getArrayInitializedElts())
-        expandArray(ToAPV,
-                    FromAPV.getArrayInitializedElts() == FromAPV.getArraySize()
-                        ? FromAPV.getArraySize() - 1
-                        : FromAPV.getArrayInitializedElts());
+      case APValue::Struct: {
+        for (unsigned int i = 0; i < ToAPV.getStructNumFields(); ++i) {
+          for (int j = 0; j < FromAPV.size(); ++j)
+            NewFromAPVs.push_back(&FromAPV[j]->getStructField(i));
 
-      for (unsigned int j = Offset; j < Offset + SegmentSize; ++j) {
-        if (j < FromAPV.getArrayInitializedElts())
-          ToAPV.getArrayInitializedElt(j) = FromAPV.getArrayInitializedElt(j);
-      }
-    } break;
+          RecursiveArrayCopyback(ToAPV.getStructField(i),
+                                    NewFromAPVs);
+          NewFromAPVs.clear();
+        }
+                               
+      } break;
 
-    // default clone for now, although in some cases (e.g. union) something
-    // further may be required
-    case APValue::Int:
-    case APValue::Float:
-    case APValue::Vector:
-    case APValue::ComplexInt:
-    case APValue::ComplexFloat:
-    case APValue::FixedPoint:
-    case APValue::Union:
-    case APValue::MemberPointer:
-    case APValue::AddrLabelDiff:
-    case APValue::None:
-    case APValue::Indeterminate:
-      break;
+      case APValue::Array: {
+        std::vector<std::pair<int, int>> index;
+        index.reserve(ToAPV.getArraySize());
+
+        for (int i = 0; i < FromAPV.size(); ++i) {
+          if (FromAPV[i]->getArrayInitializedElts() > ToAPV.getArrayInitializedElts())
+            expandArray(ToAPV,
+              FromAPV[i]->getArrayInitializedElts() == FromAPV[i]->getArraySize()
+                        ? FromAPV[i]->getArraySize() - 1
+                        : FromAPV[i]->getArrayInitializedElts());
+        }
+        
+        // check and record what's been written to
+        for (int i = 0; i < FromAPV.size(); ++i) {
+          for (int j = 0; j < FromAPV[i]->getArrayInitializedElts(); ++j) {
+            if (ToAPV.getArrayInitializedElt(j).isInt()) {
+              if (FromAPV[i]->getArrayInitializedElt(j).getInt() 
+                    != ToAPV.getArrayInitializedElt(j).getInt())
+                  index.push_back(std::pair<int, int>(i, j));
+            } else if (ToAPV.getArrayInitializedElt(j).isFloat()) {
+             if (FromAPV[i]->getArrayInitializedElt(j).getFloat() 
+                    != ToAPV.getArrayInitializedElt(j).getFloat())
+                  index.push_back(std::pair<int, int>(i, j));
+            } else if (ToAPV.getArrayInitializedElt(j).isStruct()) {
+             if (!APValueEqual(FromAPV[i]->getArrayInitializedElt(j), 
+                               ToAPV.getArrayInitializedElt(j), 
+                               ThreadInfo[i], Info))
+                  index.push_back(std::pair<int, int>(i, j));
+            }
+          }
+        }
+
+        for (int i = 0; i < index.size(); ++i) {
+          ToAPV.getArrayInitializedElt(std::get<1>(index[i])) 
+              = FromAPV[std::get<0>(index[i])]->getArrayInitializedElt(
+                  std::get<1>(index[i]));
+        }
+        
+      } break;
+
+      // default clone for now, although in some cases (e.g. union) something
+      // further may be required
+      case APValue::Int:
+      case APValue::Float:
+      case APValue::Vector:
+      case APValue::ComplexInt:
+      case APValue::ComplexFloat:
+      case APValue::FixedPoint:
+      case APValue::Union:
+      case APValue::MemberPointer:
+      case APValue::AddrLabelDiff:
+      case APValue::None:
+      case APValue::Indeterminate:
+        break;
     }
   }
 
@@ -6381,14 +6484,16 @@ public:
       return false;
     };
 
+    std::vector<APValue*> ThreadAPVs;
     for (unsigned int i = 0; i < To.CurrentCall->Callee->getNumParams(); ++i) {
       if (skip(i))
         continue;
-      for (unsigned int j = 0; j < ThreadInfo.size(); ++j) {
-        RecursiveArrayCopyback(*To.CurrentCall->getArguments(i),
-                               *ThreadInfo[j].CurrentCall->getArguments(i),
-                               Info, ThreadInfo[j], ThreadInfo.size(), j);
-      }
+      
+      ThreadAPVs.clear();
+      for (unsigned int j = 0; j < ThreadInfo.size(); ++j)
+        ThreadAPVs.push_back(ThreadInfo[j].CurrentCall->getArguments(i));
+                                
+      RecursiveArrayCopyback(*To.CurrentCall->getArguments(i), ThreadAPVs);
     }
   }
 
