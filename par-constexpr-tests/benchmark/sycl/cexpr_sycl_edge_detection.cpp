@@ -30,8 +30,8 @@
 // NOTE: Can't use libcxx with the normal linux install of OpenCV as it was 
 // compiled with libstdc++, at the very least the string ABI isn't compatible so
 // you cannot use functions like cv::imwrite.
- 
-// $CLANGOZ/bin/clang++ -D_LIBCPP_HAS_PARALLEL_ALGORITHMS -O3 -DCONSTEXPR_PARALLEL \ 
+//
+// $CLANGOZ/bin/clang++ -O3 -DCONSTEXPR_PARALLEL \ 
 // -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=4 \ 
 // -fexperimental-constexpr-parallel -I$PSTL_GEN -I$CEST_INCLUDE \ 
 // -I$MOTORSYCL_INCLUDE -I$PSTL -std=c++2a -stdlib=libc++  cexpr_sycl_edge_detection.cpp
@@ -244,9 +244,31 @@ constexpr auto edge_detect() {
   buffer<float, 1> dx{dx_data.data(), width * height};
   buffer<float, 1> dy{dy_data.data(), width * height};
 
+#ifdef CONSTEXPR_TRACK_TIME
+    __GetTimeStampStart();
+#endif
+
+// Remember the extra steps over the linear version in this case are for the 
+// "marshalling"/preparation of data, the two functions cost about 15 steps
+#ifdef CONSTEXPR_TRACK_STEPS
+    __TrackConstExprStepsStart();
+#endif CONSTEXPR_TRACK_STEPS
+
   perform_horizontal_conv(myQueue, a, dx);
   perform_vertical_conv(myQueue, a, dy);
-  return apply_filter(myQueue, a, b, dx, dy);
+  auto rdat = apply_filter(myQueue, a, b, dx, dy);
+
+#ifdef CONSTEXPR_TRACK_STEPS
+    __PrintConstExprSteps(); 
+#endif CONSTEXPR_TRACK_STEPS
+
+#ifdef CONSTEXPR_TRACK_TIME
+    __GetTimeStampEnd();
+    __PrintTimeStamp();
+#endif 
+
+  return rdat;
+  
 }
 
 int main()
