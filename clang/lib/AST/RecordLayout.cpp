@@ -23,6 +23,7 @@ void ASTRecordLayout::Destroy(ASTContext &Ctx) {
     CXXInfo->~CXXRecordLayoutInfo();
     Ctx.Deallocate(CXXInfo);
   }
+
   this->~ASTRecordLayout();
   Ctx.Deallocate(this);
 }

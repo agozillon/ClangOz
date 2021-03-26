@@ -1,1 +1,1 @@
-1.54069,6.27812,14.3371,free(): invalid pointer,free(): invalid pointer,clang-12: error: unable to execute command: Aborted (core dumped),clang version 12.0.0 (https://github.com/llvm/llvm-project.git d6eb5bb352c64ef2d7cc57181f7d0341cffaed13),Thread model: posix,clang-12: note: diagnostic msg:,,Preprocessed source(s) and associated run script(s) are located at:,clang-12: note: diagnostic msg: /tmp/cexpr_mandelbrot-c297ff.sh,,42.3596
+1.52569,6.24521,14.1228,26.5246,41.5961

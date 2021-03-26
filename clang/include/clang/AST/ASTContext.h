@@ -245,11 +245,6 @@ class ASTContext : public RefCountedBase<ASTContext> {
   mutable llvm::FoldingSet<NestedNameSpecifier> NestedNameSpecifiers;
   mutable NestedNameSpecifier *GlobalNestedNameSpecifier = nullptr;
 
-  /// A cache mapping from RecordDecls to ASTRecordLayouts.
-  ///
-  /// This is lazily created.  This is intentionally not serialized.
-  mutable llvm::DenseMap<const RecordDecl*, const ASTRecordLayout*>
-    ASTRecordLayouts;
   mutable llvm::DenseMap<const ObjCContainerDecl*, const ASTRecordLayout*>
     ObjCLayouts;
 
@@ -432,6 +427,13 @@ class ASTContext : public RefCountedBase<ASTContext> {
   ASTContext &this_() { return *this; }
 
 public:
+
+  /// A cache mapping from RecordDecls to ASTRecordLayouts.
+  ///
+  /// This is lazily created.  This is intentionally not serialized.
+  mutable llvm::DenseMap<const RecordDecl*, const ASTRecordLayout*>
+    ASTRecordLayouts;
+    
   /// A type synonym for the TemplateOrInstantiation mapping.
   using TemplateOrSpecializationInfo =
       llvm::PointerUnion<VarTemplateDecl *, MemberSpecializationInfo *>;

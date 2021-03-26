@@ -1,18 +1,2 @@
-clang-12: /home/gozillon/Documents/Clang-LLVM/clang/include/clang/AST/RecordLayout.h:251: clang::CharUnits clang::ASTRecordLayout::getBaseClassOffset(const clang::CXXRecordDecl*) const: Assertion `CXXInfo->BaseOffsets.count(Base) && "Did not find base!"' failed.
-PLEASE submit a bug report to https://bugs.llvm.org/ and include the crash backtrace, preprocessed source, and associated run script.
-clang-12: error: unable to execute command: Aborted (core dumped)
-clang-12: error: clang frontend command failed due to signal (use -v to see invocation)
-clang version 12.0.0 (https://github.com/llvm/llvm-project.git d6eb5bb352c64ef2d7cc57181f7d0341cffaed13)
-Target: x86_64-unknown-linux-gnu
-Thread model: posix
-InstalledDir: /home/gozillon/Documents/Clang-LLVM/build-with-asserts_dump//bin
-clang-12: note: diagnostic msg: 
-********************
-
-PLEASE ATTACH THE FOLLOWING FILES TO THE BUG REPORT:
-Preprocessed source(s) and associated run script(s) are located at:
-clang-12: note: diagnostic msg: /tmp/cexpr_swaptions-817fe1.cpp
-clang-12: note: diagnostic msg: /tmp/cexpr_swaptions-817fe1.sh
-clang-12: note: diagnostic msg: 
-
-********************
+41.1574
+41157

@@ -776,6 +776,73 @@ namespace {
     /// CurrentCall - The top of the constexpr call stack.
     CallStackFrame *CurrentCall;
 
+    // Per Thread ASTRecordLayouts, there is likely a better way of doing this
+    // but this seemed like the least intrusive and complex way of removing this
+    // race condition (without a mutex cost). 
+    mutable llvm::DenseMap<const RecordDecl*, const ASTRecordLayout*> 
+      ASTRecordLayouts;
+  
+    bool IsParallelEvalInfo = false;
+  
+//    const ASTRecordLayout* CreateRecordLayout(ASTContext& Ctx, 
+//                            const RecordDecl *D, const ASTRecordLayout *RL) 
+//                            const {
+//      auto Temp = llvm::ArrayRef<long unsigned int>(
+//                      RL->getFieldOffsets().data(),
+//                      RL->getFieldOffsets().size());
+
+//      // NOTE/FIXME: proper cleanup of these is going to be hard as they have a 
+//      // destroy_at called by the ASTContext that technically should own them
+//      if (const auto *RD = dyn_cast<CXXRecordDecl>(D)) {
+//        // FIXME: This should be done in FinalizeLayout.
+//        return new ASTRecordLayout(
+//              Ctx, RL->getSize(), RL->getAlignment(),
+//              RL->getPreferredAlignment(), RL->getUnadjustedAlignment(),
+//              /*RequiredAlignment : used by MS-ABI)*/
+//              RL->getAlignment(), RL->hasOwnVFPtr(), RL->hasExtendableVFPtr(),
+//              RL->getVBPtrOffset(), RL->getDataSize(), Temp,
+//              RL->getNonVirtualSize(), RL->getNonVirtualAlignment(),
+//              RL->getPreferredNVAlignment(),
+//              RL->getSizeOfLargestEmptySubobject(), RL->getPrimaryBase(),
+//              RL->isPrimaryBaseVirtual(), nullptr, RL->endsWithZeroSizedObject(), 
+//              RL->leadsWithZeroSizedBase(), RL->getBaseOffsetsMap(),
+//              RL->getVBaseOffsetsMap());
+//      } else {
+//        return new ASTRecordLayout(
+//            Ctx, RL->getSize(), RL->getAlignment(),
+//            RL->getPreferredAlignment(), RL->getUnadjustedAlignment(),
+//            /*RequiredAlignment : used by MS-ABI)*/
+//            RL->getRequiredAlignment(), RL->getDataSize(), 
+//            Temp);
+//      }
+//      
+//      return nullptr;
+//    }
+    
+    // 1) Look for RecordLayout
+    // 2) Create a new layout if it doesn't exist for this EvalInfo... 
+    // 3) Return it??
+    // TODO: need to reunify the recordlayouts at the end as well
+    const ASTRecordLayout &getASTRecordLayout(const RecordDecl *D) const {
+    
+      if (IsParallelEvalInfo) {
+//        const ASTRecordLayout *Entry = ASTRecordLayouts[D];
+//        if (Entry) return *Entry;
+
+        // this call to getASTRecordLayout either needs a mutex (this could be 
+        // giga slow) or we create another CreateRecordLayout function that does
+        // the same job but doesn't use the shared map, then reconverge at the end
+        // of the threads
+        std::lock_guard<std::recursive_mutex> locked(eval_lock2);
+//        Entry = &Ctx.getASTRecordLayout(D);
+//        ASTRecordLayouts[D] = CreateRecordLayout(Ctx, D, Entry);
+//        return *ASTRecordLayouts[D];
+        return Ctx.getASTRecordLayout(D);
+      } else {
+        return Ctx.getASTRecordLayout(D);
+      }
+    }
+    
     // This isn't really a copy constructor / exact copy... it's only 
     // replicating at the level of the CurrentCall Frame, nothing above it, 
     // perhaps that's OK though as it's unlikely we would want to replicate
@@ -2934,7 +3001,7 @@ static bool CastToDerivedClass(EvalInfo &Info, const Expr *E, LValue &Result,
   const RecordDecl *RD = TruncatedType;
   for (unsigned I = TruncatedElements, N = D.Entries.size(); I != N; ++I) {
     if (RD->isInvalidDecl()) return false;
-    const ASTRecordLayout &Layout = Info.Ctx.getASTRecordLayout(RD);
+    const ASTRecordLayout &Layout = Info.getASTRecordLayout(RD);
     const CXXRecordDecl *Base = getAsBaseClass(D.Entries[I]);
     if (isVirtualBaseClass(D.Entries[I]))
       Result.Offset -= Layout.getVBaseClassOffset(Base);
@@ -2952,7 +3019,7 @@ static bool HandleLValueDirectBase(EvalInfo &Info, const Expr *E, LValue &Obj,
                                    const ASTRecordLayout *RL = nullptr) {
   if (!RL) {
     if (Derived->isInvalidDecl()) return false;
-    RL = &Info.Ctx.getASTRecordLayout(Derived);
+    RL = &Info.getASTRecordLayout(Derived);
   }
 
   Obj.getLValueOffset() += RL->getBaseClassOffset(Base);
@@ -2979,7 +3046,7 @@ static bool HandleLValueBase(EvalInfo &Info, const Expr *E, LValue &Obj,
 
   // Find the virtual base class.
   if (DerivedDecl->isInvalidDecl()) return false;
-  const ASTRecordLayout &Layout = Info.Ctx.getASTRecordLayout(DerivedDecl);
+  const ASTRecordLayout &Layout = Info.getASTRecordLayout(DerivedDecl);
   Obj.getLValueOffset() += Layout.getVBaseClassOffset(BaseDecl);
   Obj.addDecl(Info, E, BaseDecl, /*Virtual*/ true);
   return true;
@@ -3020,7 +3087,7 @@ static bool HandleLValueMember(EvalInfo &Info, const Expr *E, LValue &LVal,
                                const ASTRecordLayout *RL = nullptr) {
   if (!RL) {
     if (FD->getParent()->isInvalidDecl()) return false;
-    RL = &Info.Ctx.getASTRecordLayout(FD->getParent());
+    RL = &Info.getASTRecordLayout(FD->getParent());
   }
 
   unsigned I = FD->getFieldIndex();
@@ -5082,6 +5149,45 @@ public:
 
   std::vector<llvm::Any> GetNoCopyBackList() { return NoCopyBackList; }
 
+//  void CopyBackRecordLayouts(EvalInfo &EIOrig, EvalInfo &EIClone) {
+
+//  }
+  
+  // the original will probably have clones too....
+//  void DestroyCloneRecordLayouts(EvalInfo &EIOrig, EvalInfo &EIClone) {
+//     for (auto Rec = EIClone.ASTRecordLayouts.begin();
+//         Rec != EIClone.ASTRecordLayouts.end(); ++Rec) {
+//      if (auto *R = const_cast<ASTRecordLayout *>((Rec)->second)) {
+//         R->Destroy(EIOrig.Ctx);
+//        if (R)
+//          delete R;
+//      }
+//     }
+ 
+//      EIClone.ASTRecordLayouts.clear();
+      
+//     llvm::errs() << "The Ever Growing Clone?: " << EIClone.ASTRecordLayouts.size() << "\n";
+//     llvm::errs() << "The Ever Growing Original?: " << EIOrig.Ctx.ASTRecordLayouts.size() << "\n";
+    
+//       for (llvm::DenseMap<const RecordDecl*, const ASTRecordLayout*>::iterator
+//       I = ASTRecordLayouts.begin(), E = ASTRecordLayouts.end(); I != E; ) {
+//    // Increment in loop to prevent using deallocated memory.
+
+//  }
+//  }
+  
+//  void CloneRecordLayouts(EvalInfo &EIOrig, EvalInfo &EIClone) {
+//     llvm::errs() << "Orig The Ever Growing Clone?: " << EIOrig.Ctx.ASTRecordLayouts.size() << "\n";
+//    for (auto Rec = EIOrig.Ctx.ASTRecordLayouts.begin();
+//         Rec != EIOrig.Ctx.ASTRecordLayouts.end(); ++Rec) {
+//        EIClone.ASTRecordLayouts[Rec->getFirst()] = EIOrig.BreakRecordLayout(
+//          EIOrig.Ctx, Rec->getFirst(), Rec->getSecond());
+//     }
+     
+     
+//  llvm::errs() << "Orig The Ever Growing Clone?: " << EIClone.ASTRecordLayouts.size() << "\n";
+//  }
+  
   void CloneLValueObject(APValue &APV, EvalInfo &EIOrig, EvalInfo &EIClone) {
     QualType Type = getType(APV.getLValueBase());
     LValue ParentLVal;
@@ -5196,11 +5302,14 @@ public:
                                 CloneFrame, Original, Clone);
       } break;
     
-      // possibly part of the problem
-     
+
       // default clone for now, although in some cases (e.g. union) something
       // further may be required
-      case APValue::Array:
+      case APValue::Array: {
+      } break;
+      
+      // default clone for now, although in some cases (e.g. union) something
+      // further may be required
       case APValue::Int:
       case APValue::Float:
       case APValue::Vector:
@@ -5214,7 +5323,6 @@ public:
       break;
 
       case APValue::None:
-     
       case APValue::Indeterminate:
       break;
       
@@ -7138,6 +7246,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         EvalInfos[i].CheckingPotentialConstantExpression =
             Info.CheckingPotentialConstantExpression;
         EvalInfos[i].EnableNewConstInterp = false;
+        EvalInfos[i].IsParallelEvalInfo = true;
         StmtResults.push_back(ResStmt[i]);
       }
 
@@ -7148,6 +7257,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         // WIP better implementation
         //        lwg.RestrictedCloneEvalInfoTwo(Info, EvalInfos[i]);
         lwg.RestrictedCloneEvalInfo(Info, EvalInfos[i]);
+//        lwg.CloneRecordLayouts(Info, EvalInfos[i]);
       }
       
       lwg.SearchBody(Info.CurrentCall->Callee->getBody());
@@ -7216,6 +7326,11 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
 
       tp.wait();
 
+      
+//      for (size_t i = 0; i < tp.getPoolSize(); ++i) {
+//        lwg.DestroyCloneRecordLayouts(Info, EvalInfos[i]);
+//      }
+    
       EvalStmtResult ESR_Ret;
       for (size_t i = 0; i < EvalFutures.size(); ++i) {
         ESR_Ret = EvalFutures[i].get();
@@ -8159,7 +8274,7 @@ static bool HandleConstructorCall(const Expr *E, const LValue &This,
   }
 
   if (RD->isInvalidDecl()) return false;
-  const ASTRecordLayout &Layout = Info.Ctx.getASTRecordLayout(RD);
+  const ASTRecordLayout &Layout = Info.getASTRecordLayout(RD);
 
   // A scope for temporaries lifetime-extended by reference members.
   BlockScopeRAII LifetimeExtendedScope(Info);
@@ -8434,7 +8549,7 @@ static bool HandleDestructionImpl(EvalInfo &Info, SourceLocation CallLoc,
   if (RD->isUnion())
     return true;
 
-  const ASTRecordLayout &Layout = Info.Ctx.getASTRecordLayout(RD);
+  const ASTRecordLayout &Layout = Info.getASTRecordLayout(RD);
 
   // We don't have a good way to iterate fields in reverse, so collect all the
   // fields first and then walk them backwards.
@@ -8803,7 +8918,7 @@ class APValueToBufferConverter {
 
   bool visitRecord(const APValue &Val, QualType Ty, CharUnits Offset) {
     const RecordDecl *RD = Ty->getAsRecordDecl();
-    const ASTRecordLayout &Layout = Info.Ctx.getASTRecordLayout(RD);
+    const ASTRecordLayout &Layout = Info.getASTRecordLayout(RD);
 
     // Visit the base classes.
     if (auto *CXXRD = dyn_cast<CXXRecordDecl>(RD)) {
@@ -8961,7 +9076,7 @@ class BufferToAPValueConverter {
 
   Optional<APValue> visit(const RecordType *RTy, CharUnits Offset) {
     const RecordDecl *RD = RTy->getAsRecordDecl();
-    const ASTRecordLayout &Layout = Info.Ctx.getASTRecordLayout(RD);
+    const ASTRecordLayout &Layout = Info.getASTRecordLayout(RD);
 
     unsigned NumBases = 0;
     if (auto *CXXRD = dyn_cast<CXXRecordDecl>(RD))
@@ -8976,7 +9091,7 @@ class BufferToAPValueConverter {
         const CXXBaseSpecifier &BS = CXXRD->bases_begin()[I];
         CXXRecordDecl *BaseDecl = BS.getType()->getAsCXXRecordDecl();
         if (BaseDecl->isEmpty() ||
-            Info.Ctx.getASTRecordLayout(BaseDecl).getNonVirtualSize().isZero())
+            Info.getASTRecordLayout(BaseDecl).getNonVirtualSize().isZero())
           continue;
 
         Optional<APValue> SubObj = visitType(
@@ -11587,7 +11702,7 @@ static bool HandleClassZeroInitialization(EvalInfo &Info, const Expr *E,
                    std::distance(RD->field_begin(), RD->field_end()));
 
   if (RD->isInvalidDecl()) return false;
-  const ASTRecordLayout &Layout = Info.Ctx.getASTRecordLayout(RD);
+  const ASTRecordLayout &Layout = Info.getASTRecordLayout(RD);
 
   if (CD) {
     unsigned Index = 0;
@@ -11687,7 +11802,7 @@ bool RecordExprEvaluator::VisitInitListExpr(const InitListExpr *E) {
 
   const RecordDecl *RD = E->getType()->castAs<RecordType>()->getDecl();
   if (RD->isInvalidDecl()) return false;
-  const ASTRecordLayout &Layout = Info.Ctx.getASTRecordLayout(RD);
+  const ASTRecordLayout &Layout = Info.getASTRecordLayout(RD);
   auto *CXXRD = dyn_cast<CXXRecordDecl>(RD);
 
   EvalInfo::EvaluatingConstructorRAII EvalObj(
@@ -13082,15 +13197,15 @@ static const Expr *ignorePointerCastsAndParens(const Expr *E) {
 ///
 /// If this encounters an invalid RecordDecl or otherwise cannot determine the
 /// correct result, it will always return true.
-static bool isDesignatorAtObjectEnd(const ASTContext &Ctx, const LValue &LVal) {
+static bool isDesignatorAtObjectEnd(EvalInfo &Info, const LValue &LVal) {
   assert(!LVal.Designator.Invalid);
 
-  auto IsLastOrInvalidFieldDecl = [&Ctx](const FieldDecl *FD, bool &Invalid) {
+  auto IsLastOrInvalidFieldDecl = [&Info](const FieldDecl *FD, bool &Invalid) {
     const RecordDecl *Parent = FD->getParent();
     Invalid = Parent->isInvalidDecl();
     if (Invalid || Parent->isUnion())
       return true;
-    const ASTRecordLayout &Layout = Ctx.getASTRecordLayout(Parent);
+    const ASTRecordLayout &Layout = Info.getASTRecordLayout(Parent);
     return FD->getFieldIndex() + 1 == Layout.getFieldCount();
   };
 
@@ -13116,7 +13231,7 @@ static bool isDesignatorAtObjectEnd(const ASTContext &Ctx, const LValue &LVal) {
     // the final array element.
     ++I;
     if (BaseType->isIncompleteArrayType())
-      BaseType = Ctx.getAsArrayType(BaseType)->getElementType();
+      BaseType = Info.Ctx.getAsArrayType(BaseType)->getElementType();
     else
       BaseType = BaseType->castAs<PointerType>()->getPointeeType();
   }
@@ -13128,7 +13243,7 @@ static bool isDesignatorAtObjectEnd(const ASTContext &Ctx, const LValue &LVal) {
       // the index iff this is the last array in the Designator.
       if (I + 1 == E)
         return true;
-      const auto *CAT = cast<ConstantArrayType>(Ctx.getAsArrayType(BaseType));
+      const auto *CAT = cast<ConstantArrayType>(Info.Ctx.getAsArrayType(BaseType));
       uint64_t Index = Entry.getAsArrayIndex();
       if (Index + 1 != CAT->getSize())
         return false;
@@ -13174,7 +13289,7 @@ static bool refersToCompleteObject(const LValue &LVal) {
 
 /// Attempts to detect a user writing into a piece of memory that's impossible
 /// to figure out the size of by just using types.
-static bool isUserWritingOffTheEnd(const ASTContext &Ctx, const LValue &LVal) {
+static bool isUserWritingOffTheEnd(EvalInfo &Info, const LValue &LVal) {
   const SubobjectDesignator &Designator = LVal.Designator;
   // Notes:
   // - Users can only write off of the end when we have an invalid base. Invalid
@@ -13190,7 +13305,7 @@ static bool isUserWritingOffTheEnd(const ASTContext &Ctx, const LValue &LVal) {
   return LVal.InvalidBase &&
          Designator.Entries.size() == Designator.MostDerivedPathLength &&
          Designator.MostDerivedIsArrayElement &&
-         isDesignatorAtObjectEnd(Ctx, LVal);
+         isDesignatorAtObjectEnd(Info, LVal);
 }
 
 /// Converts the given APInt to CharUnits, assuming the APInt is unsigned.
@@ -13251,7 +13366,7 @@ static bool determineEndOffset(EvalInfo &Info, SourceLocation ExprLoc,
   // strcpy(&F->c[0], Bar);
   //
   // In order to not break too much legacy code, we need to support it.
-  if (isUserWritingOffTheEnd(Info.Ctx, LVal)) {
+  if (isUserWritingOffTheEnd(Info, LVal)) {
     // If we can resolve this to an alloc_size call, we can hand that back,
     // because we know for certain how many bytes there are to write to.
     llvm::APInt APEndOffset;
@@ -14908,7 +15023,7 @@ bool IntExprEvaluator::VisitOffsetOfExpr(const OffsetOfExpr *OOE) {
         return Error(OOE);
       RecordDecl *RD = RT->getDecl();
       if (RD->isInvalidDecl()) return false;
-      const ASTRecordLayout &RL = Info.Ctx.getASTRecordLayout(RD);
+      const ASTRecordLayout &RL = Info.getASTRecordLayout(RD);
       unsigned i = MemberDecl->getFieldIndex();
       assert(i < RL.getFieldCount() && "offsetof field in wrong type");
       Result += Info.Ctx.toCharUnitsFromBits(RL.getFieldOffset(i));
@@ -14930,7 +15045,7 @@ bool IntExprEvaluator::VisitOffsetOfExpr(const OffsetOfExpr *OOE) {
         return Error(OOE);
       RecordDecl *RD = RT->getDecl();
       if (RD->isInvalidDecl()) return false;
-      const ASTRecordLayout &RL = Info.Ctx.getASTRecordLayout(RD);
+      const ASTRecordLayout &RL = Info.getASTRecordLayout(RD);
 
       // Find the base class itself.
       CurrentType = BaseSpec->getType();

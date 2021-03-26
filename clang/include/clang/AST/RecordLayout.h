@@ -144,16 +144,21 @@ private:
     VBaseOffsetsMapTy VBaseOffsets;
   };
 
+  using BaseOffsetsMapTy = CXXRecordLayoutInfo::BaseOffsetsMapTy;
+
   /// CXXInfo - If the record layout is for a C++ record, this will have
   /// C++ specific information about the record.
   CXXRecordLayoutInfo *CXXInfo = nullptr;
+
+  ~ASTRecordLayout() = default;
+  void Destroy(ASTContext &Ctx);
+  
+public:
 
   ASTRecordLayout(const ASTContext &Ctx, CharUnits size, CharUnits alignment,
                   CharUnits preferredAlignment, CharUnits unadjustedAlignment,
                   CharUnits requiredAlignment, CharUnits datasize,
                   ArrayRef<uint64_t> fieldoffsets);
-
-  using BaseOffsetsMapTy = CXXRecordLayoutInfo::BaseOffsetsMapTy;
 
   // Constructor for C++ records.
   ASTRecordLayout(const ASTContext &Ctx, CharUnits size, CharUnits alignment,
@@ -169,12 +174,7 @@ private:
                   bool EndsWithZeroSizedObject, bool LeadsWithZeroSizedBase,
                   const BaseOffsetsMapTy &BaseOffsets,
                   const VBaseOffsetsMapTy &VBaseOffsets);
-
-  ~ASTRecordLayout() = default;
-
-  void Destroy(ASTContext &Ctx);
-
-public:
+                  
   ASTRecordLayout(const ASTRecordLayout &) = delete;
   ASTRecordLayout &operator=(const ASTRecordLayout &) = delete;
 
@@ -199,6 +199,10 @@ public:
   /// bits.
   uint64_t getFieldOffset(unsigned FieldNo) const {
     return FieldOffsets[FieldNo];
+  }
+  
+  const ASTVector<uint64_t>& getFieldOffsets() const {
+    return FieldOffsets;
   }
 
   /// getDataSize() - Get the record data size, which is the record size
@@ -330,6 +334,11 @@ public:
   const VBaseOffsetsMapTy &getVBaseOffsetsMap() const {
     assert(CXXInfo && "Record layout does not have C++ specific info!");
     return CXXInfo->VBaseOffsets;
+  }
+  
+  const BaseOffsetsMapTy &getBaseOffsetsMap() const {
+    assert(CXXInfo && "Record layout does not have C++ specific info!");
+    return CXXInfo->BaseOffsets;
   }
 };
 
