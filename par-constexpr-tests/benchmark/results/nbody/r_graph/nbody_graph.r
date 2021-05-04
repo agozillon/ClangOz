@@ -18,6 +18,7 @@ library(plotly)
 library(knitr)
 library(scales)
 library(matrixStats)
+library(reshape2)
 
 # need to fix the axises
 XAxis = c(10000, 20000, 30000, 40000, 50000)
@@ -35,12 +36,6 @@ lr <- lr %>% mutate(mean_all = rowMeans(.))
 
 lr$row_std = rowSds(as.matrix(lr[,c(1,2,3,4,5)]))
 
-FinalLinearData <- data.frame("avg" = lr$mean_all, 
-                              "sd" = lr$row_std, 
-                              "x_axis" = XAxis)
-
-print(FinalLinearData)
-
 par2 <- data.frame(
   core2_r1 = c(19.0724,37.6041,56.7582,75.3986,94.7843),
   core2_r2 = c(18.9094,37.6561,56.6469,75.947,94.696),
@@ -55,12 +50,6 @@ par2 <- par2 %>% mutate(mean_all = rowMeans(.))
 # sample standard deviation
 par2$row_std = rowSds(as.matrix(par2[,c(1,2,3,4,5)]))
 
-FinalPar2Data <- data.frame("avg" = par2$mean_all, 
-                            "sd" = par2$row_std, 
-                            "x_axis" = XAxis)
-                   
-print(FinalPar2Data)
-
 par4 <- data.frame(
   core4_r1 = c(19.8834,39.9827,59.6749,78.7245,98.9808),
   core4_r2 = c(19.7436,39.4368,59.7443,78.5579,99.1633),
@@ -72,13 +61,8 @@ par4 <- data.frame(
 # Create new col mean_all which averages of all rows
 par4 <- par4 %>% mutate(mean_all = rowMeans(.))
 
+# Create sd
 par4$row_std = rowSds(as.matrix(par4[,c(1,2,3,4,5)]))
-
-FinalPar4Data <- data.frame("avg" = par4$mean_all, 
-                            "sd" = par4$row_std, 
-                            "x_axis" = XAxis)
-
-print(FinalPar4Data)
 
 par6 <- data.frame(
   core6_r1 = c(59.5751,108.392,169.479,231.085,289.711),
@@ -91,13 +75,8 @@ par6 <- data.frame(
 # Create new col mean_all which averages of all rows
 par6 <- par6 %>% mutate(mean_all = rowMeans(.))
 
+# Create sd
 par6$row_std = rowSds(as.matrix(par6[,c(1,2,3,4,5)]))
-
-FinalPar6Data <- data.frame("avg" = par6$mean_all, 
-                            "sd" = par6$row_std, 
-                            "x_axis" = XAxis)
-                           
-print(FinalPar6Data)
 
 par8 <- data.frame(
   core8_r1 = c(57.4557,118.127,176.933,233.995,289.039),
@@ -107,23 +86,56 @@ par8 <- data.frame(
   core8_r5 = c(55.2538,117.032,180.673,225.815,290.282)
 )
 
-
 # Create new col mean_all which averages of all rows
 par8 <- par8 %>% mutate(mean_all = rowMeans(.))
 
+# Create sd
 par8$row_std = rowSds(as.matrix(par8[,c(1,2,3,4,5)]))
 
-FinalPar8Data <- data.frame("avg" = par6$mean_all, 
-                            "sd" = par6$row_std, 
-                            "x_axis" = XAxis)
+#lr$mean_all <- log(lr$mean_all)
+#par2$mean_all <- log(par2$mean_all)
+#par4$mean_all <- log(par2$mean_all)
+#par6$mean_all <- log(par2$mean_all)
+#par8$mean_all <- log(par2$mean_all)
 
-print(FinalPar8Data)
+FinalDataFrame <- data.frame("Serial" = lr$mean_all,
+                             "2 Threads" = par2$mean_all, 
+                             "4 Threads" = par4$mean_all,
+                             "6 Threads" = par6$mean_all,
+                             "8 Threads" = par8$mean_all)
 
-tmp <- ggplot() + geom_line(data=FinalLinearData, aes(x=x_axis, y=avg, colour="Serial")) + geom_point(data=FinalLinearData, size=0.75, stroke = 1, shape = 16, aes(x = x_axis, y = avg)) + geom_line(data=FinalPar2Data, aes(x=x_axis, y=avg, colour="2-Core")) + geom_point(data=FinalPar2Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + geom_line(data=FinalPar4Data, aes(x=x_axis, y=avg, colour="4-Core")) + geom_point(data=FinalPar4Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-geom_line(data=FinalPar6Data, aes(x=x_axis, y=avg, colour="6-Core")) + geom_point(data=FinalPar6Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-geom_line(data=FinalPar8Data, aes(x=x_axis, y=avg, colour="8-Core")) + geom_point(data=FinalPar8Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + ggtitle("N-Body") + xlab("Input Size") + ylab("Time Taken (Seconds)") + guides(colour=guide_legend(title="Legend")) + theme(legend.position = "bottom")
+#print(par2$row_std)
+#print(par4$row_std)
+#print(par6$row_std)
+#print(par8$row_std)
 
-tmp + scale_x_continuous(trans="log", breaks = scales::pretty_breaks(n = 12)) + scale_y_continuous(trans="log", breaks = scales::pretty_breaks(n = 8))
+print(FinalDataFrame)
+
+# Sadly still have to rename these...
+colnames(FinalDataFrame)[1] <- "Serial"
+colnames(FinalDataFrame)[2] <- "2 Threads"
+colnames(FinalDataFrame)[3] <- "4 Threads"
+colnames(FinalDataFrame)[4] <- "6 Threads"
+colnames(FinalDataFrame)[5] <- "8 Threads"
+
+FinalDataFrame <- melt(FinalDataFrame)
+FinalDataFrame$rowid <- 1:5
+FinalDataFrame$xaxis <- seq(10000, 50000, by = 10000)
+
+#FinalDataFrame$xaxis <- log(FinalDataFrame$xaxis)
+
+colnames(FinalDataFrame)[1] <- "Legend"
+
+#print(FinalDataFrame)
+
+tmp <- ggplot()
+
+tmp + geom_line(data=FinalDataFrame, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=FinalDataFrame, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Input Size") + ylab("Time Taken (Seconds)") + theme(legend.position = "bottom") + ggtitle("N-Body")
+
+#tmp + scale_x_continuous(trans="log",breaks=FinalDataFrame$xaxis)
+
+
+#+ scale_y_continuous(trans="log", breaks = scales::pretty_breaks(n = 8))
 
  
 # Linear scaling

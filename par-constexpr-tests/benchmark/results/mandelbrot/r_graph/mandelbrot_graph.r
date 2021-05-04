@@ -18,9 +18,10 @@ library(plotly)
 library(knitr)
 library(scales)
 library(matrixStats)
+library(reshape2)
 
 # need to fix the axises
-XAxis = c(25, 50, 75, 100, 125)
+#XAxis = c(25, 50, 75, 100, 125)
 
 lr <- data.frame(
   lin_r1 = c(3.65399,14.7067,33.0163,58.6812,91.4158),
@@ -34,12 +35,6 @@ lr <- data.frame(
 lr <- lr %>% mutate(mean_all = rowMeans(.))
 
 lr$row_std = rowSds(as.matrix(lr[,c(1,2,3,4,5)]))
-
-FinalLinearData <- data.frame("avg" = lr$mean_all, 
-                              "sd" = lr$row_std, 
-                              "x_axis" = XAxis)
-
-print(FinalLinearData)
 
 par2 <- data.frame(
   core2_r1 = c(2.8727,10.9373,24.6032,43.8578,70.7875),
@@ -55,13 +50,6 @@ par2 <- par2 %>% mutate(mean_all = rowMeans(.))
 # sample standard deviation
 par2$row_std = rowSds(as.matrix(par2[,c(1,2,3,4,5)]))
 
-FinalPar2Data <- data.frame("avg" = par2$mean_all, 
-                            "sd" = par2$row_std, 
-                            "x_axis" = XAxis)
-
-print(FinalPar2Data)
-
-                            
 par4 <- data.frame(
   core4_r1 = c(1.73065,6.9127,15.9813,30.0727,41.8114),
   core4_r2 = c(1.52569,6.24521,14.1228,26.5246,41.5961),
@@ -74,12 +62,6 @@ par4 <- data.frame(
 par4 <- par4 %>% mutate(mean_all = rowMeans(.))
 
 par4$row_std = rowSds(as.matrix(par4[,c(1,2,3,4,5)]))
-
-FinalPar4Data <- data.frame("avg" = par4$mean_all, 
-                            "sd" = par4$row_std, 
-                            "x_axis" = XAxis)
-
-print(FinalPar4Data)
 
 par6 <- data.frame(
   core6_r1 = c(1.20494,5.19069,11.9749,21.382,32.3077),
@@ -94,12 +76,6 @@ par6 <- par6 %>% mutate(mean_all = rowMeans(.))
 
 par6$row_std = rowSds(as.matrix(par6[,c(1,2,3,4,5)]))
 
-FinalPar6Data <- data.frame("avg" = par6$mean_all, 
-                            "sd" = par6$row_std, 
-                            "x_axis" = XAxis)
-
-print(FinalPar6Data)
-
 par8 <- data.frame(
   core8_r1 = c(1.1024,4.71202,10.8564,18.7941,30.1474),
   core8_r2 = c(1.09578,4.62396,9.77974,19.3026,28.8047),
@@ -113,20 +89,26 @@ par8 <- par8 %>% mutate(mean_all = rowMeans(.))
 
 par8$row_std = rowSds(as.matrix(par8[,c(1,2,3,4,5)]))
 
-FinalPar8Data <- data.frame("avg" = par6$mean_all, 
-                            "sd" = par6$row_std, 
-                            "x_axis" = XAxis)
-               
-print(FinalPar8Data)
-                            
-tmp <- ggplot() + geom_line(data=FinalLinearData, aes(x=x_axis, y=avg, colour="Serial")) + geom_point(data=FinalLinearData, size=0.75, stroke = 1, shape = 16, aes(x = x_axis, y = avg)) + geom_line(data=FinalPar2Data, aes(x=x_axis, y=avg, colour="2-Core")) + geom_point(data=FinalPar2Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + geom_line(data=FinalPar4Data, aes(x=x_axis, y=avg, colour="4-Core")) + geom_point(data=FinalPar4Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-geom_line(data=FinalPar6Data, aes(x=x_axis, y=avg, colour="6-Core")) + geom_point(data=FinalPar6Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-geom_line(data=FinalPar8Data, aes(x=x_axis, y=avg, colour="8-Core")) + geom_point(data=FinalPar8Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + ggtitle("Mandelbrot") + xlab("Image Output Size (Height x Width)") + ylab("Time Taken (Seconds)") + guides(colour=guide_legend(title="Legend")) + theme(legend.position = "bottom")
+FinalDataFrame <- data.frame("Serial" = lr$mean_all,
+                             "2 Threads" = par2$mean_all, 
+                             "4 Threads" = par4$mean_all,
+                             "6 Threads" = par6$mean_all,
+                             "8 Threads" = par8$mean_all)
 
-#tmp + scale_x_continuous(trans="log", breaks = scales::pretty_breaks(n = 12)) + scale_y_continuous(trans="log", breaks = scales::pretty_breaks(n = 8))
+# Sadly still have to rename these...
+colnames(FinalDataFrame)[1] <- "Serial"
+colnames(FinalDataFrame)[2] <- "2 Threads"
+colnames(FinalDataFrame)[3] <- "4 Threads"
+colnames(FinalDataFrame)[4] <- "6 Threads"
+colnames(FinalDataFrame)[5] <- "8 Threads"
 
- 
-# Linear scaling
-tmp + scale_x_continuous(trans="identity", breaks = scales::pretty_breaks(n = 6)) + scale_y_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12))
+FinalDataFrame <- melt(FinalDataFrame)
+FinalDataFrame$rowid <- 1:5
+FinalDataFrame$xaxis <- c(25, 50, 75, 100, 125)
 
+colnames(FinalDataFrame)[1] <- "Legend"
+
+tmp <- ggplot()
+
+tmp + geom_line(data=FinalDataFrame, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=FinalDataFrame, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Image Output Size (Height x Width)") + ylab("Time Taken (Seconds)") + theme(legend.position = "bottom") + ggtitle("Mandelbrot")
 

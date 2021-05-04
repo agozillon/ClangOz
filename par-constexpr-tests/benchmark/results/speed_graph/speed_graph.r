@@ -1,6 +1,9 @@
 # Uncomment to install all packages, may need sudo access and/or some extra 
 # help by downloading some external packages
+#install.packages("data.table")
 #install.packages("curl")
+#install.packages("stringi")
+#install.packages("reshape2")
 #install.packages("httr")
 #install.packages("stats")
 #install.packages("graphics")
@@ -18,8 +21,8 @@ library(plotly)
 library(knitr)
 library(scales)
 library(matrixStats)
-
-# NOTE: R calculates the sample standard deviation 
+#library(data.table)
+library(reshape2)
 
 # SYCL Edge Detection 
 
@@ -56,40 +59,56 @@ library(matrixStats)
 # 6-core: 1.72527285517 or 0.72527285517 speedup
 # 8-core: 2.32103986282 or 1.32103986282 speedup
 
-
 # Data in Miliseconds for Linear
 
 # technically not processors as I only have 4 cores
 ThreadsXAxis = c(0, 2, 4, 6, 8)
 SpeedupYAxis = c(0, 2, 4, 6, 8)
+PerfectLine = c(0, 2, 4, 6, 8)
+Blackscholes = c(0, 1.85963344946, 3.37678319369, 3.04144031049, 3.14831777528)
+SyclEdgeDetect = c(0, 1.49036618622,  2.08250627164, 1.9663886974, 1.93357911246)
+Mandelbrot = c(0, 1.3400761651,  2.21303316657, 2.80714932508, 3.09501885324)
+NBody = c(0, 1.17600382336, 1.1209578253, 0.39672024396, 0.38147388338)
+Swaptions = c(0, 1.85509461061, 2.30487722625, 1.72527285517, 2.32103986282)
+DataNames=c("Ideal Speedup", "Blackscholes", "SYCL Edge Detection", "Mandelbrot", 
+            "N-Body", "Swaptions")
 
-perfectline <- data.frame(
-  dat = c(0, 2, 4, 6, 8)
+testframe <- data.frame(
+  PerfectLine,
+  Blackscholes,
+  SyclEdgeDetect,
+  Mandelbrot,
+  NBody,
+  Swaptions
 )
 
-blackscholes <- data.frame(
-  dat = c(0, 1.85963344946, 3.37678319369, 3.04144031049, 3.14831777528)
-)
+# have to rename the columns to add spaces for certain names as they'll be used
+# in the legend and I can't find an easier way to do this, as trying a manual
+# rename replicates the legend
+colnames(testframe)[1] <- "Ideal Speedup"
+colnames(testframe)[2] <- "Blackscholes"
+colnames(testframe)[3] <- "SYCL Edge Detection"
+colnames(testframe)[4] <- "Mandelbrot"
+colnames(testframe)[5] <- "N-Body"
+colnames(testframe)[6] <- "Swaptions"
 
-sycledgedetect <- data.frame(
-  dat = c(0, 1.49036618622,  2.08250627164, 1.9663886974, 1.93357911246)
-)
+print(testframe)
 
-mandelbrot <- data.frame(
-  dat = c(0, 1.3400761651,  2.21303316657, 2.80714932508, 3.09501885324)
-)
+testframe <- melt(testframe)
+testframe$rowid <- 1:5
+testframe$xaxis <- seq(0, 8, by = 2)
 
-nbody <- data.frame(
-  dat = c(0, 1.17600382336, 1.1209578253, -2.52066793972, -2.62141143481)
-)
+#works <- transpose(testframe)
 
-swaptions <- data.frame(
-  dat = c(0, 1.85509461061, 2.30487722625, 1.72527285517, 2.32103986282)
-)
+colnames(testframe)[1] <- "Legend"
 
-tmp <- ggplot() + geom_line(data=perfectline, aes(x=ThreadsXAxis, y=dat, colour="Ideal Speedup")) + geom_point(data=perfectline, size=0.75, stroke = 1, shape = 16, aes(x = ThreadsXAxis, y = dat)) + geom_line(data=blackscholes, aes(x=ThreadsXAxis, y=dat, colour="Blackscholes")) + geom_point(data=blackscholes, size=0.75, stroke = 1, shape = 16, aes(x=ThreadsXAxis, y=dat)) + geom_line(data=sycledgedetect, aes(x=ThreadsXAxis, y=dat, colour="SYCL Edge Detection")) + geom_point(data=sycledgedetect, size=0.75, stroke = 1, shape = 16, aes(x=ThreadsXAxis, y=dat)) + geom_line(data=mandelbrot, aes(x=ThreadsXAxis, y=dat, colour="Mandelbrot")) + geom_point(data=mandelbrot, size=0.75, stroke = 1, shape = 16, aes(x=ThreadsXAxis, y=dat)) + geom_line(data=nbody, aes(x=ThreadsXAxis, y=dat, colour="N-Body")) + geom_point(data=nbody, size=0.75, stroke = 1, shape = 16, aes(x=ThreadsXAxis, y=dat)) + geom_line(data=swaptions, aes(x=ThreadsXAxis, y=dat, colour="Swaptions")) + geom_point(data=swaptions, size=0.75, stroke = 1, shape = 16, aes(x=ThreadsXAxis, y=dat)) + ggtitle("Benchmarks Speedup (4-Core CPU)") + xlab("Number of Threads") + ylab("Speedup") + guides(colour=guide_legend(title="Legend")) + theme(legend.position = "bottom")
+print(testframe)
 
-tmp + scale_x_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12)) + scale_y_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12))
+tmp <- ggplot()
+
+tmp + geom_line(data=testframe, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=testframe, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Number of Threads") + ylab("Speedup") + theme(legend.position = "bottom") + ggtitle("Benchmark Speedups")
+
+#tmp + scale_x_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12)) + scale_y_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12))
 
 
 

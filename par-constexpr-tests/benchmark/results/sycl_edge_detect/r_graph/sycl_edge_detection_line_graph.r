@@ -23,6 +23,7 @@ library(plotly)
 library(knitr)
 library(scales)
 library(matrixStats)
+library(reshape2)
 
 # NOTE: R calculates the sample standard deviation 
 
@@ -44,10 +45,6 @@ lr <- lr %>% mutate(mean_all = rowMeans(.))
 # sample standard deviation
 lr$row_std = rowSds(as.matrix(lr[,c(1,2,3,4,5)]))
 
-FinalLinearData <- data.frame("avg" = lr$mean_all, 
-                              "sd" = lr$row_std, 
-                              "x_axis" = XAxis)
-
 # Data in Floating Seconds for Par 2-Core
 par2 <- data.frame(
   core_2_r1 = c(2.30989,9.25477,37.0433,149.88),
@@ -63,12 +60,6 @@ par2 <- par2 %>% mutate(mean_all = rowMeans(.))
 # sample standard deviation
 par2$row_std = rowSds(as.matrix(par2[,c(1,2,3,4,5)]))
 
-FinalPar2Data <- data.frame("avg" = par2$mean_all, 
-                            "sd" = par2$row_std, 
-                            "x_axis" = XAxis)
-
-print(FinalPar2Data)
-
 # Data in Floating Seconds for Par 4-Core
 
 par4 <- data.frame(
@@ -83,12 +74,6 @@ par4 <- par4 %>% mutate(mean_all = rowMeans(.))
 
 par4$row_std = rowSds(as.matrix(par4[,c(1,2,3,4,5)]))
 
-FinalPar4Data <- data.frame("avg" = par4$mean_all, 
-                            "sd" = par4$row_std, 
-                            "x_axis" = XAxis)
-
-print(FinalPar4Data)
-
 # Data in Floating Seconds for Par 6-Core
 
 par6 <- data.frame(
@@ -102,12 +87,6 @@ par6 <- data.frame(
 par6 <- par6 %>% mutate(mean_all = rowMeans(.))
 
 par6$row_std = rowSds(as.matrix(par6[,c(1,2,3,4,5)]))
-
-FinalPar6Data <- data.frame("avg" = par6$mean_all, 
-                            "sd" = par6$row_std, 
-                            "x_axis" = XAxis)
-
-print(FinalPar6Data)
 
 # Data in Floating Seconds for Par 8-Core
 
@@ -124,41 +103,26 @@ par8 <- par8 %>% mutate(mean_all = rowMeans(.))
 
 par8$row_std = rowSds(as.matrix(par8[,c(1,2,3,4,5)]))
 
-FinalPar8Data <- data.frame("avg" = par6$mean_all, 
-                            "sd" = par6$row_std, 
-                            "x_axis" = XAxis)
-                            
-print(FinalPar8Data)
+FinalDataFrame <- data.frame("Serial" = lr$mean_all,
+                             "2 Threads" = par2$mean_all, 
+                             "4 Threads" = par4$mean_all,
+                             "6 Threads" = par6$mean_all,
+                             "8 Threads" = par8$mean_all)
 
-             
+# Sadly still have to rename these...
+colnames(FinalDataFrame)[1] <- "Serial"
+colnames(FinalDataFrame)[2] <- "2 Threads"
+colnames(FinalDataFrame)[3] <- "4 Threads"
+colnames(FinalDataFrame)[4] <- "6 Threads"
+colnames(FinalDataFrame)[5] <- "8 Threads"
 
-memory_box = c("114.74 kB", "213.05 kB", "606.27 kB", "2179.13 kB")
-# not exactly the same presumably because the path through SYCL is slightly 
-# modified based on lin or par
-steps_lin = c("3209854 Steps", "12832218 Steps", "51300223 Steps", "205129657 Steps")
-steps_par = c("3209804 Steps", "12832168 Steps", "51300173 Steps", "205129607 Steps")
+FinalDataFrame <- melt(FinalDataFrame)
+FinalDataFrame$rowid <- 1:4
+FinalDataFrame$xaxis <- c(64, 128, 256, 512)
 
-# log with text
-#tmp <- ggplot() + geom_line(data=FinalLinearData, aes(x=x_axis, y=avg, colour="Serial")) + geom_point(data=FinalLinearData, size=0.75, stroke = 1, shape = 16, aes(x = x_axis, y = avg)) + geom_text(aes(x=XAxis, y=FinalLinearData$avg, label=memory_box), nudge_x=-0.20, nudge_y=0.05, size=2.5, hjust=0, vjust=0) + geom_text(aes(x=XAxis, y=FinalLinearData$avg, label=steps_lin), nudge_x=-0.20, nudge_y=0.15, size=2.5, hjust=0, vjust=0) + geom_line(data=FinalPar2Data, aes(x=x_axis, y=avg, colour="2-Core")) + geom_point(data=FinalPar2Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + geom_text(aes(x=XAxis, y=FinalPar2Data$avg, label=steps_par), nudge_x=-0.20, nudge_y=0.05, size=2.5, hjust=0, vjust=0) + geom_line(data=FinalPar4Data, aes(x=x_axis, y=avg, colour="4-Core")) + geom_point(data=FinalPar4Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-#geom_line(data=FinalPar6Data, aes(x=x_axis, y=avg, colour="6-Core")) + geom_point(data=FinalPar6Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-#geom_line(data=FinalPar8Data, aes(x=x_axis, y=avg, colour="8-Core")) + geom_point(data=FinalPar8Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + ggtitle("SYCL Sobel Edge Detection") + xlab("Input Image Size (Height x Width)") + ylab("Time Taken (Seconds)") + guides(colour=guide_legend(title="Legend")) + theme(legend.position = "bottom")
+colnames(FinalDataFrame)[1] <- "Legend"
 
-tmp <- ggplot() + geom_line(data=FinalLinearData, aes(x=x_axis, y=avg, colour="Serial")) + geom_point(data=FinalLinearData, size=0.75, stroke = 1, shape = 16, aes(x = x_axis, y = avg)) + geom_line(data=FinalPar2Data, aes(x=x_axis, y=avg, colour="2-Core")) + geom_point(data=FinalPar2Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + geom_line(data=FinalPar4Data, aes(x=x_axis, y=avg, colour="4-Core")) + geom_point(data=FinalPar4Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-geom_line(data=FinalPar6Data, aes(x=x_axis, y=avg, colour="6-Core")) + geom_point(data=FinalPar6Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-geom_line(data=FinalPar8Data, aes(x=x_axis, y=avg, colour="8-Core")) + geom_point(data=FinalPar8Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + ggtitle("SYCL Sobel Edge Detection") + xlab("Input Image Size (Height x Width)") + ylab("Time Taken (Seconds)") + guides(colour=guide_legend(title="Legend")) + theme(legend.position = "bottom")
+tmp <- ggplot()
 
-
-#tmp <- ggplot() + geom_line(data=FinalLinearData, aes(x=x_axis, y=avg, colour="Serial")) + geom_point(data=FinalLinearData, size=0.75, stroke = 1, shape = 16, aes(x = x_axis, y = avg)) + geom_text(aes(x=XAxis, y=FinalLinearData$avg, label=memory_box), nudge_x=-0.20, nudge_y=0.05, size=2.5, hjust=0, vjust=0) + geom_text(aes(x=XAxis, y=FinalLinearData$avg, label=steps_lin), nudge_x=-0.20, nudge_y=0.15, size=2.5, hjust=0, vjust=0) + geom_line(data=FinalPar2Data, aes(x=x_axis, y=avg, colour="2-Core")) + geom_point(data=FinalPar2Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + geom_text(aes(x=XAxis, y=FinalPar2Data$avg, label=memory_box), nudge_x=-0.20, nudge_y=0.05, size=2.5, hjust=0, vjust=0) + geom_text(aes(x=XAxis, y=FinalPar2Data$avg, label=steps_par), nudge_x=-0.20, nudge_y=0.15, size=2.5, hjust=0, vjust=0) + geom_line(data=FinalPar4Data, aes(x=x_axis, y=avg, colour="4-Core")) + geom_point(data=FinalPar4Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + geom_text(aes(x=XAxis, y=FinalPar4Data$avg, label=memory_box), nudge_x=-0.07, nudge_y=-0.15, size=2.5, hjust=0, vjust=0) +
-#geom_line(data=FinalPar6Data, aes(x=x_axis, y=avg, colour="6-Core")) + geom_point(data=FinalPar6Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + geom_text(aes(x=XAxis, y=FinalPar6Data$avg, label=memory_box), nudge_x=-0.07, nudge_y=0.10, size=2.5, hjust=0, vjust=0) +
-#geom_line(data=FinalPar8Data, aes(x=x_axis, y=avg, colour="8-Core")) + geom_point(data=FinalPar8Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + geom_text(aes(x=XAxis, y=FinalPar8Data$avg, label=memory_box), nudge_x=-0.20, nudge_y=0.05, size=2.5, hjust=0, vjust=0) + geom_text(aes(x=XAxis, y=FinalPar2Data$avg, label=steps_par), nudge_x=-0.20, nudge_y=0.15, size=2.5, hjust=0, vjust=0) + ggtitle("SYCL Sobel Edge Detection") + xlab("Input Image Size (Height x Width)") + ylab("Time Taken (Seconds)") + guides(colour=guide_legend(title="Legend")) + theme(legend.position = "bottom")
-
-# Log scaling
-#tmp + scale_x_continuous(trans="log", breaks = scales::pretty_breaks(n = 18)) + scale_y_continuous(trans="log", breaks = scales::pretty_breaks(n = 8))
-
- 
-# Linear scaling
-tmp + scale_x_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12)) + scale_y_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12))
-
-#scale_y_continuous(breaks = scales::pretty_breaks(n = 10))
-
+tmp + geom_line(data=FinalDataFrame, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=FinalDataFrame, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Input Image Size (Height x Width)") + ylab("Time Taken (Seconds)") + theme(legend.position = "bottom") + ggtitle("SYCL Sobel Edge Detection")
 

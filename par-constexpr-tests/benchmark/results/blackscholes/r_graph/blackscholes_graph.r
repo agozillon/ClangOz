@@ -18,8 +18,7 @@ library(plotly)
 library(knitr)
 library(scales)
 library(matrixStats)
-
-XAxis  = c(4, 16, 1000, 4000, 16000, 64000)
+library(reshape2)
 
 lr <- data.frame(
   lin_r1 = c(0.00172861,0.00703313,0.442669,1.75686,7.19318,28.4583),
@@ -33,12 +32,6 @@ lr <- lr %>% mutate(mean_all = rowMeans(.))
 
 lr$row_std = rowSds(as.matrix(lr[,c(1,2,3,4,5,6)]))
 
-FinalLinearData <- data.frame("avg" = lr$mean_all, 
-                              "sd" = lr$row_std, 
-                              "x_axis" = XAxis)
-
-print(FinalLinearData)
-
 par2 <- data.frame(
   core2_r1 = c(0.00223721,0.00413664,0.235767,0.940747,3.78224,15.0428),
   core2_r2 = c(0.00140249,0.00412585,0.234801,0.93568,3.80489,15.4446),
@@ -50,12 +43,6 @@ par2 <- data.frame(
 par2 <- par2 %>% mutate(mean_all = rowMeans(.))
 
 par2$row_std = rowSds(as.matrix(par2[,c(1,2,3,4,5,6)]))
-
-FinalPar2Data <- data.frame("avg" = par2$mean_all, 
-                            "sd" = par2$row_std, 
-                            "x_axis" = XAxis)
-
-print(FinalPar2Data)
 
 par4 <- data.frame(
   core4_r1 = c(0.00113226,0.00280108,0.169898,0.53248,2.12521,8.32108),
@@ -69,12 +56,6 @@ par4 <- par4 %>% mutate(mean_all = rowMeans(.))
 
 par4$row_std = rowSds(as.matrix(par4[,c(1,2,3,4,5,6)]))
 
-FinalPar4Data <- data.frame("avg" = par4$mean_all, 
-                            "sd" = par4$row_std, 
-                            "x_axis" = XAxis)
-
-print(FinalPar4Data)
-
 par6 <- data.frame(
   core6_r1 = c(0.0022513,0.0043693,0.137747,0.542166,2.33273,9.2723),
   core6_r2 = c(0.00227689,0.00427253,0.145269,0.540451,2.2419,9.2522),
@@ -86,12 +67,6 @@ par6 <- data.frame(
 par6 <- par6 %>% mutate(mean_all = rowMeans(.))
 
 par6$row_std = rowSds(as.matrix(par6[,c(1,2,3,4,5,6)]))
-
-FinalPar6Data <- data.frame("avg" = par6$mean_all, 
-                            "sd" = par6$row_std, 
-                            "x_axis" = XAxis)
-
-print(FinalPar6Data)
 
 par8 <- data.frame(
   core8_r1 = c(0.0024052,0.00348273,0.146032,0.557346,2.23726,8.8998),
@@ -106,33 +81,28 @@ par8 <- par8 %>% mutate(mean_all = rowMeans(.))
 
 par8$row_std = rowSds(as.matrix(par8[,c(1,2,3,4,5,6)]))
 
-FinalPar8Data <- data.frame("avg" = par6$mean_all, 
-                            "sd" = par6$row_std, 
-                            "x_axis" = XAxis)
+FinalDataFrame <- data.frame("Serial" = lr$mean_all,
+                             "2 Threads" = par2$mean_all, 
+                             "4 Threads" = par4$mean_all,
+                             "6 Threads" = par6$mean_all,
+                             "8 Threads" = par8$mean_all)
 
-print(FinalPar8Data)
+# Sadly still have to rename these...
+colnames(FinalDataFrame)[1] <- "Serial"
+colnames(FinalDataFrame)[2] <- "2 Threads"
+colnames(FinalDataFrame)[3] <- "4 Threads"
+colnames(FinalDataFrame)[4] <- "6 Threads"
+colnames(FinalDataFrame)[5] <- "8 Threads"
 
-memory_box = c("31.88 kB", "31.89 kB", "64.67 kB", "162.97 kB", "556.20 kB", "2129.06 kB")
+FinalDataFrame <- melt(FinalDataFrame)
+FinalDataFrame$rowid <- 1:6
+FinalDataFrame$xaxis <- c(4, 16, 1000, 4000, 16000, 64000)
 
-steps_lin = c("1727 Steps", "7033 Steps", "459337 Steps", "1837476 Steps", "7350058 Steps", "29408370 Steps")
-steps_par = c("1701 Steps", "6863 Steps", "447071 Steps", "1788346 Steps", "7153472 Steps", "28621960 Steps")
+colnames(FinalDataFrame)[1] <- "Legend"
 
-# linear/identity
-tmp <- ggplot() + geom_line(data=FinalLinearData, aes(x=x_axis, y=avg, colour="Serial")) + geom_point(data=FinalLinearData, size=0.75, stroke = 1, shape = 16, aes(x = x_axis, y = avg)) + geom_line(data=FinalPar2Data, aes(x=x_axis, y=avg, colour="2-Core")) + geom_point(data=FinalPar2Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + geom_line(data=FinalPar4Data, aes(x=x_axis, y=avg, colour="4-Core")) + geom_point(data=FinalPar4Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-geom_line(data=FinalPar6Data, aes(x=x_axis, y=avg, colour="6-Core")) + geom_point(data=FinalPar6Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-geom_line(data=FinalPar8Data, aes(x=x_axis, y=avg, colour="8-Core")) + geom_point(data=FinalPar8Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + ggtitle("Blackscholes") + xlab("Number of Input Data Points") + ylab("Time Taken (Seconds)") + guides(colour=guide_legend(title="Legend")) + theme(legend.position = "bottom")
+tmp <- ggplot()
 
-# log 
-#tmp <- ggplot() + geom_line(data=FinalLinearData, aes(x=x_axis, y=avg, colour="Serial")) + geom_point(data=FinalLinearData, size=0.75, stroke = 1, shape = 16, aes(x = x_axis, y = avg)) + geom_text(aes(x=XAxis, y=FinalLinearData$avg, label=memory_box), nudge_x=-1.0, nudge_y=0.30, size=2.5, hjust=0, vjust=0) + geom_text(aes(x=XAxis, y=FinalLinearData$avg, label=steps_lin), nudge_x=-1.0, nudge_y=0.10, size=2.5, hjust=0, vjust=0) + geom_line(data=FinalPar2Data, aes(x=x_axis, y=avg, colour="2-Core")) + geom_point(data=FinalPar2Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + geom_text(aes(x=XAxis, y=FinalPar2Data$avg, label=steps_par), nudge_x=-0.0, nudge_y=0.00, size=2.5, hjust=0, vjust=0) + geom_line(data=FinalPar4Data, aes(x=x_axis, y=avg, colour="4-Core")) + geom_point(data=FinalPar4Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-#geom_line(data=FinalPar6Data, aes(x=x_axis, y=avg, colour="6-Core")) + geom_point(data=FinalPar6Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) +
-#geom_line(data=FinalPar8Data, aes(x=x_axis, y=avg, colour="8-Core")) + geom_point(data=FinalPar8Data, size=0.75, stroke = 1, shape = 16, aes(x=x_axis, y=avg)) + ggtitle("Blackscholes") + xlab("Number of Input Data Points") + ylab("Time Taken (Seconds)") + guides(colour=guide_legend(title="Legend")) + theme(legend.position = "bottom")
-
-# Log scaling
-tmp + scale_x_continuous(trans="log", breaks = scales::pretty_breaks(n = 10)) + scale_y_continuous(trans="log", breaks = scales::pretty_breaks(n = 10))
-
-
-# Identity/Linear scaling
-#tmp + scale_x_continuous(trans="identity", breaks = scales::pretty_breaks(n = 10)) + scale_y_continuous(trans="identity", breaks = scales::pretty_breaks(n = 10))
+tmp + geom_line(data=FinalDataFrame, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=FinalDataFrame, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Number of Input Data Points") + ylab("Time Taken (Seconds)") + theme(legend.position = "bottom") + ggtitle("Blackscholes")
 
 warnings()
 

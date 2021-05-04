@@ -18,23 +18,39 @@ library(plotly)
 library(knitr)
 library(scales)
 library(matrixStats)
+library(reshape2)
 
 XAxis = c(0, 2, 4, 6, 8)
-YAxis = c(0, 2, 4, 6, 8)
+problem_1 = c(0, 1.83540513436, 0.94509973464, 0.94529519225, 0.94529519225)
+problem_2 = c(0, 1.82837556877, 3.50628267574, 0.94665297086, 0.94665297086)
+problem_3 = c(0, 1.8616315421, 1.88226505898, 3.44558354224, 3.44558354224)
+problem_4 = c(0, 1.8403492264, 3.53598706136, 2.16103512623, 2.16103512623)
+problem_5 = c(0, 1.85509461061, 2.30487722625, 1.72527285517, 1.72527285517)
 
 # replace negatives with < 0 values
 SpeedupData <- data.frame(
-  problem_1 = c(0, 1.83540513436, 0.94509973464, 0.94529519225, 0.94529519225),
-  problem_2 = c(0, 1.82837556877, 3.50628267574, 0.94665297086, 0.94665297086),
-  problem_3 = c(0, 1.8616315421, 1.88226505898, 3.44558354224, 3.44558354224),
-  problem_4 = c(0, 1.8403492264, 3.53598706136, 2.16103512623, 2.16103512623),
-  problem_5 = c(0, 1.85509461061, 2.30487722625, 1.72527285517, 1.72527285517)
+  XAxis,
+  problem_1,
+  problem_2,
+  problem_3,
+  problem_4,
+  problem_5
 )
 
-tmp <- ggplot() + geom_line(data=SpeedupData, aes(x=XAxis, y=YAxis, colour="Ideal Speedup")) + geom_point(data=SpeedupData, size=0.75, stroke = 1, shape = 16, aes(x = XAxis, y = YAxis)) + geom_line(data=SpeedupData, aes(x=XAxis, y=problem_1, colour="2 Swaptions")) + geom_point(data=SpeedupData, size=0.75, stroke = 1, shape = 16, aes(x=XAxis, y=problem_1)) + geom_line(data=SpeedupData, aes(x=XAxis, y=problem_2, colour="4 Swaptions")) + geom_point(data=SpeedupData, size=0.75, stroke = 1, shape = 16, aes(x=XAxis, y=problem_2)) +
-geom_line(data=SpeedupData, aes(x=XAxis, y=problem_3, colour="6 Swaptions")) + geom_point(data=SpeedupData, size=0.75, stroke = 1, shape = 16, aes(x=XAxis, y=problem_3)) +
-geom_line(data=SpeedupData, aes(x=XAxis, y=problem_4, colour="8 Swaptions")) + geom_point(data=SpeedupData, size=0.75, stroke = 1, shape = 16, aes(x=XAxis, y=problem_4)) +
-geom_line(data=SpeedupData, aes(x=XAxis, y=problem_5, colour="10 Swaptions")) + geom_point(data=SpeedupData, size=0.75, stroke = 1, shape = 16, aes(x=XAxis, y=problem_5)) + ggtitle("Swaptions Speedup") + xlab("Number of Threads") + ylab("Speedup") + guides(colour=guide_legend(title="Legend")) + theme(legend.position = "bottom")
+colnames(SpeedupData)[1] <- "Ideal Speedup"
+colnames(SpeedupData)[2] <- "2 Swaptions"
+colnames(SpeedupData)[3] <- "4 Swaptions"
+colnames(SpeedupData)[4] <- "6 Swaptions"
+colnames(SpeedupData)[5] <- "8 Swaptions"
+colnames(SpeedupData)[6] <- "10 Swaptions"
 
-# Linear scaling
-tmp + scale_x_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12)) + scale_y_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12))
+SpeedupData <- melt(SpeedupData)
+SpeedupData$rowid <- 1:5
+SpeedupData$xaxis <- seq(0, 8, by = 2)
+
+colnames(SpeedupData)[1] <- "Legend"
+
+tmp <- ggplot()
+
+tmp + geom_line(data=SpeedupData, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=SpeedupData, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Number of Threads") + ylab("Speedup") + 
+theme(legend.position = "bottom") + ggtitle("Swaptions Speedup")
