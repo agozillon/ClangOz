@@ -130,7 +130,7 @@ colnames(FinalDataFrame)[1] <- "Legend"
 
 tmp <- ggplot()
 
-tmp + geom_line(data=FinalDataFrame, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=FinalDataFrame, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Input Size") + ylab("Time Taken (Seconds)") + theme(legend.position = "bottom") + ggtitle("N-Body")
+tmp + geom_line(data=FinalDataFrame, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=FinalDataFrame, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Input Size") + ylab("Time Taken (Seconds)") + theme(legend.position = "bottom", text = element_text(size = 15)) + ggtitle("N-Body")
 
 #tmp + scale_x_continuous(trans="log",breaks=FinalDataFrame$xaxis)
 

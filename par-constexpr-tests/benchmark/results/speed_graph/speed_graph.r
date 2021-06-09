@@ -106,7 +106,7 @@ print(testframe)
 
 tmp <- ggplot()
 
-tmp + geom_line(data=testframe, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=testframe, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Number of Threads") + ylab("Speedup") + theme(legend.position = "bottom") + ggtitle("Benchmark Speedups")
+tmp + geom_line(data=testframe, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=testframe, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Number of Threads") + ylab("Speedup") + theme(legend.position = "bottom", text = element_text(size = 15)) + ggtitle("Benchmark Speedups")
 
 #tmp + scale_x_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12)) + scale_y_continuous(trans="identity", breaks = scales::pretty_breaks(n = 12))
 

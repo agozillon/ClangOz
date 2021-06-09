@@ -53,4 +53,4 @@ colnames(SpeedupData)[1] <- "Legend"
 tmp <- ggplot()
 
 tmp + geom_line(data=SpeedupData, aes(x=xaxis, y=value, group=Legend, color=Legend, linetype=Legend)) + geom_point(data=SpeedupData, size=0.75, stroke = 1, shape = 16, aes(x = xaxis, y = value, group=Legend, color=Legend))  + xlab("Number of Threads") + ylab("Speedup") + 
-theme(legend.position = "bottom") + ggtitle("Swaptions Speedup")
+theme(legend.position = "bottom", text = element_text(size = 15)) + ggtitle("Swaptions Speedup")
