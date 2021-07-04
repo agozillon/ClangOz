@@ -29,18 +29,18 @@ namespace nbody {
   constexpr int niters = 50000; 
 #endif
 
-#ifdef NBODIES_5
-  constexpr int nbodies = 5;
-#elif NBODIES_10
-  constexpr int nbodies = 10;
-#elif NBODIES_15
-  constexpr int nbodies = 15;
-#elif NBODIES_20
-  constexpr int nbodies = 20;
-#elif NBODIES_25
-  constexpr int nbodies = 25;
+#ifdef NBODIES_2
+  constexpr int nbodies = 2;
+#elif NBODIES_4
+  constexpr int nbodies = 4;
+#elif NBODIES_8
+  constexpr int nbodies = 8;
+#elif NBODIES_16
+  constexpr int nbodies = 16;
+#elif NBODIES_32
+  constexpr int nbodies = 32;
 #else
-  constexpr int nbodies = 5;
+  constexpr int nbodies = 2;
 #endif
 
   constexpr type pi = 3.141592653589793;
