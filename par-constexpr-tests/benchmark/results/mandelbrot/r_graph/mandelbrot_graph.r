@@ -95,6 +95,8 @@ FinalDataFrame <- data.frame("Serial" = lr$mean_all,
                              "6 Threads" = par6$mean_all,
                              "8 Threads" = par8$mean_all)
 
+print(FinalDataFrame)
+
 # Sadly still have to rename these...
 colnames(FinalDataFrame)[1] <- "Serial"
 colnames(FinalDataFrame)[2] <- "2 Threads"

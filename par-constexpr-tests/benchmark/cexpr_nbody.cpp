@@ -15,7 +15,9 @@ using namespace __cep::experimental;
 namespace nbody {
   using type = double;
 
-#ifdef NITERS_10000
+#ifdef NITERS_32
+  constexpr int niters = 32;
+#elif NITERS_10000
   constexpr int niters = 10000;
 #elif NITERS_20000
   constexpr int niters = 20000;
@@ -29,18 +31,18 @@ namespace nbody {
   constexpr int niters = 50000; 
 #endif
 
-#ifdef NBODIES_2
-  constexpr int nbodies = 2;
-#elif NBODIES_4
-  constexpr int nbodies = 4;
-#elif NBODIES_8
-  constexpr int nbodies = 8;
-#elif NBODIES_16
+#ifdef NBODIES_16
   constexpr int nbodies = 16;
 #elif NBODIES_32
   constexpr int nbodies = 32;
+#elif NBODIES_64
+  constexpr int nbodies = 64;
+#elif NBODIES_128
+  constexpr int nbodies = 128;
+#elif NBODIES_256
+  constexpr int nbodies = 256;
 #else
-  constexpr int nbodies = 2;
+  constexpr int nbodies = 256;
 #endif
 
   constexpr type pi = 3.141592653589793;
@@ -271,7 +273,7 @@ namespace nbody {
 
 
 int main() {
-  constexpr auto outData = nbody::Calc();
+  constexpr auto outData = nbody::Calc<false>();
 
   // the golden values from the alioth benchmark for 500000 iterations, the 
   // provided number of iterations in the test on the website are a little too 

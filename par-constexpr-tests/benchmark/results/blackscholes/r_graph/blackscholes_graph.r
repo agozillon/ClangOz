@@ -94,6 +94,8 @@ colnames(FinalDataFrame)[3] <- "4 Threads"
 colnames(FinalDataFrame)[4] <- "6 Threads"
 colnames(FinalDataFrame)[5] <- "8 Threads"
 
+print(FinalDataFrame)
+
 FinalDataFrame <- melt(FinalDataFrame)
 FinalDataFrame$rowid <- 1:6
 FinalDataFrame$xaxis <- c(4, 16, 1000, 4000, 16000, 64000)

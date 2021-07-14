@@ -468,55 +468,55 @@ popd
 mkdir nbody_results
 pushd nbody_results
 
-execute_nbody_lin 10000 2 "TIME"
-execute_nbody_lin 10000 4 "TIME"
-execute_nbody_lin 10000 8 "TIME"
-execute_nbody_lin 10000 16 "TIME"
-execute_nbody_lin 10000 32 "TIME"
+execute_nbody_lin 32 16 "TIME"
+execute_nbody_lin 32 32 "TIME"
+execute_nbody_lin 32 64 "TIME"
+execute_nbody_lin 32 128 "TIME"
+execute_nbody_lin 32 256 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_lin_memory"
 unset bins
 convert_time_files_to_csv_file $filenames "nbody_15_body_lin_timings"
 unset filenames
 
-execute_nbody_par 10000 2 2 "TIME"
-execute_nbody_par 10000 4 2 "TIME"
-execute_nbody_par 10000 8 2 "TIME"
-execute_nbody_par 10000 16 2 "TIME"
-execute_nbody_par 10000 32 2 "TIME"
+execute_nbody_par 32 16 2 "TIME"
+execute_nbody_par 32 32 2 "TIME"
+execute_nbody_par 32 64 2 "TIME"
+execute_nbody_par 32 128 2 "TIME"
+execute_nbody_par 32 256 2 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_2_core_par_memory"
 unset bins
 convert_time_files_to_csv_file $filenames "nbody_15_body_2_core_par_timings"
 unset filenames
 
-execute_nbody_par 10000 2 4 "TIME"
-execute_nbody_par 10000 4 4 "TIME"
-execute_nbody_par 10000 8 4 "TIME"
-execute_nbody_par 10000 16 4 "TIME"
-execute_nbody_par 10000 32 4 "TIME"
+execute_nbody_par 32 16 4 "TIME"
+execute_nbody_par 32 32 4 "TIME"
+execute_nbody_par 32 64 4 "TIME"
+execute_nbody_par 32 128 4 "TIME"
+execute_nbody_par 32 256 4 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_4_core_par_memory"
 unset bins
 convert_time_files_to_csv_file $filenames "nbody_15_body_4_core_par_timings"
 unset filenames
 
-execute_nbody_par 10000 2 6 "TIME"
-execute_nbody_par 10000 4 6 "TIME"
-execute_nbody_par 10000 8 6 "TIME"
-execute_nbody_par 10000 16 6 "TIME"
-execute_nbody_par 10000 32 6 "TIME"
+execute_nbody_par 32 16 6 "TIME"
+execute_nbody_par 32 32 6 "TIME"
+execute_nbody_par 32 64 6 "TIME"
+execute_nbody_par 32 128 6 "TIME"
+execute_nbody_par 32 256 6 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_6_core_par_memory"
 unset bins
 convert_time_files_to_csv_file $filenames "nbody_15_body_6_core_par_timings"
 unset filenames
 
-execute_nbody_par 10000 2 8 "TIME"
-execute_nbody_par 10000 4 8 "TIME"
-execute_nbody_par 10000 8 8 "TIME"
-execute_nbody_par 10000 16 8 "TIME"
-execute_nbody_par 10000 32 8 "TIME"
+execute_nbody_par 32 16 8 "TIME"
+execute_nbody_par 32 32 8 "TIME"
+execute_nbody_par 32 64 8 "TIME"
+execute_nbody_par 32 128 8 "TIME"
+execute_nbody_par 32 256 8 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_8_core_par_memory"
 unset bins
@@ -805,51 +805,51 @@ popd
 mkdir nbody_results
 pushd nbody_results
 
-execute_nbody_lin 10000 2 "STEPS"
-execute_nbody_lin 10000 4 "STEPS"
-execute_nbody_lin 10000 8 "STEPS"
-execute_nbody_lin 10000 16 "STEPS"
-execute_nbody_lin 10000 32 "STEPS"
+execute_nbody_lin 32 16 "STEPS"
+execute_nbody_lin 32 32 "STEPS"
+execute_nbody_lin 32 64 "STEPS"
+execute_nbody_lin 32 128 "STEPS"
+execute_nbody_lin 32 256 "STEPS"
 
 convert_step_files_to_csv_file $filenames "nbody_15_body_lin_steps"
 unset filenames
 unset bins
 
-execute_nbody_par 10000 2 2 "STEPS"
-execute_nbody_par 10000 4 2 "STEPS"
-execute_nbody_par 10000 8 2 "STEPS"
-execute_nbody_par 10000 16 2 "STEPS"
-execute_nbody_par 10000 32 2 "STEPS"
+execute_nbody_par 32 16 2 "STEPS"
+execute_nbody_par 32 32 2 "STEPS"
+execute_nbody_par 32 64 2 "STEPS"
+execute_nbody_par 32 128 2 "STEPS"
+execute_nbody_par 32 256 2 "STEPS"
 
 convert_step_files_to_csv_file $filenames "nbody_15_body_2_core_par_steps"
 unset filenames
 unset bins
 
-execute_nbody_par 10000 2 4 "STEPS"
-execute_nbody_par 10000 4 4 "STEPS"
-execute_nbody_par 10000 8 4 "STEPS"
-execute_nbody_par 10000 16 4 "STEPS"
-execute_nbody_par 10000 32 4 "STEPS"
+execute_nbody_par 32 16 4 "STEPS"
+execute_nbody_par 32 32 4 "STEPS"
+execute_nbody_par 32 64 4 "STEPS"
+execute_nbody_par 32 128 4 "STEPS"
+execute_nbody_par 32 256 4 "STEPS"
 
 convert_step_files_to_csv_file $filenames "nbody_15_body_4_core_par_steps"
 unset filenames
 unset bins
 
-execute_nbody_par 10000 2 6 "STEPS"
-execute_nbody_par 10000 4 6 "STEPS"
-execute_nbody_par 10000 8 6 "STEPS"
-execute_nbody_par 10000 16 6 "STEPS"
-execute_nbody_par 10000 32 6 "STEPS"
+execute_nbody_par 32 16 6 "STEPS"
+execute_nbody_par 32 32 6 "STEPS"
+execute_nbody_par 32 64 6 "STEPS"
+execute_nbody_par 32 128 6 "STEPS"
+execute_nbody_par 32 256 6 "STEPS"
 
 convert_step_files_to_csv_file $filenames "nbody_15_body_6_core_par_steps"
 unset filenames
 unset bins
 
-execute_nbody_par 10000 2 8 "STEPS"
-execute_nbody_par 10000 4 8 "STEPS"
-execute_nbody_par 10000 8 8 "STEPS"
-execute_nbody_par 10000 16 8 "STEPS"
-execute_nbody_par 10000 32 8 "STEPS"
+execute_nbody_par 32 16 8 "STEPS"
+execute_nbody_par 32 32 8 "STEPS"
+execute_nbody_par 32 64 8 "STEPS"
+execute_nbody_par 32 128 8 "STEPS"
+execute_nbody_par 32 256 8 "STEPS"
 
 convert_step_files_to_csv_file $filenames "nbody_15_body_8_core_par_steps"
 unset filenames
