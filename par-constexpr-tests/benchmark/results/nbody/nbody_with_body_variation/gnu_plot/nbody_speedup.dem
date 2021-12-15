@@ -19,7 +19,7 @@ set xlabel "Number of Threads" font ",35"
 
 #set logscale xy # log scaling on both axis
 
-plot "nbody_speedup.dat" every ::0::4 using 1:2 title 'Ideal Speedup' with linespoints dt 1 lw 3 ps 3, \
+plot "nbody_speedup.dat" every ::0::4 using 1:2 title 'Ideal Speedup' with linespoints dt 1 linecolor 4 lw 3 ps 3, \
      "nbody_speedup.dat" every ::5::9 using 1:2 title '16 Bodies' with linespoints dt 2 lw 3 ps 3, \
      "nbody_speedup.dat" every ::10::14 using 1:2 title '32 Bodies' with linespoints dt 3 lw 3 ps 3, \
      "nbody_speedup.dat" every ::15::19 using 1:2 title '64 Bodies' with linespoints dt 4 linecolor 8 lw 3 ps 3, \

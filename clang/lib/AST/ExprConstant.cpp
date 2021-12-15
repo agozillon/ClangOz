@@ -5122,9 +5122,10 @@ class LoopWrapperGatherer : public ConstStmtVisitor<LoopWrapperGatherer, bool> {
   std::vector<std::vector<APValue>> SaveTheArgs;
 
   std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> &RedList;
-  int64_t ThreadPartitionSize;
-  int64_t ThreadPartitionOverflow;
-
+  int64_t ThreadPartitionSize = 0;
+  int64_t ThreadPartitionOverflow = 0;
+  int64_t ThreadsInUse = 0;
+  
   // Note: This function needs a fair bit of work if its to stay in use, it
   // was mainly built to duplicate an array that's part of a struct.
   APValue CopyAPValue(llvm::Any ArgOrTemp) {
@@ -5147,6 +5148,8 @@ public:
     SaveTheFrames.reserve(ThreadInfo.size());
   }
 
+
+  int64_t GetThreadUtilisation() { return ThreadsInUse; }
   std::vector<llvm::Any> GetNoCopyBackList() { return NoCopyBackList; }
 
 //  void CopyBackRecordLayouts(EvalInfo &EIOrig, EvalInfo &EIClone) {
@@ -5807,24 +5810,38 @@ public:
       int64_t EndOffset = APVEnd.getLValueOffset().getQuantity();
 
       int64_t LoopExtent = (EndOffset - BeginOffset) / EndTySz;
-      ThreadPartitionSize = LoopExtent / ThreadInfo.size();
-      ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
 
-      for (size_t i = 0; i < ThreadInfo.size(); ++i) {
+      // need to also alter code to make sure more things aren't being launched 
+      // than neccessary and I also need to check that the other loop instrinsic 
+      // construct does the same thing as this. 
+      if (LoopExtent < ThreadInfo.size()) {
+        ThreadsInUse = LoopExtent;
+        ThreadPartitionSize = 1;
+        ThreadPartitionOverflow = 0;
+      } else {
+        ThreadsInUse = ThreadInfo.size();
+        ThreadPartitionSize = LoopExtent / ThreadInfo.size();
+        ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
+      }
+      
+      for (size_t i = 0; i < GetThreadUtilisation(); ++i) {
         // Setting End Iterator
         int64_t endOfThreadLoop =
-            (i != ThreadInfo.size() - 1)
+            (i != GetThreadUtilisation() - 1)
                 ? ThreadPartitionSize * (i + 1)
                 : (ThreadPartitionSize * (i + 1)) + ThreadPartitionOverflow;
 
+
         OffsetLValue(Info.Ctx, APVEnd, EndTySz,
                      (BeginOffset / BeginTySz) + endOfThreadLoop, false);
+
         SetArgOrTemp(EndArgOrTemp, ThreadInfo[i].CurrentCall, APVEnd);
 
+   
         // Setting Start Iterator
         OffsetLValue(Info.Ctx, APVBegin, BeginTySz, ThreadPartitionSize * i);
         SetArgOrTemp(BeginArgOrTemp, ThreadInfo[i].CurrentCall, APVBegin);
-
+        
         APVBegin = *GetArgOrTemp(BeginArgOrTemp, Info.CurrentCall);
         APVEnd = *GetArgOrTemp(EndArgOrTemp, Info.CurrentCall);
       }
@@ -5867,13 +5884,24 @@ public:
           APVEnd.getStructField(0).getLValueOffset().getQuantity();
 
       int64_t LoopExtent = (EndOffset - BeginOffset) / EndTySz;
-      ThreadPartitionSize = LoopExtent / ThreadInfo.size();
-      ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
+      
+//      ThreadPartitionSize = LoopExtent / ThreadInfo.size();
+//      ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
 
-      for (size_t i = 0; i < ThreadInfo.size(); ++i) {
+      if (LoopExtent < ThreadInfo.size()) {
+        ThreadsInUse = LoopExtent;
+        ThreadPartitionSize = 1;
+        ThreadPartitionOverflow = 0;
+      } else {
+        ThreadsInUse = ThreadInfo.size();
+        ThreadPartitionSize = LoopExtent / ThreadInfo.size();
+        ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
+      }
+      
+      for (size_t i = 0; i < GetThreadUtilisation(); ++i) {
         // Setting End Iterator
         int64_t endOfThreadLoop =
-            (i != ThreadInfo.size() - 1)
+            (i != GetThreadUtilisation() - 1)
                 ? ThreadPartitionSize * (i + 1)
                 : (ThreadPartitionSize * (i + 1)) + ThreadPartitionOverflow;
 
@@ -5965,7 +5993,7 @@ public:
           }
         }
 
-    for (size_t i = 0; i < ThreadInfo.size(); ++i) {
+    for (size_t i = 0; i < GetThreadUtilisation(); ++i) {
       APV = Info.CurrentCall->Arguments[FuncIndex];
 
       // TODO/FIXME: Change the below to a switch statement and also
@@ -5986,8 +6014,8 @@ public:
         case 3:   // PostDec
         case 4: { // PreDec
           int64_t LValOffset = ThreadPartitionSize * 
-                                  (ThreadInfo.size() - (i + 1));
-          if (i != ThreadInfo.size() - 1) LValOffset += ThreadPartitionOverflow;
+                                  (GetThreadUtilisation() - (i + 1));
+          if (i != GetThreadUtilisation() - 1) LValOffset += ThreadPartitionOverflow;
           OffsetLValue(Info.Ctx, APV, TySz,-LValOffset, true, BoundArrSz);
           break;
         }
@@ -6021,8 +6049,8 @@ public:
         case 3:   // PostDec
         case 4: { // PreDec 
           int64_t LValOffset = ThreadPartitionSize * 
-                                  (ThreadInfo.size() - (i + 1));
-          if (i != ThreadInfo.size() - 1) LValOffset += ThreadPartitionOverflow;
+                                  (GetThreadUtilisation() - (i + 1));
+          if (i != GetThreadUtilisation() - 1) LValOffset += ThreadPartitionOverflow;
           OffsetLValue(Info.Ctx,  APV.getStructField(0), TySz, -LValOffset, 
                        true, BoundArrSz);
           break;
@@ -6140,7 +6168,7 @@ public:
 
     // This copies the lval, but maybe block with an else or perhaps it
     // just means the wrapper order has to be cared about more?
-    for (int i = 0; i < ThreadInfo.size(); ++i) {
+    for (int i = 0; i < GetThreadUtilisation(); ++i) {
       SetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall, APV);
     }
 
@@ -6279,18 +6307,26 @@ public:
       break;
     case 2: { // GT
       int64_t LoopExtent = (LHS - RHS);
-      ThreadPartitionSize = LoopExtent / ThreadInfo.size();
-      ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
+      
+      if (LoopExtent < ThreadInfo.size()) {
+        ThreadsInUse = LoopExtent;
+        ThreadPartitionSize = 1;
+        ThreadPartitionOverflow = 0;
+      } else {
+        ThreadsInUse = ThreadInfo.size();
+        ThreadPartitionSize = LoopExtent / ThreadInfo.size();
+        ThreadPartitionOverflow = LoopExtent % ThreadInfo.size();
+      }
 
       // NOTE: This may actually be inverted
-      for (size_t i = 0; i < ThreadInfo.size(); ++i) {
+      for (size_t i = 0; i < GetThreadUtilisation(); ++i) {
         int64_t LHSLoopIncrement = ThreadPartitionSize * i;
 
         int64_t RHSLoopIncrement =
-            (i != ThreadInfo.size() - 1)
-                ? ThreadPartitionSize * (ThreadInfo.size() - (i + 1)) +
+            (i != GetThreadUtilisation() - 1)
+                ? ThreadPartitionSize * (GetThreadUtilisation() - (i + 1)) +
                       ThreadPartitionOverflow
-                : ThreadPartitionSize * (ThreadInfo.size() - (i + 1));
+                : ThreadPartitionSize * (GetThreadUtilisation() - (i + 1));
 
         if (LHSIsInt)
           SetArgOrTemp(ArgOrTempLHS, ThreadInfo[i].CurrentCall,
@@ -6598,7 +6634,7 @@ public:
         continue;
       
       ThreadAPVs.clear();
-      for (unsigned int j = 0; j < ThreadInfo.size(); ++j)
+      for (unsigned int j = 0; j < GetThreadUtilisation(); ++j)
         ThreadAPVs.push_back(ThreadInfo[j].CurrentCall->getArguments(i));
                                 
       RecursiveArrayCopyback(*To.CurrentCall->getArguments(i), ThreadAPVs);
@@ -6685,7 +6721,8 @@ void RedTypeAccumulate(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
 
 void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
                    llvm::Any ArgOrTemp, int64_t TySz, APValue APValPrev,
-                   bool Reverse, bool Partitioned) {
+                   bool Reverse, bool Partitioned, 
+                   LoopWrapperGatherer& Lwg) {
   // TODO: Need to check type its working on before we do this...
   // the below code wont work for everything
   APValue *SubObjAPVal = GetArgOrTemp(ArgOrTemp, Info.CurrentCall);
@@ -6706,14 +6743,14 @@ void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
       expandArray(*CompleteObjAPV, ArrSz - 1);
 
     int64_t ArrSzChars = ArrSz * TySz;
-    int64_t ThreadPartitionSize = ArrSzChars / ThreadInfo.size();
+    
     int64_t ArrStartIndex =
         (SubObjAPVal->getLValueOffset().getQuantity() / TySz);
 
     if (Reverse) {
       int64_t PrevEndIndex = ArrStartIndex;
 
-      for (int i = ThreadInfo.size() - 1; i >= 0; --i) {
+      for (int i = Lwg.GetThreadUtilisation() - 1; i >= 0; --i) {
         APValue *ThreadSubObjAPVal =
             GetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall);
         APValue *ThreadObjAPV =
@@ -6738,7 +6775,7 @@ void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
       }
     } else {
       int64_t PrevEndIndex = 0;
-      for (int i = 0; i < ThreadInfo.size(); ++i) {
+      for (int i = 0; i < Lwg.GetThreadUtilisation(); ++i) {
         APValue *ThreadSubObjAPVal =
             GetArgOrTemp(ArgOrTemp, ThreadInfo[i].CurrentCall);
         APValue *ThreadObjAPV =
@@ -6768,17 +6805,18 @@ void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
 
 void RedTypeOrdered(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
                     int OpType, llvm::Any ArgOrTemp, int64_t TySz,
-                    APValue APValPrev, bool Partitioned) {
+                    APValue APValPrev, bool Partitioned, 
+                    LoopWrapperGatherer& Lwg) {
   switch (OpType) {
   case 1:
   case 2:
     OrderedAssign(Info, ThreadInfo, ArgOrTemp, TySz, APValPrev, false,
-                  Partitioned);
+                  Partitioned, Lwg);
     break;
   case 3:
   case 4:
     OrderedAssign(Info, ThreadInfo, ArgOrTemp, TySz, APValPrev, true,
-                  Partitioned);
+                  Partitioned, Lwg);
     break;
   default:
     llvm_unreachable("RedTypeAccumulate passed invalid OpType");
@@ -6789,7 +6827,8 @@ void RedTypeOrdered(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
 // First attempt at something approaching a reduce, likely an abomination
 void ParConstExprReduce(
     EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
-    std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> &RedList) {
+    std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> &RedList,
+    LoopWrapperGatherer& Lwg) {
   for (auto RedVar : RedList) {
     // Interpret first integer as the ReductionType we wish to apply to the
     // value after our algorithm has completed
@@ -6802,11 +6841,11 @@ void ParConstExprReduce(
       break;
     case 1: // PartitionedOrderedAssign
       RedTypeOrdered(Info, ThreadInfo, std::get<1>(RedVar), std::get<2>(RedVar),
-                     std::get<3>(RedVar), std::get<4>(RedVar), true);
+                     std::get<3>(RedVar), std::get<4>(RedVar), true, Lwg);
       break;
     case 2: // OrderedAssign
       RedTypeOrdered(Info, ThreadInfo, std::get<1>(RedVar), std::get<2>(RedVar),
-                     std::get<3>(RedVar), std::get<4>(RedVar), false);
+                     std::get<3>(RedVar), std::get<4>(RedVar), false, Lwg);
       break;
     default:
       llvm_unreachable("Invald ReductionType passed to ParConstExprReduce");
@@ -7253,6 +7292,11 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       std::vector<std::tuple<int, int, llvm::Any, int64_t, APValue>> RedList;
       auto lwg = LoopWrapperGatherer(Info, EvalInfos, RedList);
       
+      // I have to clone for the full pool size right now, even if the actual 
+      // thread utilisation is smaller, this is because the wrapper handling 
+      // happens afterwards at the moment. It should be possible to optimise and 
+      // move this with a little work, but it's a small optimisation for 
+      // occasions when the loop range is smaller than the pool.
       for (size_t i = 0; i < tp.getPoolSize(); ++i) {
         // WIP better implementation
         //        lwg.RestrictedCloneEvalInfoTwo(Info, EvalInfos[i]);
@@ -7319,7 +7363,8 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
         p.set_value(ESR_Succeeded);
       };
 
-      for (size_t i = 0; i < tp.getPoolSize(); ++i) {
+      
+      for (size_t i = 0; i < lwg.GetThreadUtilisation(); ++i) {
         tp.async(ForThreadFunction, std::ref(EvalInfos[i]), std::ref(ForScope),
                  FS, std::ref(StmtResults[i]), std::ref(EvalPromises[i]));
       }
@@ -7332,7 +7377,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
 //      }
     
       EvalStmtResult ESR_Ret;
-      for (size_t i = 0; i < EvalFutures.size(); ++i) {
+      for (size_t i = 0; i < lwg.GetThreadUtilisation(); ++i) {
         ESR_Ret = EvalFutures[i].get();
 
         if (ESR_Ret == ESR_Failed)
@@ -7368,10 +7413,10 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
 
       // This idea of a reduce isn't superb it only really handles simple cases
       // what happens if its a complex user defined function?
-      ParConstExprReduce(Info, EvalInfos, RedList);
+      ParConstExprReduce(Info, EvalInfos, RedList, lwg);
 
       auto StepCountForLoop = 0;
-      for (size_t i = 0; i < tp.getPoolSize(); ++i) {
+      for (size_t i = 0; i < lwg.GetThreadUtilisation(); ++i) {
         StepCountForLoop += Info.getLangOpts().ConstexprStepLimit - EvalInfos[i].StepsLeft;
       }
 
