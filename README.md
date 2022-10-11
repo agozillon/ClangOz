@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # The LLVM Compiler Infrastructure
 
 This directory and its sub-directories contain the source code for LLVM,
@@ -120,3 +121,6 @@ Join [LLVM Discourse forums](https://discourse.llvm.org/), [discord chat](https:
 
 The LLVM project has adopted a [code of conduct](https://llvm.org/docs/CodeOfConduct.html) for
 participants to all modes of communication within the project.
+=======
+Coming Soon...
+>>>>>>> 078faae18a9f0f770166c4e574c6aa91c09472e2
