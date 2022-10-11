@@ -23,7 +23,7 @@ See https://git-scm.com/docs/git-bisect for a good overview. In summary:
   .. code-block:: bash
 
      git bisect start
-     git bisect bad master
+     git bisect bad main
      git bisect good f00ba
 
 git will check out a revision in between. Try to reproduce your problem at
@@ -33,8 +33,8 @@ If you can't repro at the current commit (maybe the build is broken), run
 ``git bisect skip`` and git will pick a nearby alternate commit.
 
 (To abort a bisect, run ``git bisect reset``, and if git complains about not
-being able to reset, do the usual ``git checkout -f master; git reset --hard
-origin/master`` dance and try again).
+being able to reset, do the usual ``git checkout -f main; git reset --hard
+origin/main`` dance and try again).
 
 ``git bisect run``
 ==================
@@ -63,7 +63,7 @@ directory that makes clang crash at trunk, but it worked fine at revision
 
 To make sure your run script works, it's a good idea to run ``./run.sh`` by
 hand and tweak the script until it works, then run ``git bisect good`` or
-``git bisect bad`` manually once based on the result of the script 
+``git bisect bad`` manually once based on the result of the script
 (check ``echo $?`` after your script ran), and only then run ``git bisect run
 ./run.sh``. Don't forget to mark your run script as executable -- ``git bisect
 run`` doesn't check for that, it just assumes the run script failed each time.
@@ -85,7 +85,7 @@ Here's how LLVM's history currently looks:
      A-o-o-......-o-D-o-o-HEAD
                    /
        B-o-...-o-C-
- 
+
 ``A`` is the first commit in LLVM ever, ``97724f18c79c``.
 
 ``B`` is the first commit in MLIR, ``aed0d21a62db``.

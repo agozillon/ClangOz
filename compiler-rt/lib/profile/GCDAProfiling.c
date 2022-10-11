@@ -3,9 +3,9 @@
 |* Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 |* See https://llvm.org/LICENSE.txt for license information.
 |* SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-|* 
+|*
 |*===----------------------------------------------------------------------===*|
-|* 
+|*
 |* This file implements the call back routines for the gcov profiling
 |* instrumentation pass. Link against this library when running code through
 |* the -insert-gcov-profiling LLVM pass.
@@ -23,6 +23,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,29 +37,6 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <unistd.h>
-#endif
-
-#if defined(__FreeBSD__) && defined(__i386__)
-#define I386_FREEBSD 1
-#else
-#define I386_FREEBSD 0
-#endif
-
-#if !defined(_MSC_VER) && !I386_FREEBSD
-#include <stdint.h>
-#endif
-
-#if defined(_MSC_VER)
-typedef unsigned char uint8_t;
-typedef unsigned int uint32_t;
-typedef unsigned long long uint64_t;
-#elif I386_FREEBSD
-/* System headers define 'size_t' incorrectly on x64 FreeBSD (prior to
- * FreeBSD 10, r232261) when compiled in 32-bit mode.
- */
-typedef unsigned char uint8_t;
-typedef unsigned int uint32_t;
-typedef unsigned long long uint64_t;
 #endif
 
 #include "InstrProfiling.h"
@@ -87,7 +65,7 @@ static char *filename = NULL;
 
 /*
  * The current file we're outputting.
- */ 
+ */
 static FILE *output_file = NULL;
 
 /*
@@ -105,7 +83,7 @@ static HANDLE mmap_handle = NULL;
 #endif
 static int fd = -1;
 
-typedef void (*fn_ptr)();
+typedef void (*fn_ptr)(void);
 
 typedef void* dynamic_object_id;
 // The address of this variable identifies a given dynamic object.
@@ -126,11 +104,6 @@ struct fn_list {
  * A list of functions to write out the data, shared between all dynamic objects.
  */
 struct fn_list writeout_fn_list;
-
-/*
- *  A list of flush functions that our __gcov_flush() function should call, shared between all dynamic objects.
- */
-struct fn_list flush_fn_list;
 
 /*
  *  A list of reset functions, shared between all dynamic objects.
@@ -210,23 +183,7 @@ static void write_64bit_value(uint64_t i) {
   write_32bit_value(hi);
 }
 
-static uint32_t length_of_string(const char *s) {
-  return (strlen(s) / 4) + 1;
-}
-
-// Remove when we support libgcov 9 current_working_directory.
-#if !defined(_MSC_VER) && defined(__clang__)
-__attribute__((unused))
-#endif
-static void
-write_string(const char *s) {
-  uint32_t len = length_of_string(s);
-  write_32bit_value(len);
-  write_bytes(s, strlen(s));
-  write_bytes("\0\0\0\0", 4 - (strlen(s) % 4));
-}
-
-static uint32_t read_32bit_value() {
+static uint32_t read_32bit_value(void) {
   uint32_t val;
 
   if (new_file)
@@ -237,7 +194,7 @@ static uint32_t read_32bit_value() {
   return val;
 }
 
-static uint64_t read_64bit_value() {
+static uint64_t read_64bit_value(void) {
   // GCOV uses a lo-/hi-word format even on big-endian systems.
   // See also GCOVBuffer::readInt64 in LLVM.
   uint32_t lo = read_32bit_value();
@@ -261,7 +218,7 @@ static char *mangle_filename(const char *orig_filename) {
   return new_filename;
 }
 
-static int map_file() {
+static int map_file(void) {
   fseek(output_file, 0L, SEEK_END);
   file_size = ftell(output_file);
 
@@ -305,13 +262,8 @@ static int map_file() {
   return 0;
 }
 
-static void unmap_file() {
+static void unmap_file(void) {
 #if defined(_WIN32)
-  if (!FlushViewOfFile(write_buffer, file_size)) {
-    fprintf(stderr, "profiling: %s: cannot flush mapped view: %lu\n", filename,
-            GetLastError());
-  }
-
   if (!UnmapViewOfFile(write_buffer)) {
     fprintf(stderr, "profiling: %s: cannot unmap mapped view: %lu\n", filename,
             GetLastError());
@@ -324,16 +276,11 @@ static void unmap_file() {
 
   mmap_handle = NULL;
 #else
-  if (msync(write_buffer, file_size, MS_SYNC) == -1) {
+  if (munmap(write_buffer, file_size) == -1) {
     int errnum = errno;
-    fprintf(stderr, "profiling: %s: cannot msync: %s\n", filename,
+    fprintf(stderr, "profiling: %s: cannot munmap: %s\n", filename,
             strerror(errnum));
   }
-
-  /* We explicitly ignore errors from unmapping because at this point the data
-   * is written and we don't care.
-   */
-  (void)munmap(write_buffer, file_size);
 #endif
 
   write_buffer = NULL;
@@ -422,32 +369,6 @@ void llvm_gcda_start_file(const char *orig_filename, uint32_t version,
 #endif
 }
 
-/* Given an array of pointers to counters (counters), increment the n-th one,
- * where we're also given a pointer to n (predecessor).
- */
-COMPILER_RT_VISIBILITY
-void llvm_gcda_increment_indirect_counter(uint32_t *predecessor,
-                                          uint64_t **counters) {
-  uint64_t *counter;
-  uint32_t pred;
-
-  pred = *predecessor;
-  if (pred == 0xffffffff)
-    return;
-  counter = counters[pred];
-
-  /* Don't crash if the pred# is out of sync. This can happen due to threads,
-     or because of a TODO in GCOVProfiling.cpp buildEdgeLookupTable(). */
-  if (counter)
-    ++*counter;
-#ifdef DEBUG_GCDAPROFILING
-  else
-    fprintf(stderr,
-            "llvmgcda: increment_indirect_counter counters=%08llx, pred=%u\n",
-            *counter, *predecessor);
-#endif
-}
-
 COMPILER_RT_VISIBILITY
 void llvm_gcda_emit_function(uint32_t ident, uint32_t func_checksum,
                              uint32_t cfg_checksum) {
@@ -523,7 +444,7 @@ void llvm_gcda_emit_arcs(uint32_t num_counters, uint64_t *counters) {
 }
 
 COMPILER_RT_VISIBILITY
-void llvm_gcda_summary_info() {
+void llvm_gcda_summary_info(void) {
   uint32_t runs = 1;
   static uint32_t run_counted = 0; // We only want to increase the run count once.
   uint32_t val = 0;
@@ -535,8 +456,9 @@ void llvm_gcda_summary_info() {
 
   if (val != (uint32_t)-1) {
     /* There are counters present in the file. Merge them. */
-    if (val != (gcov_version >= 90 ? GCOV_TAG_OBJECT_SUMMARY
-                                   : GCOV_TAG_PROGRAM_SUMMARY)) {
+    uint32_t gcov_tag =
+        gcov_version >= 90 ? GCOV_TAG_OBJECT_SUMMARY : GCOV_TAG_PROGRAM_SUMMARY;
+    if (val != gcov_tag) {
       fprintf(stderr,
               "profiling: %s: cannot merge previous run count: "
               "corrupt object tag (0x%08x)\n",
@@ -586,7 +508,7 @@ void llvm_gcda_summary_info() {
 }
 
 COMPILER_RT_VISIBILITY
-void llvm_gcda_end_file() {
+void llvm_gcda_end_file(void) {
   /* Write out EOF record. */
   if (output_file) {
     write_bytes("\0\0\0\0\0\0\0\0", 8);
@@ -632,6 +554,9 @@ void llvm_writeout_files(void) {
 // __attribute__((destructor)) and destructors whose priorities are greater than
 // 100 run before this function and can thus be tracked. The priority is
 // compatible with GCC 7 onwards.
+#if __GNUC__ >= 9
+#pragma GCC diagnostic ignored "-Wprio-ctor-dtor"
+#endif
 __attribute__((destructor(100)))
 #endif
 static void llvm_writeout_and_clear(void) {

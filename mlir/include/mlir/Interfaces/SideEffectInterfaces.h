@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef MLIR_INTERFACES_SIDEEFFECTS_H
-#define MLIR_INTERFACES_SIDEEFFECTS_H
+#ifndef MLIR_INTERFACES_SIDEEFFECTINTERFACES_H
+#define MLIR_INTERFACES_SIDEEFFECTINTERFACES_H
 
 #include "mlir/IR/OpDefinition.h"
 
@@ -53,7 +53,8 @@ public:
   TypeID getEffectID() const { return id; }
 
   /// Returns a unique instance for the given effect class.
-  template <typename DerivedEffect> static DerivedEffect *get() {
+  template <typename DerivedEffect>
+  static DerivedEffect *get() {
     static_assert(std::is_base_of<Effect, DerivedEffect>::value,
                   "expected DerivedEffect to inherit from Effect");
 
@@ -77,7 +78,7 @@ private:
 /// class represents an abstract interface for a given resource.
 class Resource {
 public:
-  virtual ~Resource() {}
+  virtual ~Resource() = default;
 
   /// This base class is used for derived effects that are non-parametric.
   template <typename DerivedResource, typename BaseResource = Resource>
@@ -131,25 +132,50 @@ struct AutomaticAllocationScopeResource
 
 /// This class represents a specific instance of an effect. It contains the
 /// effect being applied, a resource that corresponds to where the effect is
-/// applied, and an optional value(either operand, result, or region entry
-/// argument) that the effect is applied to.
-template <typename EffectT> class EffectInstance {
+/// applied, and an optional symbol reference or value(either operand, result,
+/// or region entry argument) that the effect is applied to, and an optional
+/// parameters attribute further specifying the details of the effect.
+template <typename EffectT>
+class EffectInstance {
 public:
   EffectInstance(EffectT *effect, Resource *resource = DefaultResource::get())
       : effect(effect), resource(resource) {}
   EffectInstance(EffectT *effect, Value value,
                  Resource *resource = DefaultResource::get())
       : effect(effect), resource(resource), value(value) {}
+  EffectInstance(EffectT *effect, SymbolRefAttr symbol,
+                 Resource *resource = DefaultResource::get())
+      : effect(effect), resource(resource), value(symbol) {}
+  EffectInstance(EffectT *effect, Attribute parameters,
+                 Resource *resource = DefaultResource::get())
+      : effect(effect), resource(resource), parameters(parameters) {}
+  EffectInstance(EffectT *effect, Value value, Attribute parameters,
+                 Resource *resource = DefaultResource::get())
+      : effect(effect), resource(resource), value(value),
+        parameters(parameters) {}
+  EffectInstance(EffectT *effect, SymbolRefAttr symbol, Attribute parameters,
+                 Resource *resource = DefaultResource::get())
+      : effect(effect), resource(resource), value(symbol),
+        parameters(parameters) {}
 
   /// Return the effect being applied.
   EffectT *getEffect() const { return effect; }
 
   /// Return the value the effect is applied on, or nullptr if there isn't a
   /// known value being affected.
-  Value getValue() const { return value; }
+  Value getValue() const { return value ? value.dyn_cast<Value>() : Value(); }
+
+  /// Return the symbol reference the effect is applied on, or nullptr if there
+  /// isn't a known smbol being affected.
+  SymbolRefAttr getSymbolRef() const {
+    return value ? value.dyn_cast<SymbolRefAttr>() : SymbolRefAttr();
+  }
 
   /// Return the resource that the effect applies to.
   Resource *getResource() const { return resource; }
+
+  /// Return the parameters of the effect, if any.
+  Attribute getParameters() const { return parameters; }
 
 private:
   /// The specific effect being applied.
@@ -158,8 +184,13 @@ private:
   /// The resource that the given value resides in.
   Resource *resource;
 
-  /// The value that the effect applies to. This is optionally null.
-  Value value;
+  /// The Symbol or Value that the effect applies to. This is optionally null.
+  PointerUnion<SymbolRefAttr, Value> value;
+
+  /// Additional parameters of the effect instance. An attribute is used for
+  /// type-safe structured storage and context-based uniquing. Concrete effects
+  /// can use this at their convenience. This is optionally null.
+  Attribute parameters;
 };
 } // namespace SideEffects
 
@@ -219,6 +250,18 @@ struct Write : public Effect::Base<Write> {};
 // SideEffect Utilities
 //===----------------------------------------------------------------------===//
 
+/// Returns true if `op` has only an effect of type `EffectTy` (and of no other
+/// type) on `value`. If no value is provided, simply check if effects of that
+/// type and only of that type are present.
+template <typename EffectTy>
+bool hasSingleEffect(Operation *op, Value value = nullptr);
+
+/// Returns true if `op` has an effect of type `EffectTy` on `value`. If no
+/// `value` is provided, simply check if effects of the given type(s) are
+/// present.
+template <typename... EffectTys>
+bool hasEffect(Operation *op, Value value = nullptr);
+
 /// Return true if the given operation is unused, and has no side effects on
 /// memory that prevent erasing.
 bool isOpTriviallyDead(Operation *op);
@@ -228,7 +271,7 @@ bool isOpTriviallyDead(Operation *op);
 /// `isOpTriviallyDead` if `op` was unused.
 bool wouldOpBeTriviallyDead(Operation *op);
 
-} // end namespace mlir
+} // namespace mlir
 
 //===----------------------------------------------------------------------===//
 // SideEffect Interfaces
@@ -237,4 +280,4 @@ bool wouldOpBeTriviallyDead(Operation *op);
 /// Include the definitions of the side effect interfaces.
 #include "mlir/Interfaces/SideEffectInterfaces.h.inc"
 
-#endif // MLIR_INTERFACES_SIDEEFFECTS_H
+#endif // MLIR_INTERFACES_SIDEEFFECTINTERFACES_H

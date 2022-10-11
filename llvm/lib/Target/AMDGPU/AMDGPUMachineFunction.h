@@ -9,13 +9,16 @@
 #ifndef LLVM_LIB_TARGET_AMDGPU_AMDGPUMACHINEFUNCTION_H
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPUMACHINEFUNCTION_H
 
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/CodeGen/MachineFunction.h"
 #include "Utils/AMDGPUBaseInfo.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/Optional.h"
+#include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/GlobalVariable.h"
 
 namespace llvm {
-
-class GCNSubtarget;
 
 class AMDGPUMachineFunction : public MachineFunctionInfo {
   /// A map to keep track of local memory objects and their offsets within the
@@ -27,14 +30,30 @@ protected:
   Align MaxKernArgAlign;        // Cache for this.
 
   /// Number of bytes in the LDS that are being used.
-  unsigned LDSSize = 0;
+  uint32_t LDSSize = 0;
+  uint32_t GDSSize = 0;
+
+  /// Number of bytes in the LDS allocated statically. This field is only used
+  /// in the instruction selector and not part of the machine function info.
+  uint32_t StaticLDSSize = 0;
+  uint32_t StaticGDSSize = 0;
+
+  /// Align for dynamic shared memory if any. Dynamic shared memory is
+  /// allocated directly after the static one, i.e., LDSSize. Need to pad
+  /// LDSSize to ensure that dynamic one is aligned accordingly.
+  /// The maximal alignment is updated during IR translation or lowering
+  /// stages.
+  Align DynLDSAlign;
 
   // State of MODE register, assumed FP mode.
   AMDGPU::SIModeRegisterDefaults Mode;
 
-  // Kernels + shaders. i.e. functions called by the driver and not called
+  // Kernels + shaders. i.e. functions called by the hardware and not called
   // by other functions.
   bool IsEntryFunction = false;
+
+  // Entry points called by other functions instead of directly by the hardware.
+  bool IsModuleEntryFunction = false;
 
   bool NoSignedZerosFPMath = false;
 
@@ -51,10 +70,14 @@ public:
     return ExplicitKernArgSize;
   }
 
-  unsigned getMaxKernArgAlign() const { return MaxKernArgAlign.value(); }
+  Align getMaxKernArgAlign() const { return MaxKernArgAlign; }
 
-  unsigned getLDSSize() const {
+  uint32_t getLDSSize() const {
     return LDSSize;
+  }
+
+  uint32_t getGDSSize() const {
+    return GDSSize;
   }
 
   AMDGPU::SIModeRegisterDefaults getMode() const {
@@ -64,6 +87,8 @@ public:
   bool isEntryFunction() const {
     return IsEntryFunction;
   }
+
+  bool isModuleEntryFunction() const { return IsModuleEntryFunction; }
 
   bool hasNoSignedZerosFPMath() const {
     return NoSignedZerosFPMath;
@@ -78,6 +103,13 @@ public:
   }
 
   unsigned allocateLDSGlobal(const DataLayout &DL, const GlobalVariable &GV);
+  void allocateModuleLDSGlobal(const Function &F);
+
+  static Optional<uint32_t> getLDSKernelIdMetadata(const Function &F);
+
+  Align getDynLDSAlign() const { return DynLDSAlign; }
+
+  void setDynLDSAlign(const DataLayout &DL, const GlobalVariable &GV);
 };
 
 }

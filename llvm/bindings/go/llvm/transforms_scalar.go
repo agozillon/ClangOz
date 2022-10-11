@@ -29,7 +29,6 @@ func (pm PassManager) AddLICMPass()                    { C.LLVMAddLICMPass(pm.C)
 func (pm PassManager) AddLoopDeletionPass()            { C.LLVMAddLoopDeletionPass(pm.C) }
 func (pm PassManager) AddLoopRotatePass()              { C.LLVMAddLoopRotatePass(pm.C) }
 func (pm PassManager) AddLoopUnrollPass()              { C.LLVMAddLoopUnrollPass(pm.C) }
-func (pm PassManager) AddLoopUnswitchPass()            { C.LLVMAddLoopUnswitchPass(pm.C) }
 func (pm PassManager) AddMemCpyOptPass()               { C.LLVMAddMemCpyOptPass(pm.C) }
 func (pm PassManager) AddPromoteMemoryToRegisterPass() { C.LLVMAddPromoteMemoryToRegisterPass(pm.C) }
 func (pm PassManager) AddReassociatePass()             { C.LLVMAddReassociatePass(pm.C) }
@@ -40,6 +39,5 @@ func (pm PassManager) AddScalarReplAggregatesPassWithThreshold(threshold int) {
 }
 func (pm PassManager) AddSimplifyLibCallsPass()       { C.LLVMAddSimplifyLibCallsPass(pm.C) }
 func (pm PassManager) AddTailCallEliminationPass()    { C.LLVMAddTailCallEliminationPass(pm.C) }
-func (pm PassManager) AddConstantPropagationPass()    { C.LLVMAddConstantPropagationPass(pm.C) }
 func (pm PassManager) AddDemoteMemoryToRegisterPass() { C.LLVMAddDemoteMemoryToRegisterPass(pm.C) }
 func (pm PassManager) AddVerifierPass()               { C.LLVMAddVerifierPass(pm.C) }

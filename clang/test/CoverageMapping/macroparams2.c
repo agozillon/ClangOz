@@ -1,13 +1,13 @@
-// RUN: %strip_comments > %t.stripped.c
-// RUN: %clang_cc1 -fprofile-instrument=clang -fcoverage-mapping -dump-coverage-mapping -emit-llvm-only -main-file-name macroparams2.c %t.stripped.c | FileCheck %s
+// RUN: %clang_cc1 -mllvm -emptyline-comment-coverage=false -fprofile-instrument=clang -fcoverage-mapping -dump-coverage-mapping -emit-llvm-only -main-file-name macroparams2.c %s | FileCheck %s
+
 #define MACRO(REFS, CALLS)  (4 * (CALLS) < (REFS))
 
 struct S {
   int i, j;
 };
 
-// CHECK: File 0, [[@LINE+1]]:12 -> [[@LINE+11]]:2 = #0
-int main() {
+// CHECK: File 0, [[@LINE+1]]:16 -> [[@LINE+11]]:2 = #0
+int main(void) {
   struct S arr[32] = { 0 };
   int n = 0;
   // CHECK-NEXT: Expansion,File 0, [[@LINE+3]]:7 -> [[@LINE+3]]:12 = #0

@@ -8,66 +8,53 @@
 #ifndef MLIR_CONVERSION_GPUCOMMON_INDEXINTRINSICSOPLOWERING_H_
 #define MLIR_CONVERSION_GPUCOMMON_INDEXINTRINSICSOPLOWERING_H_
 
-#include "mlir/Conversion/StandardToLLVM/ConvertStandardToLLVM.h"
-#include "mlir/Dialect/GPU/GPUDialect.h"
+#include "mlir/Conversion/LLVMCommon/Pattern.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "llvm/ADT/StringSwitch.h"
 
 namespace mlir {
 
 // Rewriting that replaces Op with XOp, YOp, or ZOp depending on the dimension
-// that Op operates on.  Op is assumed to return an `std.index` value and
+// that Op operates on.  Op is assumed to return an `index` value and
 // XOp, YOp and ZOp are assumed to return an `llvm.i32` value.  Depending on
 // `indexBitwidth`, sign-extend or truncate the resulting value to match the
 // bitwidth expected by the consumers of the value.
 template <typename Op, typename XOp, typename YOp, typename ZOp>
-struct GPUIndexIntrinsicOpLowering : public ConvertToLLVMPattern {
+struct GPUIndexIntrinsicOpLowering : public ConvertOpToLLVMPattern<Op> {
 private:
-  enum dimension { X = 0, Y = 1, Z = 2, invalid };
   unsigned indexBitwidth;
-
-  static dimension dimensionToIndex(Op op) {
-    return llvm::StringSwitch<dimension>(op.dimension())
-        .Case("x", X)
-        .Case("y", Y)
-        .Case("z", Z)
-        .Default(invalid);
-  }
 
 public:
   explicit GPUIndexIntrinsicOpLowering(LLVMTypeConverter &typeConverter)
-      : ConvertToLLVMPattern(Op::getOperationName(),
-                             typeConverter.getDialect()->getContext(),
-                             typeConverter),
+      : ConvertOpToLLVMPattern<Op>(typeConverter),
         indexBitwidth(typeConverter.getIndexTypeBitwidth()) {}
 
   // Convert the kernel arguments to an LLVM type, preserve the rest.
   LogicalResult
-  matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+  matchAndRewrite(Op op, typename Op::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op->getLoc();
     MLIRContext *context = rewriter.getContext();
     Value newOp;
-    switch (dimensionToIndex(cast<Op>(op))) {
-    case X:
-      newOp = rewriter.create<XOp>(loc, LLVM::LLVMType::getInt32Ty(context));
+    switch (op.dimension()) {
+    case gpu::Dimension::x:
+      newOp = rewriter.create<XOp>(loc, IntegerType::get(context, 32));
       break;
-    case Y:
-      newOp = rewriter.create<YOp>(loc, LLVM::LLVMType::getInt32Ty(context));
+    case gpu::Dimension::y:
+      newOp = rewriter.create<YOp>(loc, IntegerType::get(context, 32));
       break;
-    case Z:
-      newOp = rewriter.create<ZOp>(loc, LLVM::LLVMType::getInt32Ty(context));
+    case gpu::Dimension::z:
+      newOp = rewriter.create<ZOp>(loc, IntegerType::get(context, 32));
       break;
-    default:
-      return failure();
     }
 
     if (indexBitwidth > 32) {
       newOp = rewriter.create<LLVM::SExtOp>(
-          loc, LLVM::LLVMType::getIntNTy(context, indexBitwidth), newOp);
+          loc, IntegerType::get(context, indexBitwidth), newOp);
     } else if (indexBitwidth < 32) {
       newOp = rewriter.create<LLVM::TruncOp>(
-          loc, LLVM::LLVMType::getIntNTy(context, indexBitwidth), newOp);
+          loc, IntegerType::get(context, indexBitwidth), newOp);
     }
 
     rewriter.replaceOp(op, {newOp});

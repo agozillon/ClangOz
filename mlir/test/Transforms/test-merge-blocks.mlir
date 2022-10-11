@@ -1,8 +1,8 @@
 // RUN: mlir-opt -allow-unregistered-dialect -split-input-file -test-merge-blocks -verify-diagnostics %s | FileCheck %s
 
 // CHECK-LABEL: @merge_blocks
-func @merge_blocks(%arg0: i32, %arg1 : i32) -> () {
-  //      CHECK: "test.merge_blocks"() ( {
+func.func @merge_blocks(%arg0: i32, %arg1 : i32) -> () {
+  //      CHECK: "test.merge_blocks"() ({
   // CHECK-NEXT:   "test.return"
   // CHECK-NEXT: })
   // CHECK-NEXT: "test.return"
@@ -20,9 +20,9 @@ func @merge_blocks(%arg0: i32, %arg1 : i32) -> () {
 // The op in this function is rewritten to itself (and thus remains
 // illegal) by a pattern that merges the second block with the first
 // after adding an operation into it.  Check that we can undo block
-// removal succesfully.
+// removal successfully.
 // CHECK-LABEL: @undo_blocks_merge
-func @undo_blocks_merge(%arg0: i32) {
+func.func @undo_blocks_merge(%arg0: i32) {
   "test.undo_blocks_merge"() ({
     // expected-remark@-1 {{op 'test.undo_blocks_merge' is not legalizable}}
     // CHECK: "unregistered.return"(%{{.*}})[^[[BB:.*]]]
@@ -39,7 +39,7 @@ func @undo_blocks_merge(%arg0: i32) {
 // -----
 
 // CHECK-LABEL: @inline_regions()
-func @inline_regions() -> ()
+func.func @inline_regions() -> ()
 {
   //      CHECK: test.SingleBlockImplicitTerminator
   // CHECK-NEXT:   %[[T0:.*]] = "test.type_producer"

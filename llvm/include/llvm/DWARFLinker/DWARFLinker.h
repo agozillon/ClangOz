@@ -9,43 +9,34 @@
 #ifndef LLVM_DWARFLINKER_DWARFLINKER_H
 #define LLVM_DWARFLINKER_DWARFLINKER_H
 
+#include "llvm/ADT/AddressRanges.h"
 #include "llvm/CodeGen/AccelTable.h"
 #include "llvm/CodeGen/NonRelocatableStringpool.h"
-#include "llvm/DWARFLinker/DWARFLinkerDeclContext.h"
-#include "llvm/DebugInfo/DWARF/DWARFCompileUnit.h"
-#include "llvm/DebugInfo/DWARF/DWARFContext.h"
-#include "llvm/MC/MCDwarf.h"
+#include "llvm/DWARFLinker/DWARFLinkerCompileUnit.h"
+#include "llvm/DebugInfo/DWARF/DWARFDebugLine.h"
+#include "llvm/DebugInfo/DWARF/DWARFDebugRangeList.h"
+#include "llvm/DebugInfo/DWARF/DWARFDie.h"
 #include <map>
 
 namespace llvm {
+class DWARFContext;
+class DWARFExpression;
+class DWARFUnit;
+class DataExtractor;
+class DeclContextTree;
+struct MCDwarfLineTableParams;
+template <typename T> class SmallVectorImpl;
 
 enum class DwarfLinkerClient { Dsymutil, LLD, General };
 
 /// The kind of accelerator tables we should emit.
-enum class AccelTableKind {
+enum class DwarfLinkerAccelTableKind : uint8_t {
+  None,
   Apple,   ///< .apple_names, .apple_namespaces, .apple_types, .apple_objc.
   Dwarf,   ///< DWARF v5 .debug_names.
   Default, ///< Dwarf for DWARF5 or later, Apple otherwise.
+  Pub,     ///< .debug_pubnames, .debug_pubtypes
 };
-
-/// Partial address range. Besides an offset, only the
-/// HighPC is stored. The structure is stored in a map where the LowPC is the
-/// key.
-struct ObjFileAddressRange {
-  /// Function HighPC.
-  uint64_t HighPC;
-  /// Offset to apply to the linked address.
-  /// should be 0 for not-linked object file.
-  int64_t Offset;
-
-  ObjFileAddressRange(uint64_t EndPC, int64_t Offset)
-      : HighPC(EndPC), Offset(Offset) {}
-
-  ObjFileAddressRange() : HighPC(0), Offset(0) {}
-};
-
-/// Map LowPC to ObjFileAddressRange.
-using RangesTy = std::map<uint64_t, ObjFileAddressRange>;
 
 /// AddressesMap represents information about valid addresses used
 /// by debug information. Valid addresses are those which points to
@@ -55,32 +46,32 @@ class AddressesMap {
 public:
   virtual ~AddressesMap();
 
-  /// Returns true if represented addresses are from linked file.
-  /// Returns false if represented addresses are from not-linked
-  /// object file.
-  virtual bool areRelocationsResolved() const = 0;
-
   /// Checks that there are valid relocations against a .debug_info
-  /// section. Reset current relocation pointer if neccessary.
-  virtual bool hasValidRelocs(bool ResetRelocsPtr = true) = 0;
+  /// section.
+  virtual bool hasValidRelocs() = 0;
 
-  /// Checks that there is a relocation against .debug_info
-  /// table between \p StartOffset and \p NextOffset.
-  ///
-  /// This function must be called with offsets in strictly ascending
-  /// order because it never looks back at relocations it already 'went past'.
+  /// Checks that the specified variable \p DIE references live code section.
+  /// Allowed kind of input die: DW_TAG_variable, DW_TAG_constant.
   /// \returns true and sets Info.InDebugMap if it is the case.
-  virtual bool hasValidRelocationAt(uint64_t StartOffset, uint64_t EndOffset,
-                                    CompileUnit::DIEInfo &Info) = 0;
+  virtual bool isLiveVariable(const DWARFDie &DIE,
+                              CompileUnit::DIEInfo &Info) = 0;
+
+  /// Checks that the specified subprogram \p DIE references live code section.
+  /// Allowed kind of input die: DW_TAG_subprogram, DW_TAG_label.
+  /// \returns true and sets Info.InDebugMap if it is the case.
+  virtual bool isLiveSubprogram(const DWARFDie &DIE,
+                                CompileUnit::DIEInfo &Info) = 0;
 
   /// Apply the valid relocations to the buffer \p Data, taking into
-  /// account that Data is at \p BaseOffset in the debug_info section.
-  ///
-  /// This function must be called with monotonic \p BaseOffset values.
+  /// account that Data is at \p BaseOffset in the .debug_info section.
   ///
   /// \returns true whether any reloc has been applied.
   virtual bool applyValidRelocs(MutableArrayRef<char> Data, uint64_t BaseOffset,
                                 bool IsLittleEndian) = 0;
+
+  /// Relocate the given address offset if a valid relocation exists.
+  virtual llvm::Expected<uint64_t> relocateIndexedAddr(uint64_t StartOffset,
+                                                       uint64_t EndOffset) = 0;
 
   /// Returns all valid functions address ranges(i.e., those ranges
   /// which points to sections with code).
@@ -101,7 +92,7 @@ public:
   /// Emit section named SecName with data SecData.
   virtual void emitSectionContents(StringRef SecData, StringRef SecName) = 0;
 
-  /// Emit the abbreviation table \p Abbrevs to the debug_abbrev section.
+  /// Emit the abbreviation table \p Abbrevs to the .debug_abbrev section.
   virtual void
   emitAbbrevs(const std::vector<std::unique_ptr<DIEAbbrev>> &Abbrevs,
               unsigned DwarfVersion) = 0;
@@ -129,25 +120,25 @@ public:
   virtual void
   emitAppleTypes(AccelTable<AppleAccelTableStaticTypeData> &Table) = 0;
 
-  /// Emit debug_ranges for \p FuncRange by translating the
+  /// Emit .debug_ranges for \p FuncRange by translating the
   /// original \p Entries.
   virtual void emitRangesEntries(
       int64_t UnitPcOffset, uint64_t OrigLowPc,
-      const FunctionIntervals::const_iterator &FuncRange,
+      Optional<std::pair<AddressRange, int64_t>> FuncRange,
       const std::vector<DWARFDebugRangeList::RangeListEntry> &Entries,
       unsigned AddressSize) = 0;
 
-  /// Emit debug_aranges entries for \p Unit and if \p DoRangesSection is true,
-  /// also emit the debug_ranges entries for the DW_TAG_compile_unit's
+  /// Emit .debug_aranges entries for \p Unit and if \p DoRangesSection is true,
+  /// also emit the .debug_ranges entries for the DW_TAG_compile_unit's
   /// DW_AT_ranges attribute.
   virtual void emitUnitRangesEntries(CompileUnit &Unit,
                                      bool DoRangesSection) = 0;
 
-  /// Copy the debug_line over to the updated binary while unobfuscating the
+  /// Copy the .debug_line over to the updated binary while unobfuscating the
   /// file names and directories.
   virtual void translateLineTable(DataExtractor LineData, uint64_t Offset) = 0;
 
-  /// Emit the line table described in \p Rows into the debug_line section.
+  /// Emit the line table described in \p Rows into the .debug_line section.
   virtual void emitLineTableForUnit(MCDwarfLineTableParams Params,
                                     StringRef PrologueBytes,
                                     unsigned MinInstLength,
@@ -167,7 +158,7 @@ public:
   virtual void emitFDE(uint32_t CIEOffset, uint32_t AddreSize, uint32_t Address,
                        StringRef Bytes) = 0;
 
-  /// Emit the debug_loc contribution for \p Unit by copying the entries from
+  /// Emit the .debug_loc contribution for \p Unit by copying the entries from
   /// \p Dwarf and offsetting them. Update the location attributes to point to
   /// the new entries.
   virtual void emitLocationsForUnit(
@@ -176,11 +167,12 @@ public:
           ProcessExpr) = 0;
 
   /// Emit the compilation unit header for \p Unit in the
-  /// debug_info section.
+  /// .debug_info section.
   ///
   /// As a side effect, this also switches the current Dwarf version
   /// of the MC layer to the one of U.getOrigUnit().
-  virtual void emitCompileUnitHeader(CompileUnit &Unit) = 0;
+  virtual void emitCompileUnitHeader(CompileUnit &Unit,
+                                     unsigned DwarfVersion) = 0;
 
   /// Recursively emit the DIE tree rooted at \p Die.
   virtual void emitDIE(DIE &Die) = 0;
@@ -202,9 +194,9 @@ using UnitListTy = std::vector<std::unique_ptr<CompileUnit>>;
 
 /// this class represents DWARF information for source file
 /// and it`s address map.
-class DwarfFile {
+class DWARFFile {
 public:
-  DwarfFile(StringRef Name, DWARFContext *Dwarf, AddressesMap *Addresses,
+  DWARFFile(StringRef Name, DWARFContext *Dwarf, AddressesMap *Addresses,
             const std::vector<std::string> &Warnings)
       : FileName(Name), Dwarf(Dwarf), Addresses(Addresses), Warnings(Warnings) {
   }
@@ -222,11 +214,13 @@ public:
 typedef std::function<void(const Twine &Warning, StringRef Context,
                            const DWARFDie *DIE)>
     messageHandler;
-typedef std::function<ErrorOr<DwarfFile &>(StringRef ContainerName,
+typedef std::function<ErrorOr<DWARFFile &>(StringRef ContainerName,
                                            StringRef Path)>
     objFileLoader;
 typedef std::map<std::string, std::string> swiftInterfacesMap;
 typedef std::map<std::string, std::string> objectPrefixMap;
+
+typedef function_ref<void(const DWARFUnit &Unit)> CompileUnitHandler;
 
 /// The core of the Dwarf linking logic.
 ///
@@ -248,12 +242,19 @@ public:
               DwarfLinkerClient ClientID = DwarfLinkerClient::General)
       : TheDwarfEmitter(Emitter), DwarfLinkerClientID(ClientID) {}
 
-  /// Add object file to be linked.
-  void addObjectFile(DwarfFile &File);
+  /// Add object file to be linked. Pre-load compile unit die. Call
+  /// \p OnCUDieLoaded for each compile unit die. If specified \p File
+  /// has reference to the Clang module then such module would be
+  /// pre-loaded by \p Loader for !Update case.
+  ///
+  /// \pre NoODR, Update options should be set before call to addObjectFile.
+  void addObjectFile(
+      DWARFFile &File, objFileLoader Loader = nullptr,
+      CompileUnitHandler OnCUDieLoaded = [](const DWARFUnit &) {});
 
   /// Link debug info for added objFiles. Object
   /// files are linked all together.
-  bool link();
+  Error link();
 
   /// A number of methods setting various linking options:
 
@@ -262,6 +263,9 @@ public:
 
   /// Print statistics to standard output.
   void setStatistics(bool Statistics) { Options.Statistics = Statistics; }
+
+  /// Verify the input DWARF.
+  void setVerifyInputDWARF(bool Verify) { Options.VerifyInputDWARF = Verify; }
 
   /// Do not emit linked dwarf info.
   void setNoOutput(bool NoOut) { Options.NoOutput = NoOut; }
@@ -272,11 +276,16 @@ public:
   /// update existing DWARF info(for the linked binary).
   void setUpdate(bool Update) { Options.Update = Update; }
 
+  /// Set whether to keep the enclosing function for a static variable.
+  void setKeepFunctionForStatic(bool KeepFunctionForStatic) {
+    Options.KeepFunctionForStatic = KeepFunctionForStatic;
+  }
+
   /// Use specified number of threads for parallel files linking.
   void setNumThreads(unsigned NumThreads) { Options.Threads = NumThreads; }
 
   /// Set kind of accelerator tables to be generated.
-  void setAccelTableKind(AccelTableKind Kind) {
+  void setAccelTableKind(DwarfLinkerAccelTableKind Kind) {
     Options.TheAccelTableKind = Kind;
   }
 
@@ -304,12 +313,6 @@ public:
     Options.ErrorHandler = Handler;
   }
 
-  /// Set object files loader which would be used to load
-  /// additional objects for splitted dwarf.
-  void setObjFileLoader(objFileLoader Loader) {
-    Options.ObjFileLoader = Loader;
-  }
-
   /// Set map for Swift interfaces.
   void setSwiftInterfacesMap(swiftInterfacesMap *Map) {
     Options.ParseableSwiftInterfaces = Map;
@@ -318,6 +321,17 @@ public:
   /// Set prefix map for objects.
   void setObjectPrefixMap(objectPrefixMap *Map) {
     Options.ObjectPrefixMap = Map;
+  }
+
+  /// Set target DWARF version.
+  Error setTargetDWARFVersion(uint16_t TargetDWARFVersion) {
+    if (TargetDWARFVersion < 1 || TargetDWARFVersion > 5)
+      return createStringError(std::errc::invalid_argument,
+                               "unsupported DWARF version: %d",
+                               TargetDWARFVersion);
+
+    Options.TargetDWARFVersion = TargetDWARFVersion;
+    return Error::success();
   }
 
 private:
@@ -347,69 +361,85 @@ private:
     /// Given a DIE, update its incompleteness based on whether the DIEs it
     /// references are incomplete.
     UpdateRefIncompleteness,
+    /// Given a DIE, mark it as ODR Canonical if applicable.
+    MarkODRCanonicalDie,
   };
 
   /// This class represents an item in the work list. The type defines what kind
   /// of work needs to be performed when processing the current item. The flags
   /// and info fields are optional based on the type.
   struct WorklistItem {
-    WorklistItemType Type;
     DWARFDie Die;
+    WorklistItemType Type;
     CompileUnit &CU;
     unsigned Flags;
-    unsigned AncestorIdx = 0;
-    CompileUnit::DIEInfo *OtherInfo = nullptr;
+    union {
+      const unsigned AncestorIdx;
+      CompileUnit::DIEInfo *OtherInfo;
+    };
 
     WorklistItem(DWARFDie Die, CompileUnit &CU, unsigned Flags,
                  WorklistItemType T = WorklistItemType::LookForDIEsToKeep)
-        : Type(T), Die(Die), CU(CU), Flags(Flags) {}
+        : Die(Die), Type(T), CU(CU), Flags(Flags), AncestorIdx(0) {}
 
     WorklistItem(DWARFDie Die, CompileUnit &CU, WorklistItemType T,
                  CompileUnit::DIEInfo *OtherInfo = nullptr)
-        : Type(T), Die(Die), CU(CU), OtherInfo(OtherInfo) {}
+        : Die(Die), Type(T), CU(CU), Flags(0), OtherInfo(OtherInfo) {}
 
     WorklistItem(unsigned AncestorIdx, CompileUnit &CU, unsigned Flags)
         : Type(WorklistItemType::LookForParentDIEsToKeep), CU(CU), Flags(Flags),
           AncestorIdx(AncestorIdx) {}
   };
 
+  /// Verify the given DWARF file.
+  bool verify(const DWARFFile &File);
+
   /// returns true if we need to translate strings.
   bool needToTranslateStrings() { return StringsTranslator != nullptr; }
 
-  void reportWarning(const Twine &Warning, const DwarfFile &File,
+  void reportWarning(const Twine &Warning, const DWARFFile &File,
                      const DWARFDie *DIE = nullptr) const {
     if (Options.WarningHandler != nullptr)
       Options.WarningHandler(Warning, File.FileName, DIE);
   }
 
-  void reportError(const Twine &Warning, const DwarfFile &File,
+  void reportError(const Twine &Warning, const DWARFFile &File,
                    const DWARFDie *DIE = nullptr) const {
     if (Options.ErrorHandler != nullptr)
       Options.ErrorHandler(Warning, File.FileName, DIE);
-  }
-
-  /// Remembers the oldest and newest DWARF version we've seen in a unit.
-  void updateDwarfVersion(unsigned Version) {
-    MaxDwarfVersion = std::max(MaxDwarfVersion, Version);
-    MinDwarfVersion = std::min(MinDwarfVersion, Version);
   }
 
   /// Remembers the kinds of accelerator tables we've seen in a unit.
   void updateAccelKind(DWARFContext &Dwarf);
 
   /// Emit warnings as Dwarf compile units to leave a trail after linking.
-  bool emitPaperTrailWarnings(const DwarfFile &File,
+  bool emitPaperTrailWarnings(const DWARFFile &File,
                               OffsetsStringPool &StringPool);
 
   void copyInvariantDebugSection(DWARFContext &Dwarf);
 
+  /// Keep information for referenced clang module: already loaded DWARF info
+  /// of the clang module and a CompileUnit of the module.
+  struct RefModuleUnit {
+    RefModuleUnit(DWARFFile &File, std::unique_ptr<CompileUnit> Unit)
+        : File(File), Unit(std::move(Unit)) {}
+    RefModuleUnit(RefModuleUnit &&Other)
+        : File(Other.File), Unit(std::move(Other.Unit)) {}
+    RefModuleUnit(const RefModuleUnit &) = delete;
+
+    DWARFFile &File;
+    std::unique_ptr<CompileUnit> Unit;
+  };
+  using ModuleUnitListTy = std::vector<RefModuleUnit>;
+
   /// Keeps track of data associated with one object during linking.
   struct LinkContext {
-    DwarfFile &File;
+    DWARFFile &File;
     UnitListTy CompileUnits;
+    ModuleUnitListTy ModuleUnits;
     bool Skip = false;
 
-    LinkContext(DwarfFile &File) : File(File) {}
+    LinkContext(DWARFFile &File) : File(File) {}
 
     /// Clear part of the context that's no longer needed when we're done with
     /// the debug object.
@@ -438,8 +468,12 @@ private:
   /// kept. All DIEs referenced though attributes should be kept.
   void lookForRefDIEsToKeep(const DWARFDie &Die, CompileUnit &CU,
                             unsigned Flags, const UnitListTy &Units,
-                            const DwarfFile &File,
+                            const DWARFFile &File,
                             SmallVectorImpl<WorklistItem> &Worklist);
+
+  /// Mark context corresponding to the specified \p Die as having canonical
+  /// die, if applicable.
+  void markODRCanonicalDie(const DWARFDie &Die, CompileUnit &CU);
 
   /// \defgroup FindRootDIEs Find DIEs corresponding to Address map entries.
   ///
@@ -450,8 +484,17 @@ private:
   /// The return value indicates whether the DIE is incomplete.
   void lookForDIEsToKeep(AddressesMap &RelocMgr, RangesTy &Ranges,
                          const UnitListTy &Units, const DWARFDie &DIE,
-                         const DwarfFile &File, CompileUnit &CU,
+                         const DWARFFile &File, CompileUnit &CU,
                          unsigned Flags);
+
+  /// Check whether specified \p CUDie is a Clang module reference.
+  /// if \p Quiet is false then display error messages.
+  /// \return first == true if CUDie is a Clang module reference.
+  ///         second == true if module is already loaded.
+  std::pair<bool, bool> isClangModuleRef(const DWARFDie &CUDie,
+                                         std::string &PCMFile,
+                                         LinkContext &Context, unsigned Indent,
+                                         bool Quiet);
 
   /// If this compile unit is really a skeleton CU that points to a
   /// clang module, register it in ClangModules and return true.
@@ -459,47 +502,43 @@ private:
   /// A skeleton CU is a CU without children, a DW_AT_gnu_dwo_name
   /// pointing to the module, and a DW_AT_gnu_dwo_id with the module
   /// hash.
-  bool registerModuleReference(DWARFDie CUDie, const DWARFUnit &Unit,
-                               const DwarfFile &File,
-                               OffsetsStringPool &OffsetsStringPool,
-                               UniquingStringPool &UniquingStringPoolStringPool,
-                               DeclContextTree &ODRContexts,
-                               uint64_t ModulesEndOffset, unsigned &UnitID,
-                               bool IsLittleEndian, unsigned Indent = 0,
-                               bool Quiet = false);
+  bool registerModuleReference(const DWARFDie &CUDie, LinkContext &Context,
+                               objFileLoader Loader,
+                               CompileUnitHandler OnCUDieLoaded,
+                               unsigned Indent = 0);
 
   /// Recursively add the debug info in this clang module .pcm
   /// file (and all the modules imported by it in a bottom-up fashion)
-  /// to Units.
-  Error loadClangModule(DWARFDie CUDie, StringRef FilePath,
-                        StringRef ModuleName, uint64_t DwoId,
-                        const DwarfFile &File,
+  /// to ModuleUnits.
+  Error loadClangModule(objFileLoader Loader, const DWARFDie &CUDie,
+                        const std::string &PCMFile, LinkContext &Context,
+                        CompileUnitHandler OnCUDieLoaded, unsigned Indent = 0);
+
+  /// Clone specified Clang module unit \p Unit.
+  Error cloneModuleUnit(LinkContext &Context, RefModuleUnit &Unit,
+                        DeclContextTree &ODRContexts,
                         OffsetsStringPool &OffsetsStringPool,
-                        UniquingStringPool &UniquingStringPool,
-                        DeclContextTree &ODRContexts, uint64_t ModulesEndOffset,
-                        unsigned &UnitID, bool IsLittleEndian,
-                        unsigned Indent = 0, bool Quiet = false);
+                        unsigned Indent = 0);
 
   /// Mark the passed DIE as well as all the ones it depends on as kept.
   void keepDIEAndDependencies(AddressesMap &RelocMgr, RangesTy &Ranges,
                               const UnitListTy &Units, const DWARFDie &DIE,
                               CompileUnit::DIEInfo &MyInfo,
-                              const DwarfFile &File, CompileUnit &CU,
+                              const DWARFFile &File, CompileUnit &CU,
                               bool UseODR);
 
   unsigned shouldKeepDIE(AddressesMap &RelocMgr, RangesTy &Ranges,
-                         const DWARFDie &DIE, const DwarfFile &File,
+                         const DWARFDie &DIE, const DWARFFile &File,
                          CompileUnit &Unit, CompileUnit::DIEInfo &MyInfo,
                          unsigned Flags);
 
   /// Check if a variable describing DIE should be kept.
   /// \returns updated TraversalFlags.
   unsigned shouldKeepVariableDIE(AddressesMap &RelocMgr, const DWARFDie &DIE,
-                                 CompileUnit &Unit,
                                  CompileUnit::DIEInfo &MyInfo, unsigned Flags);
 
   unsigned shouldKeepSubprogramDIE(AddressesMap &RelocMgr, RangesTy &Ranges,
-                                   const DWARFDie &DIE, const DwarfFile &File,
+                                   const DWARFDie &DIE, const DWARFFile &File,
                                    CompileUnit &Unit,
                                    CompileUnit::DIEInfo &MyInfo,
                                    unsigned Flags);
@@ -508,7 +547,7 @@ private:
   /// RefValue. The resulting DIE might be in another CompileUnit which is
   /// stored into \p ReferencedCU. \returns null if resolving fails for any
   /// reason.
-  DWARFDie resolveDIEReference(const DwarfFile &File, const UnitListTy &Units,
+  DWARFDie resolveDIEReference(const DWARFFile &File, const UnitListTy &Units,
                                const DWARFFormValue &RefValue,
                                const DWARFDie &DIE, CompileUnit *&RefCU);
 
@@ -523,7 +562,7 @@ private:
   class DIECloner {
     DWARFLinker &Linker;
     DwarfEmitter *Emitter;
-    DwarfFile &ObjFile;
+    DWARFFile &ObjFile;
 
     /// Allocator used for all the DIEValue objects.
     BumpPtrAllocator &DIEAlloc;
@@ -533,7 +572,7 @@ private:
     bool Update;
 
   public:
-    DIECloner(DWARFLinker &Linker, DwarfEmitter *Emitter, DwarfFile &ObjFile,
+    DIECloner(DWARFLinker &Linker, DwarfEmitter *Emitter, DWARFFile &ObjFile,
               BumpPtrAllocator &DIEAlloc,
               std::vector<std::unique_ptr<CompileUnit>> &CompileUnits,
               bool Update)
@@ -551,7 +590,7 @@ private:
     /// applied to the entry point of the function to get the linked address.
     /// \param Die the output DIE to use, pass NULL to create one.
     /// \returns the root of the cloned tree or null if nothing was selected.
-    DIE *cloneDIE(const DWARFDie &InputDIE, const DwarfFile &File,
+    DIE *cloneDIE(const DWARFDie &InputDIE, const DWARFFile &File,
                   CompileUnit &U, OffsetsStringPool &StringPool,
                   int64_t PCOffset, uint32_t OutOffset, unsigned Flags,
                   bool IsLittleEndian, DIE *Die = nullptr);
@@ -560,7 +599,7 @@ private:
     /// chose to keep above. If there are no valid relocs, then there's
     /// nothing to clone/emit.
     uint64_t cloneAllCompileUnits(DWARFContext &DwarfContext,
-                                  const DwarfFile &File,
+                                  const DWARFFile &File,
                                   OffsetsStringPool &StringPool,
                                   bool IsLittleEndian);
 
@@ -606,7 +645,7 @@ private:
 
     /// Helper for cloneDIE.
     unsigned cloneAttribute(DIE &Die, const DWARFDie &InputDIE,
-                            const DwarfFile &File, CompileUnit &U,
+                            const DWARFFile &File, CompileUnit &U,
                             OffsetsStringPool &StringPool,
                             const DWARFFormValue &Val,
                             const AttributeSpec AttrSpec, unsigned AttrSize,
@@ -627,18 +666,18 @@ private:
                                         AttributeSpec AttrSpec,
                                         unsigned AttrSize,
                                         const DWARFFormValue &Val,
-                                        const DwarfFile &File,
+                                        const DWARFFile &File,
                                         CompileUnit &Unit);
 
     /// Clone a DWARF expression that may be referencing another DIE.
     void cloneExpression(DataExtractor &Data, DWARFExpression Expression,
-                         const DwarfFile &File, CompileUnit &Unit,
+                         const DWARFFile &File, CompileUnit &Unit,
                          SmallVectorImpl<uint8_t> &OutputBuffer);
 
     /// Clone an attribute referencing another DIE and add
     /// it to \p Die.
     /// \returns the size of the new attribute.
-    unsigned cloneBlockAttribute(DIE &Die, const DwarfFile &File,
+    unsigned cloneBlockAttribute(DIE &Die, const DWARFFile &File,
                                  CompileUnit &Unit, AttributeSpec AttrSpec,
                                  const DWARFFormValue &Val, unsigned AttrSize,
                                  bool IsLittleEndian);
@@ -654,7 +693,7 @@ private:
     /// Clone a scalar attribute  and add it to \p Die.
     /// \returns the size of the new attribute.
     unsigned cloneScalarAttribute(DIE &Die, const DWARFDie &InputDIE,
-                                  const DwarfFile &File, CompileUnit &U,
+                                  const DWARFFile &File, CompileUnit &U,
                                   AttributeSpec AttrSpec,
                                   const DWARFFormValue &Val, unsigned AttrSize,
                                   AttributesInfo &Info);
@@ -666,11 +705,8 @@ private:
     bool getDIENames(const DWARFDie &Die, AttributesInfo &Info,
                      OffsetsStringPool &StringPool, bool StripTemplate = false);
 
-    /// Create a copy of abbreviation Abbrev.
-    void copyAbbrev(const DWARFAbbreviationDeclaration &Abbrev, bool hasODR);
-
     uint32_t hashFullyQualifiedName(DWARFDie DIE, CompileUnit &U,
-                                    const DwarfFile &File,
+                                    const DWARFFile &File,
                                     int RecurseDepth = 0);
 
     /// Helper for cloneDIE.
@@ -682,10 +718,10 @@ private:
   /// Assign an abbreviation number to \p Abbrev
   void assignAbbrev(DIEAbbrev &Abbrev);
 
-  /// Compute and emit debug_ranges section for \p Unit, and
+  /// Compute and emit .debug_ranges section for \p Unit, and
   /// patch the attributes referencing it.
   void patchRangesForUnit(const CompileUnit &Unit, DWARFContext &Dwarf,
-                          const DwarfFile &File) const;
+                          const DWARFFile &File) const;
 
   /// Generate and emit the DW_AT_ranges attribute for a compile_unit if it had
   /// one.
@@ -693,17 +729,18 @@ private:
 
   /// Extract the line tables from the original dwarf, extract the relevant
   /// parts according to the linked function ranges and emit the result in the
-  /// debug_line section.
+  /// .debug_line section.
   void patchLineTableForUnit(CompileUnit &Unit, DWARFContext &OrigDwarf,
-                             const DwarfFile &File);
+                             const DWARFFile &File);
 
   /// Emit the accelerator entries for \p Unit.
   void emitAcceleratorEntriesForUnit(CompileUnit &Unit);
   void emitDwarfAcceleratorEntriesForUnit(CompileUnit &Unit);
   void emitAppleAcceleratorEntriesForUnit(CompileUnit &Unit);
+  void emitPubAcceleratorEntriesForUnit(CompileUnit &Unit);
 
   /// Patch the frame info for an object file and emit it.
-  void patchFrameInfoForObject(const DwarfFile &, RangesTy &Ranges,
+  void patchFrameInfoForObject(const DWARFFile &, RangesTy &Ranges,
                                DWARFContext &, unsigned AddressSize);
 
   /// FoldingSet that uniques the abbreviations.
@@ -727,9 +764,6 @@ private:
   DwarfEmitter *TheDwarfEmitter;
   std::vector<LinkContext> ObjectContexts;
 
-  unsigned MaxDwarfVersion = 0;
-  unsigned MinDwarfVersion = std::numeric_limits<unsigned>::max();
-
   bool AtLeastOneAppleAccelTable = false;
   bool AtLeastOneDwarfAccelTable = false;
 
@@ -739,7 +773,7 @@ private:
   StringMap<uint32_t> EmittedCIEs;
 
   /// Offset of the last CIE that has been emitted in the output
-  /// debug_frame section.
+  /// .debug_frame section.
   uint32_t LastCIEOffset = 0;
 
   /// Apple accelerator tables.
@@ -756,13 +790,22 @@ private:
 
   std::function<StringRef(StringRef)> StringsTranslator = nullptr;
 
+  /// A unique ID that identifies each compile unit.
+  unsigned UniqueUnitID = 0;
+
   /// linking options
   struct DWARFLinkerOptions {
+    /// DWARF version for the output.
+    uint16_t TargetDWARFVersion = 0;
+
     /// Generate processing log to the standard output.
     bool Verbose = false;
 
     /// Print statistics.
     bool Statistics = false;
+
+    /// Verify the input DWARF.
+    bool VerifyInputDWARF = false;
 
     /// Skip emitting output
     bool NoOutput = false;
@@ -773,11 +816,16 @@ private:
     /// Update
     bool Update = false;
 
+    /// Whether we want a static variable to force us to keep its enclosing
+    /// function.
+    bool KeepFunctionForStatic = false;
+
     /// Number of threads.
     unsigned Threads = 1;
 
     /// The accelerator table kind
-    AccelTableKind TheAccelTableKind = AccelTableKind::Default;
+    DwarfLinkerAccelTableKind TheAccelTableKind =
+        DwarfLinkerAccelTableKind::Default;
 
     /// Prepend path for the clang modules.
     std::string PrependPath;
@@ -787,8 +835,6 @@ private:
 
     // error handler
     messageHandler ErrorHandler = nullptr;
-
-    objFileLoader ObjFileLoader = nullptr;
 
     /// A list of all .swiftinterface files referenced by the debug
     /// info, mapping Module name to path on disk. The entries need to

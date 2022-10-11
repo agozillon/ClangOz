@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=alignment | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=alignment | FileCheck %s
 
 struct S {
   int I;
@@ -7,7 +7,7 @@ struct S {
 extern S g_S;
 extern S array_S[];
 
-// CHECK-LABEL: define i32 @_Z18load_extern_global
+// CHECK-LABEL: define{{.*}} i32 @_Z18load_extern_global
 int load_extern_global() {
   // FIXME: The IR builder constant-folds the alignment check away to 'true'
   // here, so we never call the diagnostic. This is PR32630.
@@ -17,7 +17,7 @@ int load_extern_global() {
   return g_S.I;
 }
 
-// CHECK-LABEL: define i32 @_Z22load_from_extern_array
+// CHECK-LABEL: define{{.*}} i32 @_Z22load_from_extern_array
 int load_from_extern_array(int I) {
   // CHECK: [[I:%.*]] = getelementptr inbounds %struct.S, %struct.S* {{.*}}, i32 0, i32 0
   // CHECK-NEXT: [[PTRTOINT:%.*]] = ptrtoint i32* [[I]] to i64, !nosanitize

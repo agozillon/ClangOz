@@ -16,17 +16,16 @@
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_FILEINDEX_H
 
 #include "Headers.h"
-#include "Index.h"
-#include "MemIndex.h"
-#include "Merge.h"
 #include "index/CanonicalIncludes.h"
+#include "index/Index.h"
+#include "index/Merge.h"
 #include "index/Ref.h"
 #include "index/Relation.h"
 #include "index/Serialization.h"
 #include "index/Symbol.h"
+#include "support/MemoryTree.h"
 #include "support/Path.h"
 #include "clang/Lex/Preprocessor.h"
-#include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringMap.h"
@@ -70,6 +69,7 @@ enum class DuplicateHandling {
 /// locking when we swap or obtain references to snapshots.
 class FileSymbols {
 public:
+  FileSymbols(IndexContents IdxContents);
   /// Updates all slabs associated with the \p Key.
   /// If either is nullptr, corresponding data for \p Key will be removed.
   /// If CountReferences is true, \p Refs will be used for counting references
@@ -87,7 +87,11 @@ public:
              DuplicateHandling DuplicateHandle = DuplicateHandling::PickOne,
              size_t *Version = nullptr);
 
+  void profile(MemoryTree &MT) const;
+
 private:
+  IndexContents IdxContents;
+
   struct RefSlabAndCountReferences {
     std::shared_ptr<RefSlab> Slab;
     bool CountReferences = false;
@@ -97,29 +101,28 @@ private:
   size_t Version = 0;
   llvm::StringMap<std::shared_ptr<SymbolSlab>> SymbolsSnapshot;
   llvm::StringMap<RefSlabAndCountReferences> RefsSnapshot;
-  llvm::StringMap<std::shared_ptr<RelationSlab>> RelatiosSnapshot;
+  llvm::StringMap<std::shared_ptr<RelationSlab>> RelationsSnapshot;
 };
 
 /// This manages symbols from files and an in-memory index on all symbols.
 /// FIXME: Expose an interface to remove files that are closed.
 class FileIndex : public MergedIndex {
 public:
-  FileIndex(bool UseDex = true, bool CollectMainFileRefs = false);
+  FileIndex();
 
   /// Update preamble symbols of file \p Path with all declarations in \p AST
   /// and macros in \p PP.
   void updatePreamble(PathRef Path, llvm::StringRef Version, ASTContext &AST,
-                      std::shared_ptr<Preprocessor> PP,
-                      const CanonicalIncludes &Includes);
+                      Preprocessor &PP, const CanonicalIncludes &Includes);
+  void updatePreamble(IndexFileIn);
 
   /// Update symbols and references from main file \p Path with
   /// `indexMainDecls`.
   void updateMain(PathRef Path, ParsedAST &AST);
 
-private:
-  bool UseDex; // FIXME: this should be always on.
-  bool CollectMainFileRefs;
+  void profile(MemoryTree &MT) const;
 
+private:
   // Contains information from each file's preamble only. Symbols and relations
   // are sharded per declaration file to deduplicate multiple symbols and reduce
   // memory usage.
@@ -153,12 +156,12 @@ using SlabTuple = std::tuple<SymbolSlab, RefSlab, RelationSlab>;
 /// Retrieves symbols and refs of local top level decls in \p AST (i.e.
 /// `AST.getLocalTopLevelDecls()`).
 /// Exposed to assist in unit tests.
-SlabTuple indexMainDecls(ParsedAST &AST, bool CollectMainFileRefs = false);
+SlabTuple indexMainDecls(ParsedAST &AST);
 
 /// Index declarations from \p AST and macros from \p PP that are declared in
 /// included headers.
 SlabTuple indexHeaderSymbols(llvm::StringRef Version, ASTContext &AST,
-                             std::shared_ptr<Preprocessor> PP,
+                             Preprocessor &PP,
                              const CanonicalIncludes &Includes);
 
 /// Takes slabs coming from a TU (multiple files) and shards them per

@@ -14,8 +14,6 @@ from lldbsuite.test import lldbutil
 
 class ObjCTypeQueryTestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
@@ -23,7 +21,7 @@ class ObjCTypeQueryTestCase(TestBase):
         self.line = line_number(
             'main.m', "// Set breakpoint here, then do 'expr (NSArray*)array_token'.")
 
-    @skipUnlessDarwin
+    @add_test_categories(["objc"])
     def test(self):
         """The expression parser's type search should be wider than the current compilation unit."""
         self.build()
@@ -33,6 +31,8 @@ class ObjCTypeQueryTestCase(TestBase):
             self, "main.m", self.line, num_expected_locations=1, loc_exact=True)
 
         self.runCmd("run", RUN_SUCCEEDED)
+
+        self.runCmd("settings set target.prefer-dynamic-value no-dynamic-values")
 
         # Now do a NSArry type query from the 'main.m' compile uint.
         self.expect("expression (NSArray*)array_token",

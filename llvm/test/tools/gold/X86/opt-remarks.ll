@@ -11,8 +11,22 @@
 ; RUN:    -plugin-opt=opt-remarks-format=yaml \
 ; RUN:    -plugin-opt=opt-remarks-with-hotness \
 ; RUN:	  -plugin-opt=opt-remarks-filename=%t.hot.yaml %t.o -o %t2.o 2>&1
+; RUN: %gold -m elf_x86_64 -plugin %llvmshlibdir/LLVMgold%shlibext -shared \
+; RUN:    -plugin-opt=opt-remarks-passes=inline \
+; RUN:    -plugin-opt=opt-remarks-format=yaml \
+; RUN:    -plugin-opt=opt-remarks-with-hotness \
+; RUN:    -plugin-opt=opt-remarks-hotness-threshold=300 \
+; RUN:	  -plugin-opt=opt-remarks-filename=%t.t300.yaml %t.o -o %t2.o 2>&1
+; RUN: %gold -m elf_x86_64 -plugin %llvmshlibdir/LLVMgold%shlibext -shared \
+; RUN:    -plugin-opt=opt-remarks-passes=inline \
+; RUN:    -plugin-opt=opt-remarks-format=yaml \
+; RUN:    -plugin-opt=opt-remarks-with-hotness \
+; RUN:    -plugin-opt=opt-remarks-hotness-threshold=301 \
+; RUN:	  -plugin-opt=opt-remarks-filename=%t.t301.yaml %t.o -o %t2.o 2>&1
 ; RUN: cat %t.yaml | FileCheck %s -check-prefix=YAML
 ; RUN: cat %t.hot.yaml | FileCheck %s -check-prefix=YAML-HOT
+; RUN: FileCheck %s -check-prefix=YAML-HOT < %t.t300.yaml
+; RUN: count 0 < %t.t301.yaml
 
 ; Check that @f is inlined after optimizations.
 ; CHECK-LABEL: define i32 @_start
@@ -30,14 +44,26 @@
 ; YAML-NEXT:   - Caller:          f
 ; YAML-NEXT:   - String:          ' because its definition is unavailable'
 ; YAML-NEXT: ...
+; YAML-NEXT: --- !Missed
+; YAML-NEXT: Pass:            inline
+; YAML-NEXT: Name:            NoDefinition
+; YAML-NEXT: Function:        f
+; YAML-NEXT: Args:
+; YAML-NEXT:   - Callee:          bar
+; YAML-NEXT:   - String:          ' will not be inlined into '
+; YAML-NEXT:   - Caller:          f
+; YAML-NEXT:   - String:          ' because its definition is unavailable'
+; YAML-NEXT: ...
 ; YAML-NEXT: --- !Passed
 ; YAML-NEXT: Pass:            inline
 ; YAML-NEXT: Name:            Inlined
 ; YAML-NEXT: Function:        _start
 ; YAML-NEXT: Args:
+; YAML-NEXT:   - String:          ''''
 ; YAML-NEXT:   - Callee:          f
-; YAML-NEXT:   - String:          ' inlined into '
+; YAML-NEXT:   - String:          ''' inlined into '''
 ; YAML-NEXT:   - Caller:          _start
+; YAML-NEXT:   - String:          ''''
 ; YAML-NEXT:   - String:          ' with '
 ; YAML-NEXT:   - String:          '(cost='
 ; YAML-NEXT:   - Cost:            '0'
@@ -46,16 +72,17 @@
 ; YAML-NEXT:   - String:          ')'
 ; YAML-NEXT: ...
 
-; YAML-HOT: ...
 ; YAML-HOT: --- !Passed
 ; YAML-HOT: Pass:            inline
 ; YAML-HOT-NEXT: Name:            Inlined
 ; YAML-HOT-NEXT: Function:        _start
 ; YAML-HOT-NEXT: Hotness:         300
 ; YAML-HOT-NEXT: Args:
+; YAML-HOT-NEXT:   - String:          ''''
 ; YAML-HOT-NEXT:   - Callee:          f
-; YAML-HOT-NEXT:   - String:          ' inlined into '
+; YAML-HOT-NEXT:   - String:          ''' inlined into '''
 ; YAML-HOT-NEXT:   - Caller:          _start
+; YAML-HOT-NEXT:   - String:          ''''
 ; YAML-HOT-NEXT:   - String:          ' with '
 ; YAML-HOT-NEXT:   - String:          '(cost='
 ; YAML-HOT-NEXT:   - Cost:            '0'

@@ -1,8 +1,8 @@
-// RUN: %clang_cc1 -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=alignment | FileCheck %s -check-prefixes=ALIGN,COMMON
-// RUN: %clang_cc1 -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=null | FileCheck %s -check-prefixes=NULL,COMMON
-// RUN: %clang_cc1 -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=object-size | FileCheck %s -check-prefixes=OBJSIZE,COMMON
-// RUN: %clang_cc1 -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=null,vptr | FileCheck %s -check-prefixes=VPTR
-// RUN: %clang_cc1 -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=vptr | FileCheck %s -check-prefixes=VPTR_NO_NULL
+// RUN: %clang_cc1 -no-opaque-pointers -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=alignment | FileCheck %s -check-prefixes=ALIGN,COMMON
+// RUN: %clang_cc1 -no-opaque-pointers -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=null | FileCheck %s -check-prefixes=NULL,COMMON
+// RUN: %clang_cc1 -no-opaque-pointers -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=object-size | FileCheck %s -check-prefixes=OBJSIZE,COMMON
+// RUN: %clang_cc1 -no-opaque-pointers -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=null,vptr | FileCheck %s -check-prefixes=VPTR
+// RUN: %clang_cc1 -no-opaque-pointers -std=c++11 -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=vptr | FileCheck %s -check-prefixes=VPTR_NO_NULL
 
 struct A {
   // COMMON-LABEL: define linkonce_odr void @_ZN1A10do_nothingEv
@@ -42,7 +42,7 @@ struct Dog : Animal {
   const char *speak() override { return "woof"; }
 };
 
-// VPTR-LABEL: define void @_Z12invalid_castP3Cat
+// VPTR-LABEL: define{{.*}} void @_Z12invalid_castP3Cat
 void invalid_cast(Cat *cat = nullptr) {
   // If -fsanitize=null is available, we'll reuse its check:
   //
@@ -64,7 +64,7 @@ void invalid_cast(Cat *cat = nullptr) {
   badDog->speak();
 }
 
-// VPTR_NO_NULL-LABEL: define void @_Z13invalid_cast2v
+// VPTR_NO_NULL-LABEL: define{{.*}} void @_Z13invalid_cast2v
 void invalid_cast2() {
   // We've got a pointer to an alloca, so there's no run-time null check needed.
   // VPTR_NO_NULL-NOT: call void @__ubsan_handle_type_mismatch

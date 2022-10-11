@@ -8,14 +8,14 @@
 
 #include "EmulateInstructionPPC64.h"
 
-#include <stdlib.h>
+#include <cstdlib>
 
+#include "Plugins/Process/Utility/lldb-ppc64le-register-enums.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Symbol/UnwindPlan.h"
 #include "lldb/Utility/ArchSpec.h"
 #include "lldb/Utility/ConstString.h"
-
-#include "Plugins/Process/Utility/lldb-ppc64le-register-enums.h"
+#include "lldb/Utility/LLDBLog.h"
 
 #define DECLARE_REGISTER_INFOS_PPC64LE_STRUCT
 #include "Plugins/Process/Utility/RegisterInfos_ppc64le.h"
@@ -39,17 +39,7 @@ void EmulateInstructionPPC64::Terminate() {
   PluginManager::UnregisterPlugin(CreateInstance);
 }
 
-ConstString EmulateInstructionPPC64::GetPluginNameStatic() {
-  ConstString g_plugin_name("lldb.emulate-instruction.ppc64");
-  return g_plugin_name;
-}
-
-ConstString EmulateInstructionPPC64::GetPluginName() {
-  static ConstString g_plugin_name("EmulateInstructionPPC64");
-  return g_plugin_name;
-}
-
-const char *EmulateInstructionPPC64::GetPluginDescriptionStatic() {
+llvm::StringRef EmulateInstructionPPC64::GetPluginDescriptionStatic() {
   return "Emulate instructions for the PPC64 architecture.";
 }
 
@@ -69,7 +59,7 @@ bool EmulateInstructionPPC64::SetTargetTriple(const ArchSpec &arch) {
 }
 
 static bool LLDBTableGetRegisterInfo(uint32_t reg_num, RegisterInfo &reg_info) {
-  if (reg_num >= llvm::array_lengthof(g_register_infos_ppc64le))
+  if (reg_num >= std::size(g_register_infos_ppc64le))
     return false;
   reg_info = g_register_infos_ppc64le[reg_num];
   return true;
@@ -157,7 +147,7 @@ EmulateInstructionPPC64::GetOpcodeForInstruction(uint32_t opcode) {
        "addi RT, RA, SI"},
       {0xfc000003, 0xe8000000, &EmulateInstructionPPC64::EmulateLD,
        "ld RT, DS(RA)"}};
-  static const size_t k_num_ppc_opcodes = llvm::array_lengthof(g_opcodes);
+  static const size_t k_num_ppc_opcodes = std::size(g_opcodes);
 
   for (size_t i = 0; i < k_num_ppc_opcodes; ++i) {
     if ((g_opcodes[i].mask & opcode) == g_opcodes[i].value)
@@ -220,7 +210,7 @@ bool EmulateInstructionPPC64::EmulateMFSPR(uint32_t opcode) {
   if (rt != gpr_r0_ppc64le || spr != SPR_LR)
     return false;
 
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_UNWIND));
+  Log *log = GetLog(LLDBLog::Unwind);
   LLDB_LOG(log, "EmulateMFSPR: {0:X+8}: mfspr r0, lr", m_addr);
 
   bool success;
@@ -247,7 +237,7 @@ bool EmulateInstructionPPC64::EmulateLD(uint32_t opcode) {
   if (ra != gpr_r1_ppc64le || rt != gpr_r1_ppc64le || ids != 0)
     return false;
 
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_UNWIND));
+  Log *log = GetLog(LLDBLog::Unwind);
   LLDB_LOG(log, "EmulateLD: {0:X+8}: ld r{1}, {2}(r{3})", m_addr, rt, ids, ra);
 
   RegisterInfo r1_info;
@@ -284,7 +274,7 @@ bool EmulateInstructionPPC64::EmulateSTD(uint32_t opcode) {
     return false;
 
   int32_t ids = llvm::SignExtend32<16>(ds << 2);
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_UNWIND));
+  Log *log = GetLog(LLDBLog::Unwind);
   LLDB_LOG(log, "EmulateSTD: {0:X+8}: std{1} r{2}, {3}(r{4})", m_addr,
            u ? "u" : "", rs, ids, ra);
 
@@ -341,7 +331,7 @@ bool EmulateInstructionPPC64::EmulateOR(uint32_t opcode) {
       (ra != gpr_r30_ppc64le && ra != gpr_r31_ppc64le) || rb != gpr_r1_ppc64le)
     return false;
 
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_UNWIND));
+  Log *log = GetLog(LLDBLog::Unwind);
   LLDB_LOG(log, "EmulateOR: {0:X+8}: mr r{1}, r{2}", m_addr, ra, rb);
 
   // set context
@@ -376,7 +366,7 @@ bool EmulateInstructionPPC64::EmulateADDI(uint32_t opcode) {
     return false;
 
   int32_t si_val = llvm::SignExtend32<16>(si);
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_UNWIND));
+  Log *log = GetLog(LLDBLog::Unwind);
   LLDB_LOG(log, "EmulateADDI: {0:X+8}: addi r1, r1, {1}", m_addr, si_val);
 
   // set context

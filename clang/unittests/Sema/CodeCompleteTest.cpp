@@ -250,7 +250,7 @@ TEST(PreferredTypeTest, BinaryExpr) {
       a | ^1; a & ^1;
     }
   )cpp";
-  EXPECT_THAT(collectPreferredTypes(Code), Each("enum A"));
+  EXPECT_THAT(collectPreferredTypes(Code), Each("A"));
 
   Code = R"cpp(
     enum class A {};
@@ -260,7 +260,7 @@ TEST(PreferredTypeTest, BinaryExpr) {
       a | ^a; a & ^a;
     }
   )cpp";
-  EXPECT_THAT(collectPreferredTypes(Code), Each("enum A"));
+  EXPECT_THAT(collectPreferredTypes(Code), Each("A"));
 
   // Binary shifts.
   Code = R"cpp(
@@ -296,7 +296,7 @@ TEST(PreferredTypeTest, BinaryExpr) {
       c = ^c; c += ^c; c -= ^c; c *= ^c; c /= ^c; c %= ^c;
     }
   )cpp";
-  EXPECT_THAT(collectPreferredTypes(Code), Each("class Cls"));
+  EXPECT_THAT(collectPreferredTypes(Code), Each("Cls"));
 
   Code = R"cpp(
     class Cls {};
@@ -488,6 +488,7 @@ TEST(PreferredTypeTest, NoCrashOnInvalidTypes) {
     auto y = new decltype(&1)(^);
     // GNU decimal type extension is not supported in clang.
     auto z = new _Decimal128(^);
+    void foo() { (void)(foo)(^); }
   )cpp";
   EXPECT_THAT(collectPreferredTypes(Code), Each("NULL TYPE"));
 }

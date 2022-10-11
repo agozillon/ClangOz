@@ -18,7 +18,9 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/CodeGenCoverage.h"
+#include "llvm/CodeGen/GlobalISel/Utils.h"
+#include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Support/LowLevelTypeImpl.h"
 #include <bitset>
 #include <cstddef>
@@ -29,6 +31,10 @@
 
 namespace llvm {
 
+class BlockFrequencyInfo;
+class CodeGenCoverage;
+class MachineBasicBlock;
+class ProfileSummaryInfo;
 class APInt;
 class APFloat;
 class GISelKnownBits;
@@ -39,7 +45,6 @@ class MachineOperand;
 class MachineRegisterInfo;
 class RegisterBankInfo;
 class TargetInstrInfo;
-class TargetRegisterClass;
 class TargetRegisterInfo;
 
 /// Container class for CodeGen predicate results.
@@ -112,6 +117,14 @@ enum {
   /// - InsnID - Instruction ID
   /// - Expected opcode
   GIM_CheckOpcode,
+
+  /// Check the opcode on the specified instruction, checking 2 acceptable
+  /// alternatives.
+  /// - InsnID - Instruction ID
+  /// - Expected opcode
+  /// - Alternative expected opcode
+  GIM_CheckOpcodeIsEither,
+
   /// Check the instruction has the right number of operands
   /// - InsnID - Instruction ID
   /// - Expected number of operands
@@ -128,6 +141,11 @@ enum {
   /// - InsnID - Instruction ID
   /// - The predicate to test
   GIM_CheckAPFloatImmPredicate,
+  /// Check an immediate predicate on the specified instruction
+  /// - InsnID - Instruction ID
+  /// - OpIdx - Operand index
+  /// - The predicate to test
+  GIM_CheckImmOperandPredicate,
   /// Check a memory operation has the specified atomic ordering.
   /// - InsnID - Instruction ID
   /// - Ordering - The AtomicOrdering value
@@ -177,6 +195,10 @@ enum {
   /// - InsnID - Instruction ID
   /// - PredicateID - The ID of the predicate function to call
   GIM_CheckCxxInsnPredicate,
+
+  /// Check if there's no use of the first result.
+  /// - InsnID - Instruction ID
+  GIM_CheckHasNoUse,
 
   /// Check the type for the specified operand
   /// - InsnID - Instruction ID
@@ -245,6 +267,15 @@ enum {
   /// - OtherInsnID - Other instruction ID
   /// - OtherOpIdx - Other operand index
   GIM_CheckIsSameOperand,
+
+  /// Predicates with 'let PredicateCodeUsesOperands = 1' need to examine some
+  /// named operands that will be recorded in RecordedOperands. Names of these
+  /// operands are referenced in predicate argument list. Emitter determines
+  /// StoreIdx(corresponds to the order in which names appear in argument list).
+  /// - InsnID - Instruction ID
+  /// - OpIdx - Operand index
+  /// - StoreIdx - Store location in RecordedOperands.
+  GIM_RecordNamedOperand,
 
   /// Fail the current try-block, or completely fail to match if there is no
   /// current try-block.
@@ -413,18 +444,25 @@ public:
   CodeGenCoverage *CoverageInfo = nullptr;
   GISelKnownBits *KnownBits = nullptr;
   MachineFunction *MF = nullptr;
+  ProfileSummaryInfo *PSI = nullptr;
+  BlockFrequencyInfo *BFI = nullptr;
+  // For some predicates, we need to track the current MBB.
+  MachineBasicBlock *CurMBB = nullptr;
 
   virtual void setupGeneratedPerFunctionState(MachineFunction &MF) {
     llvm_unreachable("TableGen should have emitted implementation");
   }
 
   /// Setup per-MF selector state.
-  virtual void setupMF(MachineFunction &mf,
-                       GISelKnownBits &KB,
-                       CodeGenCoverage &covinfo) {
+  virtual void setupMF(MachineFunction &mf, GISelKnownBits *KB,
+                       CodeGenCoverage &covinfo, ProfileSummaryInfo *psi,
+                       BlockFrequencyInfo *bfi) {
     CoverageInfo = &covinfo;
-    KnownBits = &KB;
+    KnownBits = KB;
     MF = &mf;
+    PSI = psi;
+    BFI = bfi;
+    CurMBB = nullptr;
     setupGeneratedPerFunctionState(mf);
   }
 
@@ -438,9 +476,20 @@ protected:
     std::vector<ComplexRendererFns::value_type> Renderers;
     RecordedMIVector MIs;
     DenseMap<unsigned, unsigned> TempRegisters;
+    /// Named operands that predicate with 'let PredicateCodeUsesOperands = 1'
+    /// referenced in its argument list. Operands are inserted at index set by
+    /// emitter, it corresponds to the order in which names appear in argument
+    /// list. Currently such predicates don't have more then 3 arguments.
+    std::array<const MachineOperand *, 3> RecordedOperands;
 
     MatcherState(unsigned MaxRenderers);
   };
+
+  bool shouldOptForSize(const MachineFunction *MF) const {
+    const auto &F = MF->getFunction();
+    return F.hasOptSize() || F.hasMinSize() ||
+           (PSI && BFI && CurMBB && llvm::shouldOptForSize(*CurMBB, PSI, BFI));
+  }
 
 public:
   template <class PredicateBitset, class ComplexMatcherMemFn,
@@ -498,20 +547,12 @@ protected:
     llvm_unreachable(
         "Subclasses must override this with a tablegen-erated function");
   }
-  virtual bool testMIPredicate_MI(unsigned, const MachineInstr &) const {
+  virtual bool testMIPredicate_MI(
+      unsigned, const MachineInstr &,
+      const std::array<const MachineOperand *, 3> &Operands) const {
     llvm_unreachable(
         "Subclasses must override this with a tablegen-erated function");
   }
-
-  /// Constrain a register operand of an instruction \p I to a specified
-  /// register class. This could involve inserting COPYs before (for uses) or
-  /// after (for defs) and may replace the operand of \p I.
-  /// \returns whether operand regclass constraining succeeded.
-  bool constrainOperandRegToRegClass(MachineInstr &I, unsigned OpIdx,
-                                     const TargetRegisterClass &RC,
-                                     const TargetInstrInfo &TII,
-                                     const TargetRegisterInfo &TRI,
-                                     const RegisterBankInfo &RBI) const;
 
   bool isOperandImmEqual(const MachineOperand &MO, int64_t Value,
                          const MachineRegisterInfo &MRI) const;

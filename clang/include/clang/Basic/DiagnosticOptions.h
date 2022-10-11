@@ -15,7 +15,14 @@
 #include <type_traits>
 #include <vector>
 
+namespace llvm {
+namespace opt {
+class ArgList;
+} // namespace opt
+} // namespace llvm
+
 namespace clang {
+class DiagnosticsEngine;
 
 /// Specifies which overload candidates to display when overload
 /// resolution fails.
@@ -61,8 +68,13 @@ raw_ostream& operator<<(raw_ostream& Out, DiagnosticLevelMask M);
 
 /// Options for controlling the compiler diagnostics engine.
 class DiagnosticOptions : public RefCountedBase<DiagnosticOptions>{
+  friend bool ParseDiagnosticArgs(DiagnosticOptions &, llvm::opt::ArgList &,
+                                  clang::DiagnosticsEngine *, bool);
+
+  friend class CompilerInvocation;
+
 public:
-  enum TextDiagnosticFormat { Clang, MSVC, Vi };
+  enum TextDiagnosticFormat { Clang, MSVC, Vi, SARIF };
 
   // Default values.
   enum {

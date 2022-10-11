@@ -17,6 +17,7 @@
 #include "clang/AST/AbstractBasicWriter.h"
 #include "clang/AST/OpenMPClause.h"
 #include "clang/Serialization/ASTWriter.h"
+#include "clang/Serialization/SourceLocationEncoding.h"
 
 namespace clang {
 
@@ -25,6 +26,8 @@ class TypeLoc;
 /// An object for streaming information to a record.
 class ASTRecordWriter
     : public serialization::DataStreamBasicWriter<ASTRecordWriter> {
+  using LocSeq = SourceLocationSequence;
+
   ASTWriter *Writer;
   ASTWriter::RecordDataImpl *Record;
 
@@ -55,13 +58,14 @@ class ASTRecordWriter
 
 public:
   /// Construct a ASTRecordWriter that uses the default encoding scheme.
-  ASTRecordWriter(ASTWriter &Writer, ASTWriter::RecordDataImpl &Record)
-      : Writer(&Writer), Record(&Record) {}
+  ASTRecordWriter(ASTWriter &W, ASTWriter::RecordDataImpl &Record)
+      : DataStreamBasicWriter(W.getASTContext()), Writer(&W), Record(&Record) {}
 
   /// Construct a ASTRecordWriter that uses the same encoding scheme as another
   /// ASTRecordWriter.
   ASTRecordWriter(ASTRecordWriter &Parent, ASTWriter::RecordDataImpl &Record)
-      : Writer(Parent.Writer), Record(&Record) {}
+      : DataStreamBasicWriter(Parent.getASTContext()), Writer(Parent.Writer),
+        Record(&Record) {}
 
   /// Copying an ASTRecordWriter is almost certainly a bug.
   ASTRecordWriter(const ASTRecordWriter &) = delete;
@@ -122,21 +126,24 @@ public:
     AddStmt(const_cast<Stmt*>(S));
   }
 
+  /// Write an BTFTypeTagAttr object.
+  void writeBTFTypeTagAttr(const BTFTypeTagAttr *A) { AddAttr(A); }
+
   /// Add a definition for the given function to the queue of statements
   /// to emit.
   void AddFunctionDefinition(const FunctionDecl *FD);
 
   /// Emit a source location.
-  void AddSourceLocation(SourceLocation Loc) {
-    return Writer->AddSourceLocation(Loc, *Record);
+  void AddSourceLocation(SourceLocation Loc, LocSeq *Seq = nullptr) {
+    return Writer->AddSourceLocation(Loc, *Record, Seq);
   }
   void writeSourceLocation(SourceLocation Loc) {
     AddSourceLocation(Loc);
   }
 
   /// Emit a source range.
-  void AddSourceRange(SourceRange Range) {
-    return Writer->AddSourceRange(Range, *Record);
+  void AddSourceRange(SourceRange Range, LocSeq *Seq = nullptr) {
+    return Writer->AddSourceRange(Range, *Record, Seq);
   }
 
   void writeBool(bool Value) {
@@ -165,7 +172,7 @@ public:
   void AddAPFloat(const llvm::APFloat &Value);
 
   /// Emit an APvalue.
-  void AddAPValue(const APValue &Value);
+  void AddAPValue(const APValue &Value) { writeAPValue(Value); }
 
   /// Emit a reference to an identifier.
   void AddIdentifierRef(const IdentifierInfo *II) {
@@ -202,7 +209,7 @@ public:
   void AddTypeSourceInfo(TypeSourceInfo *TInfo);
 
   /// Emits source location information for a type. Does not emit the type.
-  void AddTypeLoc(TypeLoc TL);
+  void AddTypeLoc(TypeLoc TL, LocSeq *Seq = nullptr);
 
   /// Emits a template argument location info.
   void AddTemplateArgumentLocInfo(TemplateArgument::ArgKind Kind,
@@ -265,6 +272,9 @@ public:
   void AddCXXCtorInitializers(ArrayRef<CXXCtorInitializer *> CtorInits);
 
   void AddCXXDefinitionData(const CXXRecordDecl *D);
+
+  /// Emit information about the initializer of a VarDecl.
+  void AddVarDeclInit(const VarDecl *VD);
 
   /// Write an OMPTraitInfo object.
   void writeOMPTraitInfo(const OMPTraitInfo *TI);

@@ -77,9 +77,6 @@ define void @test(i32 %a, i32 %b, i32 %c, i32 %d, i32 %e, i32 %f, i32 %g, i32 %h
 ; CHECK-NEXT:    movl {{[0-9]+}}(%rsp), %edx
 ; CHECK-NEXT:    movl {{[0-9]+}}(%rsp), %ecx
 ; CHECK-NEXT:    movl {{[0-9]+}}(%rsp), %eax
-
-; Re-materialization happened.
-
 ; CHECK-NEXT:    movabsq $_bar, %r13
 ; CHECK-NEXT:    callq *%r13 ## 96-byte Folded Reload
 ; CHECK-NEXT:  Ltmp0:
@@ -91,6 +88,9 @@ define void @test(i32 %a, i32 %b, i32 %c, i32 %d, i32 %e, i32 %f, i32 %g, i32 %h
 ; CHECK-NEXT:    popq %r15
 ; CHECK-NEXT:    popq %rbp
 ; CHECK-NEXT:    retq
+
+; Re-materialization happened.
+
 
 ; This is a call to hoist the loading of the target of the call for statepoint.
   call void @bar()
@@ -123,10 +123,10 @@ entry:
   %x64 = zext i32 %x to i64
   %y64 = zext i32 %y to i64
   %z64 = zext i32 %z to i64
-  %statepoint_token1 = call token (i64, i32, void ()*, i32, i32, ...) @llvm.experimental.gc.statepoint.p0f_isVoidf(i64 2882400000, i32 0, void ()* @bar, i32 0, i32 2, i32 0, i32 0) ["deopt" (i64 %a64, i64 %b64, i64 %c64, i64 %d64, i64 %e64, i64 %f64, i64 %g64, i64 %h64, i64 %i64, i64 %j64, i64 %k64, i64 %l64, i64 %m64, i64 %n64, i64 %o64, i64 %p64, i64 %q64, i64 %r64, i64 %s64, i64 %t64, i64 %u64, i64 %v64, i64 %w64, i64 %x64, i64 %y64, i64 %z64)]
+  %statepoint_token1 = call token (i64, i32, ptr, i32, i32, ...) @llvm.experimental.gc.statepoint.p0(i64 2882400000, i32 0, ptr elementtype(void ()) @bar, i32 0, i32 2, i32 0, i32 0) ["deopt" (i64 %a64, i64 %b64, i64 %c64, i64 %d64, i64 %e64, i64 %f64, i64 %g64, i64 %h64, i64 %i64, i64 %j64, i64 %k64, i64 %l64, i64 %m64, i64 %n64, i64 %o64, i64 %p64, i64 %q64, i64 %r64, i64 %s64, i64 %t64, i64 %u64, i64 %v64, i64 %w64, i64 %x64, i64 %y64, i64 %z64)]
   ret void
 }
 
-declare token @llvm.experimental.gc.statepoint.p0f_isVoidf(i64, i32, void ()*, i32, i32, ...)
+declare token @llvm.experimental.gc.statepoint.p0(i64, i32, ptr, i32, i32, ...)
 
 attributes #0 = { "deopt-lowering"="live-in" }

@@ -17,13 +17,13 @@ define void @test55() {
 ; CHECK-NEXT:    vmovdqa %xmm0, {{[0-9]+}}(%rsp)
 ; CHECK-NEXT:    vmovdqa {{[0-9]+}}(%rsp), %xmm0
 ; CHECK-NEXT:    vmovdqa %xmm0, {{[0-9]+}}(%rsp)
-; CHECK-NEXT:    vmovdqa {{[0-9]+}}(%rsp), %xmm0
-; CHECK-NEXT:    vpmovsxwd %xmm0, %xmm1
-; CHECK-NEXT:    # implicit-def: $ymm2
-; CHECK-NEXT:    vmovaps %xmm1, %xmm2
-; CHECK-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[2,3,2,3]
-; CHECK-NEXT:    vpmovsxwd %xmm0, %xmm0
-; CHECK-NEXT:    vinsertf128 $1, %xmm0, %ymm2, %ymm0
+; CHECK-NEXT:    vmovdqa {{[0-9]+}}(%rsp), %xmm1
+; CHECK-NEXT:    vpmovsxwd %xmm1, %xmm2
+; CHECK-NEXT:    # implicit-def: $ymm0
+; CHECK-NEXT:    vmovaps %xmm2, %xmm0
+; CHECK-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[2,3,2,3]
+; CHECK-NEXT:    vpmovsxwd %xmm1, %xmm1
+; CHECK-NEXT:    vinsertf128 $1, %xmm1, %ymm0, %ymm0
 ; CHECK-NEXT:    vmovdqa %ymm0, (%rsp)
 ; CHECK-NEXT:    movq %rbp, %rsp
 ; CHECK-NEXT:    popq %rbp
@@ -34,11 +34,11 @@ entry:
   %id11762 = alloca <8 x i16>, align 16
   %.compoundliteral = alloca <8 x i16>, align 16
   %id11761 = alloca <8 x i32>, align 32
-  store <8 x i16> <i16 26680, i16 -30904, i16 -1762, i16 2423, i16 -30521, i16 -5229, i16 6240, i16 1951>, <8 x i16>* %.compoundliteral, align 16
-  %0 = load <8 x i16>, <8 x i16>* %.compoundliteral, align 16
-  store <8 x i16> %0, <8 x i16>* %id11762, align 16
-  %1 = load <8 x i16>, <8 x i16>* %id11762, align 16
+  store <8 x i16> <i16 26680, i16 -30904, i16 -1762, i16 2423, i16 -30521, i16 -5229, i16 6240, i16 1951>, ptr %.compoundliteral, align 16
+  %0 = load <8 x i16>, ptr %.compoundliteral, align 16
+  store <8 x i16> %0, ptr %id11762, align 16
+  %1 = load <8 x i16>, ptr %id11762, align 16
   %conv = sext <8 x i16> %1 to <8 x i32>
-  store <8 x i32> %conv, <8 x i32>* %id11761, align 32
+  store <8 x i32> %conv, ptr %id11761, align 32
   ret void
 }

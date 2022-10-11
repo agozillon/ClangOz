@@ -9,7 +9,17 @@
 #include "src/string/strcpy.h"
 #include "utils/UnitTest/Test.h"
 
-TEST(StrCpyTest, EmptyDest) {
+TEST(LlvmLibcStrCpyTest, EmptySrc) {
+  const char *empty = "";
+  char dest[4] = {'a', 'b', 'c', '\0'};
+
+  char *result = __llvm_libc::strcpy(dest, empty);
+  ASSERT_EQ(dest, result);
+  ASSERT_STREQ(dest, result);
+  ASSERT_STREQ(dest, empty);
+}
+
+TEST(LlvmLibcStrCpyTest, EmptyDest) {
   const char *abc = "abc";
   char dest[4];
 
@@ -19,7 +29,7 @@ TEST(StrCpyTest, EmptyDest) {
   ASSERT_STREQ(dest, abc);
 }
 
-TEST(StrCpyTest, OffsetDest) {
+TEST(LlvmLibcStrCpyTest, OffsetDest) {
   const char *abc = "abc";
   char dest[7];
 

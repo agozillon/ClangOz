@@ -27,12 +27,42 @@ class _ConnectionRefused(IOError):
     pass
 
 
-class GdbRemoteTestCaseBase(TestBase):
+class GdbRemoteTestCaseFactory(type):
 
-    NO_DEBUG_INFO_TESTCASE = True
+    def __new__(cls, name, bases, attrs):
+        newattrs = {}
+        for attrname, attrvalue in attrs.items():
+            if not attrname.startswith("test"):
+                newattrs[attrname] = attrvalue
+                continue
+
+            # If any debug server categories were explicitly tagged, assume
+            # that list to be authoritative. If none were specified, try
+            # all of them.
+            all_categories = set(["debugserver", "llgs"])
+            categories = set(
+                getattr(attrvalue, "categories", [])) & all_categories
+            if not categories:
+                categories = all_categories
+
+            for cat in categories:
+                @decorators.add_test_categories([cat])
+                @wraps(attrvalue)
+                def test_method(self, attrvalue=attrvalue):
+                    return attrvalue(self)
+
+                method_name = attrname + "_" + cat
+                test_method.__name__ = method_name
+                test_method.debug_server = cat
+                newattrs[method_name] = test_method
+
+        return super(GdbRemoteTestCaseFactory, cls).__new__(
+                cls, name, bases, newattrs)
+
+class GdbRemoteTestCaseBase(Base, metaclass=GdbRemoteTestCaseFactory):
 
     # Default time out in seconds. The timeout is increased tenfold under Asan.
-    DEFAULT_TIMEOUT =  10 * (10 if ('ASAN_OPTIONS' in os.environ) else 1)
+    DEFAULT_TIMEOUT =  20 * (10 if ('ASAN_OPTIONS' in os.environ) else 1)
     # Default sleep time in seconds. The sleep time is doubled under Asan.
     DEFAULT_SLEEP   =  5  * (2  if ('ASAN_OPTIONS' in os.environ) else 1)
 
@@ -82,17 +112,20 @@ class GdbRemoteTestCaseBase(TestBase):
         return any(("gdb-remote" in channel)
                    for channel in lldbtest_config.channels)
 
+    def getDebugServer(self):
+        method = getattr(self, self.testMethodName)
+        return getattr(method, "debug_server", None)
+
     def setUp(self):
-        TestBase.setUp(self)
+        super(GdbRemoteTestCaseBase, self).setUp()
 
         self.setUpBaseLogging()
         self.debug_monitor_extra_args = []
-        self._pump_queues = socket_packet_pump.PumpQueues()
 
         if self.isVerboseLoggingRequested():
             # If requested, full logs go to a log file
             self._verbose_log_handler = logging.FileHandler(
-                self.log_basename + "-host.log")
+                self.getLogBasenameForCurrentTest() + "-host.log")
             self._verbose_log_handler.setFormatter(self._log_formatter)
             self._verbose_log_handler.setLevel(logging.DEBUG)
             self.logger.addHandler(self._verbose_log_handler)
@@ -100,9 +133,6 @@ class GdbRemoteTestCaseBase(TestBase):
         self.test_sequence = GdbRemoteTestSequence(self.logger)
         self.set_inferior_startup_launch()
         self.port = self.get_next_port()
-        self.named_pipe_path = None
-        self.named_pipe = None
-        self.named_pipe_fd = None
         self.stub_sends_two_stop_notifications_on_kill = False
         if configuration.lldb_platform_url:
             if configuration.lldb_platform_url.startswith('unix-'):
@@ -120,15 +150,19 @@ class GdbRemoteTestCaseBase(TestBase):
         else:
             self.stub_hostname = "localhost"
 
-    def tearDown(self):
-        self._pump_queues.verify_queues_empty()
+        debug_server = self.getDebugServer()
+        if debug_server == "debugserver":
+            self._init_debugserver_test()
+        else:
+            self._init_llgs_test()
 
+    def tearDown(self):
         self.logger.removeHandler(self._verbose_log_handler)
         self._verbose_log_handler = None
         TestBase.tearDown(self)
 
     def getLocalServerLogFile(self):
-        return self.log_basename + "-server.log"
+        return self.getLogBasenameForCurrentTest() + "-server.log"
 
     def setUpServerLogging(self, is_llgs):
         if len(lldbtest_config.channels) == 0:
@@ -154,91 +188,14 @@ class GdbRemoteTestCaseBase(TestBase):
     def reset_test_sequence(self):
         self.test_sequence = GdbRemoteTestSequence(self.logger)
 
-    def create_named_pipe(self):
-        # Create a temp dir and name for a pipe.
-        temp_dir = tempfile.mkdtemp()
-        named_pipe_path = os.path.join(temp_dir, "stub_port_number")
 
-        # Create the named pipe.
-        os.mkfifo(named_pipe_path)
-
-        # Open the read side of the pipe in non-blocking mode.  This will
-        # return right away, ready or not.
-        named_pipe_fd = os.open(named_pipe_path, os.O_RDONLY | os.O_NONBLOCK)
-
-        # Create the file for the named pipe.  Note this will follow semantics of
-        # a non-blocking read side of a named pipe, which has different semantics
-        # than a named pipe opened for read in non-blocking mode.
-        named_pipe = os.fdopen(named_pipe_fd, "r")
-        self.assertIsNotNone(named_pipe)
-
-        def shutdown_named_pipe():
-            # Close the pipe.
-            try:
-                named_pipe.close()
-            except:
-                print("failed to close named pipe")
-                None
-
-            # Delete the pipe.
-            try:
-                os.remove(named_pipe_path)
-            except:
-                print("failed to delete named pipe: {}".format(named_pipe_path))
-                None
-
-            # Delete the temp directory.
-            try:
-                os.rmdir(temp_dir)
-            except:
-                print(
-                    "failed to delete temp dir: {}, directory contents: '{}'".format(
-                        temp_dir, os.listdir(temp_dir)))
-                None
-
-        # Add the shutdown hook to clean up the named pipe.
-        self.addTearDownHook(shutdown_named_pipe)
-
-        # Clear the port so the stub selects a port number.
-        self.port = 0
-
-        return (named_pipe_path, named_pipe, named_pipe_fd)
-
-    def get_stub_port_from_named_socket(self):
-        # Wait for something to read with a max timeout.
-        (ready_readers, _, _) = select.select(
-            [self.named_pipe_fd], [], [], self.DEFAULT_TIMEOUT)
-        self.assertIsNotNone(
-            ready_readers,
-            "write side of pipe has not written anything - stub isn't writing to pipe.")
-        self.assertNotEqual(
-            len(ready_readers),
-            0,
-            "write side of pipe has not written anything - stub isn't writing to pipe.")
-
-        # Read the port from the named pipe.
-        stub_port_raw = self.named_pipe.read()
-        self.assertIsNotNone(stub_port_raw)
-        self.assertNotEqual(
-            len(stub_port_raw),
-            0,
-            "no content to read on pipe")
-
-        # Trim null byte, convert to int.
-        stub_port_raw = stub_port_raw[:-1]
-        stub_port = int(stub_port_raw)
-        self.assertTrue(stub_port > 0)
-
-        return stub_port
-
-    def init_llgs_test(self, use_named_pipe=True):
+    def _init_llgs_test(self):
+        reverse_connect = True
         if lldb.remote_platform:
-            # Remote platforms don't support named pipe based port negotiation
-            use_named_pipe = False
+            # Reverse connections may be tricky due to firewalls/NATs.
+            reverse_connect = False
 
-            triple = self.dbg.GetSelectedPlatform().GetTriple()
-            if re.match(".*-.*-windows", triple):
-                self.skipTest("Remotely testing is not supported on Windows yet.")
+            # FIXME: This is extremely linux-oriented
 
             # Grab the ppid from /proc/[shell pid]/stat
             err, retcode, shell_stat = self.run_platform_command(
@@ -265,29 +222,18 @@ class GdbRemoteTestCaseBase(TestBase):
             # Remove if it's there.
             self.debug_monitor_exe = re.sub(r' \(deleted\)$', '', exe)
         else:
-            # Need to figure out how to create a named pipe on Windows.
-            if platform.system() == 'Windows':
-                use_named_pipe = False
-
             self.debug_monitor_exe = get_lldb_server_exe()
-            if not self.debug_monitor_exe:
-                self.skipTest("lldb-server exe not found")
 
         self.debug_monitor_extra_args = ["gdbserver"]
         self.setUpServerLogging(is_llgs=True)
 
-        if use_named_pipe:
-            (self.named_pipe_path, self.named_pipe,
-             self.named_pipe_fd) = self.create_named_pipe()
+        self.reverse_connect = reverse_connect
 
-    def init_debugserver_test(self, use_named_pipe=True):
+    def _init_debugserver_test(self):
         self.debug_monitor_exe = get_debugserver_exe()
-        if not self.debug_monitor_exe:
-            self.skipTest("debugserver exe not found")
         self.setUpServerLogging(is_llgs=False)
-        if use_named_pipe:
-            (self.named_pipe_path, self.named_pipe,
-             self.named_pipe_fd) = self.create_named_pipe()
+        self.reverse_connect = True
+
         # The debugserver stub has a race on handling the 'k' command, so it sends an X09 right away, then sends the real X notification
         # when the process truly dies.
         self.stub_sends_two_stop_notifications_on_kill = True
@@ -318,7 +264,13 @@ class GdbRemoteTestCaseBase(TestBase):
             raise _ConnectionRefused()  # Got EOF, connection dropped.
 
     def create_socket(self):
-        sock = socket.socket()
+        try:
+            sock = socket.socket(family=socket.AF_INET)
+        except OSError as e:
+            if e.errno != errno.EAFNOSUPPORT:
+                raise
+            sock = socket.socket(family=socket.AF_INET6)
+
         logger = self.logger
 
         triple = self.dbg.GetSelectedPlatform().GetTriple()
@@ -374,17 +326,17 @@ class GdbRemoteTestCaseBase(TestBase):
         self._inferior_startup = self._STARTUP_ATTACH_MANUALLY
 
     def get_debug_monitor_command_line_args(self, attach_pid=None):
-        if lldb.remote_platform:
-            commandline_args = self.debug_monitor_extra_args + \
-                ["*:{}".format(self.port)]
-        else:
-            commandline_args = self.debug_monitor_extra_args + \
-                ["127.0.0.1:{}".format(self.port)]
-
+        commandline_args = self.debug_monitor_extra_args
         if attach_pid:
             commandline_args += ["--attach=%d" % attach_pid]
-        if self.named_pipe_path:
-            commandline_args += ["--named-pipe", self.named_pipe_path]
+        if self.reverse_connect:
+            commandline_args += ["--reverse-connect", self.connect_address]
+        else:
+            if lldb.remote_platform:
+                commandline_args += ["*:{}".format(self.port)]
+            else:
+                commandline_args += ["localhost:{}".format(self.port)]
+
         return commandline_args
 
     def get_target_byte_order(self):
@@ -393,6 +345,17 @@ class GdbRemoteTestCaseBase(TestBase):
         return target.GetByteOrder()
 
     def launch_debug_monitor(self, attach_pid=None, logfile=None):
+        if self.reverse_connect:
+            family, type, proto, _, addr = socket.getaddrinfo("localhost", 0, proto=socket.IPPROTO_TCP)[0]
+            sock = socket.socket(family, type, proto)
+            sock.settimeout(self.DEFAULT_TIMEOUT)
+
+            sock.bind(addr)
+            sock.listen(1)
+            addr = sock.getsockname()
+            self.connect_address = "[{}]:{}".format(*addr)
+
+
         # Create the command line.
         commandline_args = self.get_debug_monitor_command_line_args(
             attach_pid=attach_pid)
@@ -404,15 +367,14 @@ class GdbRemoteTestCaseBase(TestBase):
             install_remote=False)
         self.assertIsNotNone(server)
 
-        # If we're receiving the stub's listening port from the named pipe, do
-        # that here.
-        if self.named_pipe:
-            self.port = self.get_stub_port_from_named_socket()
+        if self.reverse_connect:
+            self.sock = sock.accept()[0]
+            self.sock.settimeout(self.DEFAULT_TIMEOUT)
 
         return server
 
     def connect_to_debug_monitor(self, attach_pid=None):
-        if self.named_pipe:
+        if self.reverse_connect:
             # Create the stub.
             server = self.launch_debug_monitor(attach_pid=attach_pid)
             self.assertIsNotNone(server)
@@ -420,8 +382,7 @@ class GdbRemoteTestCaseBase(TestBase):
             # Schedule debug monitor to be shut down during teardown.
             logger = self.logger
 
-            # Attach to the stub and return a socket opened to it.
-            self.sock = self.create_socket()
+            self._server = Server(self.sock, server)
             return server
 
         # We're using a random port algorithm to try not to collide with other ports,
@@ -443,6 +404,7 @@ class GdbRemoteTestCaseBase(TestBase):
                 try:
                     logger.info("Connect attempt %d", connect_attemps + 1)
                     self.sock = self.create_socket()
+                    self._server = Server(self.sock, server)
                     return server
                 except _ConnectionRefused as serr:
                     # Ignore, and try again.
@@ -555,8 +517,9 @@ class GdbRemoteTestCaseBase(TestBase):
         server = self.connect_to_debug_monitor(attach_pid=attach_pid)
         self.assertIsNotNone(server)
 
+        self.do_handshake()
+
         # Build the expected protocol stream
-        self.add_no_ack_remote_stream()
         if inferior_env:
             for name, value in inferior_env.items():
                 self.add_set_environment_packets(name, value)
@@ -565,60 +528,13 @@ class GdbRemoteTestCaseBase(TestBase):
 
         return {"inferior": inferior, "server": server}
 
-    def expect_socket_recv(
-            self,
-            sock,
-            expected_content_regex
-            ):
-        response = ""
-        timeout_time = time.time() + self.DEFAULT_TIMEOUT
-
-        while not expected_content_regex.match(
-                response) and time.time() < timeout_time:
-            can_read, _, _ = select.select([sock], [], [], self.DEFAULT_TIMEOUT)
-            if can_read and sock in can_read:
-                recv_bytes = sock.recv(4096)
-                if recv_bytes:
-                    response += seven.bitcast_to_string(recv_bytes)
-
-        self.assertTrue(expected_content_regex.match(response))
-
-    def expect_socket_send(self, sock, content):
-        request_bytes_remaining = content
-        timeout_time = time.time() + self.DEFAULT_TIMEOUT
-
-        while len(request_bytes_remaining) > 0 and time.time() < timeout_time:
-            _, can_write, _ = select.select([], [sock], [], self.DEFAULT_TIMEOUT)
-            if can_write and sock in can_write:
-                written_byte_count = sock.send(request_bytes_remaining.encode())
-                request_bytes_remaining = request_bytes_remaining[
-                    written_byte_count:]
-        self.assertEqual(len(request_bytes_remaining), 0)
-
-    def do_handshake(self, stub_socket):
-        # Write the ack.
-        self.expect_socket_send(stub_socket, "+")
-
-        # Send the start no ack mode packet.
-        NO_ACK_MODE_REQUEST = "$QStartNoAckMode#b0"
-        bytes_sent = stub_socket.send(NO_ACK_MODE_REQUEST.encode())
-        self.assertEqual(bytes_sent, len(NO_ACK_MODE_REQUEST))
-
-        # Receive the ack and "OK"
-        self.expect_socket_recv(stub_socket, re.compile(
-            r"^\+\$OK#[0-9a-fA-F]{2}$"))
-
-        # Send the final ack.
-        self.expect_socket_send(stub_socket, "+")
-
-    def add_no_ack_remote_stream(self):
-        self.test_sequence.add_log_lines(
-            ["read packet: +",
-             "read packet: $QStartNoAckMode#b0",
-             "send packet: +",
-             "send packet: $OK#9a",
-             "read packet: +"],
-            True)
+    def do_handshake(self):
+        server = self._server
+        server.send_ack()
+        server.send_packet(b"QStartNoAckMode")
+        self.assertEqual(server.get_normal_packet(), b"+")
+        self.assertEqual(server.get_normal_packet(), b"OK")
+        server.send_ack()
 
     def add_verified_launch_packets(self, launch_args):
         self.test_sequence.add_log_lines(
@@ -700,9 +616,8 @@ class GdbRemoteTestCaseBase(TestBase):
     def expect_gdbremote_sequence(self):
         return expect_lldb_gdbserver_replay(
             self,
-            self.sock,
+            self._server,
             self.test_sequence,
-            self._pump_queues,
             self.DEFAULT_TIMEOUT * len(self.test_sequence),
             self.logger)
 
@@ -732,7 +647,10 @@ class GdbRemoteTestCaseBase(TestBase):
         # Check the bare-minimum expected set of register info keys.
         self.assertTrue("name" in reg_info)
         self.assertTrue("bitsize" in reg_info)
-        self.assertTrue("offset" in reg_info)
+
+        if not self.getArchitecture() == 'aarch64':
+            self.assertTrue("offset" in reg_info)
+
         self.assertTrue("encoding" in reg_info)
         self.assertTrue("format" in reg_info)
 
@@ -795,13 +713,15 @@ class GdbRemoteTestCaseBase(TestBase):
 
         # Validate keys are known.
         for (key, val) in list(mem_region_dict.items()):
-            self.assertTrue(
-                key in [
-                    "start",
-                    "size",
-                    "permissions",
-                    "name",
-                    "error"])
+            self.assertIn(key,
+                ["start",
+                 "size",
+                 "permissions",
+                 "flags",
+                 "name",
+                 "error",
+                 "dirty-pages",
+                 "type"])
             self.assertIsNotNone(val)
 
         mem_region_dict["name"] = seven.unhexlify(mem_region_dict.get("name", ""))
@@ -851,29 +771,20 @@ class GdbRemoteTestCaseBase(TestBase):
             thread_ids.extend(new_thread_infos)
         return thread_ids
 
-    def wait_for_thread_count(self, thread_count):
-        start_time = time.time()
-        timeout_time = start_time + self.DEFAULT_TIMEOUT
+    def launch_with_threads(self, thread_count):
+        procs = self.prep_debug_monitor_and_inferior(
+                inferior_args=["thread:new"]*(thread_count-1) + ["trap"])
 
-        actual_thread_count = 0
-        while actual_thread_count < thread_count:
-            self.reset_test_sequence()
-            self.add_threadinfo_collection_packets()
-
-            context = self.expect_gdbremote_sequence()
-            self.assertIsNotNone(context)
-
-            threads = self.parse_threadinfo_packets(context)
-            self.assertIsNotNone(threads)
-
-            actual_thread_count = len(threads)
-
-            if time.time() > timeout_time:
-                raise Exception(
-                    'timed out after {} seconds while waiting for theads: waiting for at least {} threads, found {}'.format(
-                        self.DEFAULT_TIMEOUT, thread_count, actual_thread_count))
-
-        return threads
+        self.test_sequence.add_log_lines([
+                "read packet: $c#00",
+                {"direction": "send",
+                    "regex": r"^\$T([0-9a-fA-F]{2})([^#]*)#..$",
+                    "capture": {1: "stop_signo", 2: "stop_reply_kv"}}], True)
+        self.add_threadinfo_collection_packets()
+        context = self.expect_gdbremote_sequence()
+        threads = self.parse_threadinfo_packets(context)
+        self.assertGreaterEqual(len(threads), thread_count)
+        return context, threads
 
     def add_set_breakpoint_packets(
             self,
@@ -913,9 +824,10 @@ class GdbRemoteTestCaseBase(TestBase):
                 "send packet: $OK#00",
             ], True)
 
-    def add_qSupported_packets(self):
+    def add_qSupported_packets(self, client_features=[]):
+        features = ''.join(';' + x for x in client_features)
         self.test_sequence.add_log_lines(
-            ["read packet: $qSupported#00",
+            ["read packet: $qSupported{}#00".format(features),
              {"direction": "send", "regex": r"^\$(.*)#[0-9a-fA-F]{2}", "capture": {1: "qSupported_response"}},
              ], True)
 
@@ -929,8 +841,16 @@ class GdbRemoteTestCaseBase(TestBase):
         "qXfer:libraries:read",
         "qXfer:libraries-svr4:read",
         "qXfer:features:read",
+        "qXfer:siginfo:read",
         "qEcho",
-        "QPassSignals"
+        "QPassSignals",
+        "multiprocess",
+        "fork-events",
+        "vfork-events",
+        "memory-tagging",
+        "qSaveCore",
+        "native-signals",
+        "QNonStop",
     ]
 
     def parse_qSupported_response(self, context):
@@ -966,28 +886,6 @@ class GdbRemoteTestCaseBase(TestBase):
                     key)
 
         return supported_dict
-
-    def run_process_then_stop(self, run_seconds=1):
-        # Tell the stub to continue.
-        self.test_sequence.add_log_lines(
-            ["read packet: $vCont;c#a8"],
-            True)
-        context = self.expect_gdbremote_sequence()
-
-        # Wait for run_seconds.
-        time.sleep(run_seconds)
-
-        # Send an interrupt, capture a T response.
-        self.reset_test_sequence()
-        self.test_sequence.add_log_lines(
-            ["read packet: {}".format(chr(3)),
-             {"direction": "send", "regex": r"^\$T([0-9a-fA-F]+)([^#]+)#[0-9a-fA-F]{2}$", "capture": {1: "stop_result"}}],
-            True)
-        context = self.expect_gdbremote_sequence()
-        self.assertIsNotNone(context)
-        self.assertIsNotNone(context.get("stop_result"))
-
-        return context
 
     def continue_process_and_wait_for_stop(self):
         self.test_sequence.add_log_lines(
@@ -1057,6 +955,13 @@ class GdbRemoteTestCaseBase(TestBase):
         for reg_info in reg_infos:
             if ("generic" in reg_info) and (
                     reg_info["generic"] == generic_name):
+                return reg_info
+        return None
+
+    def find_register_with_name_and_dwarf_regnum(self, reg_infos, name, dwarf_num):
+        self.assertIsNotNone(reg_infos)
+        for reg_info in reg_infos:
+            if (reg_info["name"] == name) and (reg_info["dwarf"] == dwarf_num):
                 return reg_info
         return None
 
@@ -1601,17 +1506,18 @@ class GdbRemoteTestCaseBase(TestBase):
         # variable value
         if re.match("s390x", arch):
             expected_step_count = 2
-        # ARM64 requires "4" instructions: 2 to compute the address (adrp, add),
-        # one to materialize the constant (mov) and the store
+        # ARM64 requires "4" instructions: 2 to compute the address (adrp,
+        # add), one to materialize the constant (mov) and the store. Once
+        # addresses and constants are materialized, only one instruction is
+        # needed.
         if re.match("arm64", arch):
-            expected_step_count = 4
-
-        self.assertEqual(step_count, expected_step_count)
-
-        # ARM64: Once addresses and constants are materialized, only one
-        # instruction is needed.
-        if re.match("arm64", arch):
-            expected_step_count = 1
+            before_materialization_step_count = 4
+            after_matrialization_step_count = 1
+            self.assertIn(step_count, [before_materialization_step_count,
+                                       after_matrialization_step_count])
+            expected_step_count = after_matrialization_step_count
+        else:
+            self.assertEqual(step_count, expected_step_count)
 
         # Verify we hit the next state.
         args["expected_g_c1"] = "0"

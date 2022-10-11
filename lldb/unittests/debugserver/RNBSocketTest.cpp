@@ -15,7 +15,6 @@
 #include "RNBDefs.h"
 #include "RNBSocket.h"
 #include "lldb/Host/Socket.h"
-#include "lldb/Host/StringConvert.h"
 #include "lldb/Host/common/TCPSocket.h"
 #include "llvm/Testing/Support/Error.h"
 
@@ -28,7 +27,7 @@ static void ServerCallbackv4(const void *baton, in_port_t port) {
   auto child_pid = fork();
   if (child_pid == 0) {
     char addr_buffer[256];
-    sprintf(addr_buffer, "%s:%d", baton, port);
+    sprintf(addr_buffer, "%s:%d", (const char *)baton, port);
     llvm::Expected<std::unique_ptr<Socket>> socket_or_err =
         Socket::TcpConnect(addr_buffer, false);
     ASSERT_THAT_EXPECTED(socket_or_err, llvm::Succeeded());
@@ -102,10 +101,8 @@ void TestSocketConnect(const char *addr) {
     sprintf(addr_wrap, "%s:0", addr);
 
   Socket *server_socket;
-  Predicate<uint16_t> port_predicate;
-  port_predicate.SetValue(0, eBroadcastNever);
   llvm::Expected<std::unique_ptr<Socket>> socket_or_err =
-      Socket::TcpListen(addr_wrap, false, &port_predicate);
+      Socket::TcpListen(addr_wrap, false);
   ASSERT_THAT_EXPECTED(socket_or_err, llvm::Succeeded());
   server_socket = socket_or_err->get();
 

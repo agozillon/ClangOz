@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_BASIC_TARGET_ID_H
-#define LLVM_CLANG_BASIC_TARGET_ID_H
+#ifndef LLVM_CLANG_BASIC_TARGETID_H
+#define LLVM_CLANG_BASIC_TARGETID_H
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -19,9 +19,9 @@ namespace clang {
 /// Get all feature strings that can be used in target ID for \p Processor.
 /// Target ID is a processor name with optional feature strings
 /// postfixed by a plus or minus sign delimited by colons, e.g.
-/// gfx908:xnack+:sram-ecc-. Each processor have a limited
+/// gfx908:xnack+:sramecc-. Each processor have a limited
 /// number of predefined features when showing up in a target ID.
-const llvm::SmallVector<llvm::StringRef, 4>
+llvm::SmallVector<llvm::StringRef, 4>
 getAllPossibleTargetIDFeatures(const llvm::Triple &T,
                                llvm::StringRef Processor);
 

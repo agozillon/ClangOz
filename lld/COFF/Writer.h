@@ -16,11 +16,11 @@
 #include <cstdint>
 #include <vector>
 
-namespace lld {
-namespace coff {
+namespace lld::coff {
 static const int pageSize = 4096;
+class COFFLinkerContext;
 
-void writeResult();
+void writeResult(COFFLinkerContext &ctx);
 
 class PartialSection {
 public:
@@ -79,7 +79,6 @@ private:
   uint32_t stringTableOff = 0;
 };
 
-} // namespace coff
-} // namespace lld
+} // namespace lld::coff
 
 #endif

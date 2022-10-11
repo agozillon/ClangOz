@@ -3,8 +3,6 @@ Test the IR interpreter
 """
 
 
-import unittest2
-
 import lldb
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
@@ -12,8 +10,6 @@ from lldbsuite.test import lldbutil
 
 
 class IRInterpreterTestCase(TestBase):
-
-    mydir = TestBase.compute_mydir(__file__)
     NO_DEBUG_INFO_TESTCASE = True
 
     def setUp(self):
@@ -44,7 +40,6 @@ class IRInterpreterTestCase(TestBase):
     @expectedFailureAll(
         oslist=['windows'],
         bugnumber="http://llvm.org/pr21765")
-    @expectedFailureNetBSD
     def test_ir_interpreter(self):
         self.build_and_run()
 

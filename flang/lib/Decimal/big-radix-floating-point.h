@@ -24,7 +24,6 @@
 #include "flang/Common/bit-population-count.h"
 #include "flang/Common/leading-zero-bit-count.h"
 #include "flang/Common/uint128.h"
-#include "flang/Common/unsigned-const-division.h"
 #include "flang/Decimal/binary-floating-point.h"
 #include "flang/Decimal/decimal.h"
 #include <cinttypes>
@@ -88,7 +87,8 @@ public:
   // spaces.
   // The argument is a reference to a pointer that is left
   // pointing to the first character that wasn't parsed.
-  ConversionToBinaryResult<PREC> ConvertToBinary(const char *&);
+  ConversionToBinaryResult<PREC> ConvertToBinary(
+      const char *&, const char *end = nullptr);
 
   // Formats a decimal floating-point number to a user buffer.
   // May emit "NaN" or "Inf", or an possibly-signed integer.
@@ -147,7 +147,7 @@ private:
         std::is_same_v<UINT, common::uint128_t> || std::is_unsigned_v<UINT>);
     SetToZero();
     while (n != 0) {
-      auto q{common::DivideUnsignedBy<UINT, 10>(n)};
+      auto q{n / 10u};
       if (n != q * 10) {
         break;
       }
@@ -161,7 +161,7 @@ private:
       return 0;
     } else {
       while (n != 0 && digits_ < digitLimit_) {
-        auto q{common::DivideUnsignedBy<UINT, radix>(n)};
+        auto q{n / radix};
         digit_[digits_++] = static_cast<Digit>(n - q * radix);
         n = q;
       }
@@ -214,7 +214,7 @@ private:
   template <unsigned DIVISOR> int DivideBy() {
     Digit remainder{0};
     for (int j{digits_ - 1}; j >= 0; --j) {
-      Digit q{common::DivideUnsignedBy<Digit, DIVISOR>(digit_[j])};
+      Digit q{digit_[j] / DIVISOR};
       Digit nrem{digit_[j] - DIVISOR * q};
       digit_[j] = q + (radix / DIVISOR) * remainder;
       remainder = nrem;
@@ -295,7 +295,7 @@ private:
   template <int N> int MultiplyByHelper(int carry = 0) {
     for (int j{0}; j < digits_; ++j) {
       auto v{N * digit_[j] + carry};
-      carry = common::DivideUnsignedBy<Digit, radix>(v);
+      carry = v / radix;
       digit_[j] = v - carry * radix; // i.e., v % radix
     }
     return carry;
@@ -338,7 +338,12 @@ private:
   // Returns true when the the result has effectively been rounded down.
   bool Mean(const BigRadixFloatingPointNumber &);
 
-  bool ParseNumber(const char *&, bool &inexact);
+  // Parses a floating-point number; leaves the pointer reference
+  // argument pointing at the next character after what was recognized.
+  // The "end" argument can be left null if the caller is sure that the
+  // string is properly terminated with an addressable character that
+  // can't be in a valid floating-point character.
+  bool ParseNumber(const char *&, bool &inexact, const char *end);
 
   using Raw = typename Real::RawType;
   constexpr Raw SignBit() const { return Raw{isNegative_} << (Real::bits - 1); }

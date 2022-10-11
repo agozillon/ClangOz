@@ -12,8 +12,6 @@ from lldbsuite.test import lldbutil
 
 
 class WatchpointPythonCommandTestCase(TestBase):
-
-    mydir = TestBase.compute_mydir(__file__)
     NO_DEBUG_INFO_TESTCASE = True
 
     def setUp(self):
@@ -32,7 +30,6 @@ class WatchpointPythonCommandTestCase(TestBase):
         self.exe_name = self.testMethodName
         self.d = {'CXX_SOURCES': self.source, 'EXE': self.exe_name}
 
-    @skipIfFreeBSD  # timing out on buildbot
     def test_watchpoint_command(self):
         """Test 'watchpoint command'."""
         self.build(dictionary=self.d)
@@ -95,8 +92,6 @@ class WatchpointPythonCommandTestCase(TestBase):
         self.expect("frame variable --show-globals cookie",
                     substrs=['(int32_t)', 'cookie = 777'])
 
-    @skipIfFreeBSD  # timing out on buildbot
-    @skipIfReproducer
     def test_continue_in_watchpoint_command(self):
         """Test continue in a watchpoint command."""
         self.build(dictionary=self.d)

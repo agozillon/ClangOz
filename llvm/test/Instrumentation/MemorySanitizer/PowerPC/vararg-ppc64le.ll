@@ -1,5 +1,4 @@
 ; RUN: opt < %s -S -passes=msan 2>&1 | FileCheck %s
-; RUN: opt < %s -msan -S | FileCheck %s
 
 target datalayout = "e-m:e-i64:64-n32:64"
 target triple = "powerpc64le--linux"
@@ -76,7 +75,7 @@ define i32 @bar5() {
 
 ; Check 8-aligned byval.
 define i32 @bar6([2 x i64]* %arg) {
-  %1 = call i32 (i32, ...) @foo(i32 0, [2 x i64]* byval align 8 %arg)
+  %1 = call i32 (i32, ...) @foo(i32 0, [2 x i64]* byval([2 x i64]) align 8 %arg)
   ret i32 %1
 }
 
@@ -86,12 +85,12 @@ define i32 @bar6([2 x i64]* %arg) {
 
 ; Check 16-aligned byval.
 define i32 @bar7([4 x i64]* %arg) {
-  %1 = call i32 (i32, ...) @foo(i32 0, [4 x i64]* byval align 16 %arg)
+  %1 = call i32 (i32, ...) @foo(i32 0, [4 x i64]* byval([4 x i64]) align 16 %arg)
   ret i32 %1
 }
 
 ; CHECK-LABEL: @bar7
-; CHECK: call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 inttoptr (i64 add (i64 ptrtoint ([100 x i64]* @__msan_param_tls to i64), i64 8) to i8*), i8* align 8 {{.*}}, i64 32, i1 false)
+; CHECK: call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 inttoptr (i64 add (i64 ptrtoint ([100 x i64]* @__msan_va_arg_tls to i64), i64 8) to i8*), i8* align 8 {{.*}}, i64 32, i1 false)
 ; CHECK: store {{.*}} 40, {{.*}} @__msan_va_arg_overflow_size_tls
 
 ; Test that MSan doesn't generate code overflowing __msan_va_arg_tls when too many arguments are

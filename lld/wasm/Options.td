@@ -1,5 +1,23 @@
 include "llvm/Option/OptParser.td"
 
+// Convenience classes for long options which only accept two dashes. For lld
+// specific or newer long options, we prefer two dashes to avoid collision with
+// short options. For many others, we have to accept both forms to be compatible
+// with GNU ld.
+class FF<string name> : Flag<["--"], name>;
+class JJ<string name>: Joined<["--"], name>;
+
+multiclass EEq<string name, string help> {
+  def NAME: Separate<["--"], name>;
+  def NAME # _eq: Joined<["--"], name # "=">, Alias<!cast<Separate>(NAME)>,
+    HelpText<help>;
+}
+
+multiclass BB<string name, string help1, string help2> {
+  def NAME: Flag<["--"], name>, HelpText<help1>;
+  def no_ # NAME: Flag<["--"], "no-" # name>, HelpText<help2>;
+}
+
 // For options whose names are multiple letters, either one dash or
 // two can precede the option name except those that start with 'o'.
 class F<string name>: Flag<["--", "-"], name>;
@@ -18,11 +36,14 @@ multiclass B<string name, string help1, string help2> {
 }
 
 // The following flags are shared with the ELF linker
-def color_diagnostics: F<"color-diagnostics">,
-  HelpText<"Use colors in diagnostics">;
+def Bsymbolic: F<"Bsymbolic">, HelpText<"Bind defined symbols locally">;
 
+defm color_diagnostics: B<"color-diagnostics",
+  "Alias for --color-diagnostics=always",
+  "Alias for --color-diagnostics=never">;
 def color_diagnostics_eq: J<"color-diagnostics=">,
-  HelpText<"Use colors in diagnostics; one of 'always', 'never', 'auto'">;
+  HelpText<"Use colors in diagnostics (default: auto)">,
+  MetaVarName<"[auto,always,never]">;
 
 def compress_relocations: F<"compress-relocations">,
   HelpText<"Compress the relocation targets in the code section.">;
@@ -33,6 +54,9 @@ defm demangle: B<"demangle",
 
 def emit_relocs: F<"emit-relocs">, HelpText<"Generate relocations in output">;
 
+def error_unresolved_symbols: F<"error-unresolved-symbols">,
+  HelpText<"Report unresolved symbols as errors">;
+
 defm export_dynamic: B<"export-dynamic",
     "Put symbols in the dynamic symbol table",
     "Do not put symbols in the dynamic symbol table (default)">;
@@ -40,8 +64,8 @@ defm export_dynamic: B<"export-dynamic",
 def entry: S<"entry">, MetaVarName<"<entry>">,
   HelpText<"Name of entry point symbol">;
 
-def error_limit: J<"error-limit=">,
-  HelpText<"Maximum number of errors to emit before stopping (0 = no limit)">;
+defm error_limit:
+  EEq<"error-limit", "Maximum number of errors to emit before stopping (0 = no limit)">;
 
 def fatal_warnings: F<"fatal-warnings">,
   HelpText<"Treat warnings as errors">;
@@ -50,7 +74,7 @@ defm gc_sections: B<"gc-sections",
     "Enable garbage collection of unused sections",
     "Disable garbage collection of unused sections">;
 
-defm merge_data_segments: B<"merge-data-segments",
+defm merge_data_segments: BB<"merge-data-segments",
     "Enable merging data segments",
     "Disable merging data segments">;
 
@@ -64,10 +88,9 @@ def L: JoinedOrSeparate<["-"], "L">, MetaVarName<"<dir>">,
 
 def m: JoinedOrSeparate<["-"], "m">, HelpText<"Set target emulation">;
 
-def mllvm: S<"mllvm">, HelpText<"Options to pass to LLVM">;
+defm mllvm: Eq<"mllvm", "Additional arguments to forward to LLVM's option processing">;
 
-def no_color_diagnostics: F<"no-color-diagnostics">,
-  HelpText<"Do not use colors in diagnostics">;
+defm Map: Eq<"Map", "Print a link map to the specified file">;
 
 def no_fatal_warnings: F<"no-fatal-warnings">;
 
@@ -84,9 +107,12 @@ defm print_gc_sections: B<"print-gc-sections",
     "List removed unused sections",
     "Do not list removed unused sections">;
 
+def print_map: F<"print-map">,
+  HelpText<"Print a link map to the standard output">;
+
 def relocatable: F<"relocatable">, HelpText<"Create relocatable object file">;
 
-defm reproduce: Eq<"reproduce", "Dump linker invocation and input files for debugging">;
+defm reproduce: EEq<"reproduce", "Dump linker invocation and input files for debugging">;
 
 defm rsp_quoting: Eq<"rsp-quoting", "Quoting style for response files">,
   MetaVarName<"[posix,windows]">;
@@ -107,22 +133,33 @@ defm trace_symbol: Eq<"trace-symbol", "Trace references to symbols">;
 
 defm undefined: Eq<"undefined", "Force undefined symbol during linking">;
 
+defm unresolved_symbols:
+  Eq<"unresolved-symbols", "Determine how to handle unresolved symbols">;
+
 def v: Flag<["-"], "v">, HelpText<"Display the version number">;
 
 def verbose: F<"verbose">, HelpText<"Verbose mode">;
 
 def version: F<"version">, HelpText<"Display the version number and exit">;
 
-def z: JoinedOrSeparate<["-"], "z">, MetaVarName<"<option>">,
-  HelpText<"Linker option extensions">;
+def warn_unresolved_symbols: F<"warn-unresolved-symbols">,
+  HelpText<"Report unresolved symbols as warnings">;
 
 defm wrap: Eq<"wrap", "Use wrapper functions for symbol">,
   MetaVarName<"<symbol>=<symbol>">;
 
+def z: JoinedOrSeparate<["-"], "z">, MetaVarName<"<option>">,
+  HelpText<"Linker option extensions">;
+
 // The follow flags are unique to wasm
 
 def allow_undefined: F<"allow-undefined">,
-  HelpText<"Allow undefined symbols in linked binary">;
+  HelpText<"Allow undefined symbols in linked binary. "
+           "This options is equivalent to --import-undefined "
+           "and --unresolved-symbols=ignore-all">;
+
+def import_undefined: F<"import-undefined">,
+  HelpText<"Turn undefined symbols into imports where possible">;
 
 def allow_undefined_file: J<"allow-undefined-file=">,
   HelpText<"Allow symbols listed in <file> to be undefined in linked binary">;
@@ -132,44 +169,47 @@ def allow_undefined_file_s: Separate<["-"], "allow-undefined-file">,
 
 defm export: Eq<"export", "Force a symbol to be exported">;
 
-def export_all: F<"export-all">,
+defm export_if_defined: Eq<"export-if-defined",
+     "Force a symbol to be exported, if it is defined in the input">;
+
+def export_all: FF<"export-all">,
   HelpText<"Export all symbols (normally combined with --no-gc-sections)">;
 
-def export_table: F<"export-table">,
+def export_table: FF<"export-table">,
   HelpText<"Export function table to the environment">;
 
-def growable_table: F<"growable-table">,
+def growable_table: FF<"growable-table">,
   HelpText<"Remove maximum size from function table, allowing table to grow">;
 
-def global_base: J<"global-base=">,
+def global_base: JJ<"global-base=">,
   HelpText<"Where to start to place global data">;
 
-def import_memory: F<"import-memory">,
+def import_memory: FF<"import-memory">,
   HelpText<"Import memory from the environment">;
 
-def shared_memory: F<"shared-memory">,
+def shared_memory: FF<"shared-memory">,
   HelpText<"Use shared linear memory">;
 
-def import_table: F<"import-table">,
+def import_table: FF<"import-table">,
   HelpText<"Import function table from the environment">;
 
-def initial_memory: J<"initial-memory=">,
+def initial_memory: JJ<"initial-memory=">,
   HelpText<"Initial size of the linear memory">;
 
-def max_memory: J<"max-memory=">,
+def max_memory: JJ<"max-memory=">,
   HelpText<"Maximum size of the linear memory">;
 
-def no_entry: F<"no-entry">,
+def no_entry: FF<"no-entry">,
   HelpText<"Do not output any entry point">;
 
-def stack_first: F<"stack-first">,
+def stack_first: FF<"stack-first">,
   HelpText<"Place stack at start of linear memory rather than after data">;
 
 defm whole_archive: B<"whole-archive",
     "Force load of all members in a static library",
     "Do not force load of all members in a static library (default)">;
 
-defm check_features: B<"check-features",
+defm check_features: BB<"check-features",
     "Check feature compatibility of linked objects (default)",
     "Ignore feature compatibility of linked objects">;
 
@@ -181,6 +221,7 @@ def: JoinedOrSeparate<["-"], "e">, Alias<entry>;
 def: J<"entry=">, Alias<entry>;
 def: Flag<["-"], "E">, Alias<export_dynamic>, HelpText<"Alias for --export-dynamic">;
 def: Flag<["-"], "i">, Alias<initial_memory>;
+def: Flag<["-"], "M">, Alias<print_map>, HelpText<"Alias for --print-map">;
 def: Flag<["-"], "r">, Alias<relocatable>;
 def: Flag<["-"], "s">, Alias<strip_all>, HelpText<"Alias for --strip-all">;
 def: Flag<["-"], "S">, Alias<strip_debug>, HelpText<"Alias for --strip-debug">;
@@ -189,18 +230,22 @@ def: JoinedOrSeparate<["-"], "y">, Alias<trace_symbol>, HelpText<"Alias for --tr
 def: JoinedOrSeparate<["-"], "u">, Alias<undefined>;
 
 // LTO-related options.
-def lto_O: J<"lto-O">, MetaVarName<"<opt-level>">,
+def lto_O: JJ<"lto-O">, MetaVarName<"<opt-level>">,
   HelpText<"Optimization level for LTO">;
-def lto_partitions: J<"lto-partitions=">,
+def lto_partitions: JJ<"lto-partitions=">,
   HelpText<"Number of LTO codegen partitions">;
 def disable_verify: F<"disable-verify">;
-def save_temps: F<"save-temps">;
-def thinlto_cache_dir: J<"thinlto-cache-dir=">,
+def save_temps: F<"save-temps">, HelpText<"Save intermediate LTO compilation results">;
+def thinlto_cache_dir: JJ<"thinlto-cache-dir=">,
   HelpText<"Path to ThinLTO cached object file directory">;
-defm thinlto_cache_policy: Eq<"thinlto-cache-policy", "Pruning policy for the ThinLTO cache">;
-def thinlto_jobs: J<"thinlto-jobs=">,
+defm thinlto_cache_policy: EEq<"thinlto-cache-policy", "Pruning policy for the ThinLTO cache">;
+def thinlto_jobs: JJ<"thinlto-jobs=">,
   HelpText<"Number of ThinLTO jobs. Default to --threads=">;
+def no_lto_legacy_pass_manager: FF<"no-lto-legacy-pass-manager">,
+  HelpText<"Use new pass manager">;
+def lto_debug_pass_manager: FF<"lto-debug-pass-manager">,
+  HelpText<"Debug new pass manager">;
 
 // Experimental PIC mode.
-def experimental_pic: F<"experimental-pic">,
+def experimental_pic: FF<"experimental-pic">,
   HelpText<"Enable Experimental PIC">;

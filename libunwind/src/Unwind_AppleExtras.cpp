@@ -1,4 +1,4 @@
-//===--------------------- Unwind_AppleExtras.cpp -------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -8,8 +8,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "config.h"
-#include "AddressSpace.hpp"
-#include "DwarfParser.hpp"
 
 
 // static linker symbols to prevent wrong two level namespace for _Unwind symbols

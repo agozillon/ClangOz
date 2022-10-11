@@ -12,8 +12,6 @@ from lldbsuite.test import lldbutil
 @skipIfWindows # Windows deals differently with shared libs.
 class TargetDependentsTestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     NO_DEBUG_INFO_TESTCASE = True
 
     def setUp(self):
@@ -30,20 +28,18 @@ class TargetDependentsTestCase(TestBase):
             "image list", msg, matching=should_match, substrs=['[  1]'])
 
 
-    @expectedFailureAll(oslist=["linux"],
-        triple=no_match(".*-android"))
-        #linux does not support loading dependent files, but android does
-    @expectedFailureNetBSD
+    @expectedFailureAll(oslist=["freebsd", "linux", "netbsd"],
+                        bugnumber='llvm.org/pr48372',
+                        triple=no_match(".*-android"))
     def test_dependents_implicit_default_exe(self):
         """Test default behavior"""
         exe = self.getBuildArtifact("a.out")
         self.runCmd("target create  " + exe, CURRENT_EXECUTABLE_SET)
         self.has_exactly_one_image(False)
 
-    @expectedFailureAll(oslist=["linux"],
-        triple=no_match(".*-android"))
-        #linux does not support loading dependent files, but android does
-    @expectedFailureNetBSD
+    @expectedFailureAll(oslist=["freebsd", "linux", "netbsd"],
+                        bugnumber='llvm.org/pr48372',
+                        triple=no_match(".*-android"))
     def test_dependents_explicit_default_exe(self):
         """Test default behavior"""
         exe = self.getBuildArtifact("a.out")
@@ -56,10 +52,9 @@ class TargetDependentsTestCase(TestBase):
         self.runCmd("target create -dtrue " + exe, CURRENT_EXECUTABLE_SET)
         self.has_exactly_one_image(True)
 
-    @expectedFailureAll(oslist=["linux"],
-        triple=no_match(".*-android"))
-        #linux does not support loading dependent files, but android does
-    @expectedFailureNetBSD
+    @expectedFailureAll(oslist=["freebsd", "linux", "netbsd"],
+                        bugnumber='llvm.org/pr48372',
+                        triple=no_match(".*-android"))
     def test_dependents_explicit_false_exe(self):
         """Test default behavior"""
         exe = self.getBuildArtifact("a.out")
@@ -94,10 +89,9 @@ class TargetDependentsTestCase(TestBase):
         self.runCmd("target create -dtrue " + lib, CURRENT_EXECUTABLE_SET)
         self.has_exactly_one_image(True)
 
-    @expectedFailureAll(oslist=["linux"],
-        triple=no_match(".*-android"))
-        #linux does not support loading dependent files, but android does
-    @expectedFailureNetBSD
+    @expectedFailureAll(oslist=["freebsd", "linux", "netbsd"],
+                        bugnumber='llvm.org/pr48372',
+                        triple=no_match(".*-android"))
     def test_dependents_explicit_false_lib(self):
         ctx = self.platformContext
         dylibName = ctx.shlib_prefix + 'load_a.' + ctx.shlib_extension

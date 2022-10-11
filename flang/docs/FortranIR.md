@@ -8,6 +8,11 @@
 
 # Design: Fortran IR
 
+```eval_rst
+.. contents::
+   :local:
+```
+
 ## Introduction
 
 After semantic analysis is complete and it has been determined that the compiler has a legal Fortran program as input, the parse tree will be lowered to an intermediate representation for the purposes of high-level analysis and optimization.  In this document, that intermediate representation will be called Fortran IR or FIR.  The pass that converts from the parse tree and other data structures of the front-end to FIR will be called the "Burnside bridge".
@@ -140,7 +145,7 @@ Once the basic blocks are constructed, CFG edges defined, and the CFG is simplif
 
 _Program_: A program instance is the top-level object that contains the representation of all the code being compiled, the compilation unit. It contains a list of procedures and a reference to the global symbol table.
 
-_Procedure_: This is a named Fortran procedure (subroutine or function). It contains a (hierarchical) list of regions. It also owns the master list of all basic blocks for the procedure.
+_Procedure_: This is a named Fortran procedure (subroutine or function). It contains a (hierarchical) list of regions. It also owns a list of all basic blocks for the procedure.
 
 _Region_: A region is owned by a procedure or by another region. A region owns a reference to a scope in the symbol table tree. The list of delineated basic blocks can also be requested from a region.
 

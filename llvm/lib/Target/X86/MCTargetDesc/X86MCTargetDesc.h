@@ -63,6 +63,28 @@ void initLLVMToSEHAndCVRegMapping(MCRegisterInfo *MRI);
 /// Returns true if this instruction has a LOCK prefix.
 bool hasLockPrefix(const MCInst &MI);
 
+/// \param Op operand # of the memory operand.
+///
+/// \returns true if the specified instruction has a 16-bit memory operand.
+bool is16BitMemOperand(const MCInst &MI, unsigned Op,
+                       const MCSubtargetInfo &STI);
+
+/// \param Op operand # of the memory operand.
+///
+/// \returns true if the specified instruction has a 32-bit memory operand.
+bool is32BitMemOperand(const MCInst &MI, unsigned Op);
+
+/// \param Op operand # of the memory operand.
+///
+/// \returns true if the specified instruction has a 64-bit memory operand.
+#ifndef NDEBUG
+bool is64BitMemOperand(const MCInst &MI, unsigned Op);
+#endif
+
+/// Returns true if this instruction needs an Address-Size override prefix.
+bool needsAddressSizeOverride(const MCInst &MI, const MCSubtargetInfo &STI,
+                              int MemoryOperand, uint64_t TSFlags);
+
 /// Create a X86 MCSubtargetInfo instance. This is exposed so Asm parser, etc.
 /// do not need to go through TargetRegistry.
 MCSubtargetInfo *createX86MCSubtargetInfo(const Triple &TT, StringRef CPU,
@@ -70,7 +92,6 @@ MCSubtargetInfo *createX86MCSubtargetInfo(const Triple &TT, StringRef CPU,
 }
 
 MCCodeEmitter *createX86MCCodeEmitter(const MCInstrInfo &MCII,
-                                      const MCRegisterInfo &MRI,
                                       MCContext &Ctx);
 
 MCAsmBackend *createX86_32AsmBackend(const Target &T,
@@ -85,11 +106,11 @@ MCAsmBackend *createX86_64AsmBackend(const Target &T,
 /// Implements X86-only directives for assembly emission.
 MCTargetStreamer *createX86AsmTargetStreamer(MCStreamer &S,
                                              formatted_raw_ostream &OS,
-                                             MCInstPrinter *InstPrint,
-                                             bool isVerboseAsm);
+                                             MCInstPrinter *InstPrinter,
+                                             bool IsVerboseAsm);
 
 /// Implements X86-only directives for object files.
-MCTargetStreamer *createX86ObjectTargetStreamer(MCStreamer &OS,
+MCTargetStreamer *createX86ObjectTargetStreamer(MCStreamer &S,
                                                 const MCSubtargetInfo &STI);
 
 /// Construct an X86 Windows COFF machine code streamer which will generate
@@ -141,5 +162,8 @@ MCRegister getX86SubSuperRegisterOrZero(MCRegister, unsigned,
 
 #define GET_SUBTARGETINFO_ENUM
 #include "X86GenSubtargetInfo.inc"
+
+#define GET_X86_MNEMONIC_TABLES_H
+#include "X86GenMnemonicTables.inc"
 
 #endif

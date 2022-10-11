@@ -62,7 +62,7 @@ void ProperlySeededRandomGeneratorCheck::registerMatchers(MatchFinder *Finder) {
   // std::mt19937 engine(x);
   //              ^
   Finder->addMatcher(
-      traverse(ast_type_traits::TK_AsIs,
+      traverse(TK_AsIs,
                cxxConstructExpr(RandomGeneratorEngineTypeMatcher).bind("ctor")),
       this);
 
@@ -112,7 +112,7 @@ void ProperlySeededRandomGeneratorCheck::checkSeed(
 
   const std::string SeedType(
       Func->getArg(0)->IgnoreCasts()->getType().getAsString());
-  if (llvm::find(DisallowedSeedTypes, SeedType) != DisallowedSeedTypes.end()) {
+  if (llvm::is_contained(DisallowedSeedTypes, SeedType)) {
     diag(Func->getExprLoc(),
          "random number generator seeded with a disallowed source of seed "
          "value will generate a predictable sequence of values");

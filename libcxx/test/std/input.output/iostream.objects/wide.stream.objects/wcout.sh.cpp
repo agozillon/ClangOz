@@ -6,23 +6,20 @@
 //
 //===----------------------------------------------------------------------===//
 
-// XFAIL: libcpp-has-no-stdout
-
 // <iostream>
 
 // istream wcout;
 
+// XFAIL: no-wide-characters
+
+// UNSUPPORTED: executor-has-no-bash
+// FILE_DEPENDENCIES: ../check-stdout.sh
 // RUN: %{build}
-// RUN: %{exec} %t.exe > %t.out
-// RUN: grep -e 'Hello World!' %t.out
+// RUN: %{exec} bash check-stdout.sh "%t.exe" "1234"
 
 #include <iostream>
 
-#include "test_macros.h"
-
-int main(int, char**)
-{
-    std::wcout << L"Hello World!\n";
-
+int main(int, char**) {
+    std::wcout << L"1234";
     return 0;
 }

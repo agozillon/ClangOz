@@ -1,8 +1,8 @@
 // RUN: %clang_cc1 -fsyntax-only -fopenmp -fopenmp-version=45 -verify=expected,omp45 %s -Wuninitialized
-// RUN: %clang_cc1 -fsyntax-only -fopenmp -fopenmp-version=50 -verify=expected,omp50 %s -Wuninitialized
+// RUN: %clang_cc1 -fsyntax-only -fopenmp -verify=expected,omp50 %s -Wuninitialized
 
 // RUN: %clang_cc1 -fsyntax-only -fopenmp-simd -fopenmp-version=45 -verify=expected,omp45 %s -Wuninitialized
-// RUN: %clang_cc1 -fsyntax-only -fopenmp-simd -fopenmp-version=50 -verify=expected,omp50 %s -Wuninitialized
+// RUN: %clang_cc1 -fsyntax-only -fopenmp-simd -verify=expected,omp50 %s -Wuninitialized
 
 void xxx(int argc) {
   int x; // expected-note {{initialize the variable 'x' to silence this warning}}
@@ -17,7 +17,7 @@ void xxx(int argc) {
 // expected-error@+1 {{unexpected OpenMP directive '#pragma omp distribute parallel for simd'}}
 #pragma omp distribute parallel for simd foo
 
-void test_no_clause() {
+void test_no_clause(void) {
   int i;
 #pragma omp distribute parallel for simd
   for (i = 0; i < 16; ++i)
@@ -28,7 +28,7 @@ void test_no_clause() {
   ++i;
 }
 
-void test_branch_protected_scope() {
+void test_branch_protected_scope(void) {
   int i = 0;
 L1:
   ++i;
@@ -57,7 +57,7 @@ L1:
     goto L1;
 }
 
-void test_invalid_clause() {
+void test_invalid_clause(void) {
   int i;
 #pragma omp target
 #pragma omp teams
@@ -67,7 +67,7 @@ void test_invalid_clause() {
     ;
 }
 
-void test_non_identifiers() {
+void test_non_identifiers(void) {
   int i, x;
 
 #pragma omp target
@@ -98,8 +98,8 @@ void test_non_identifiers() {
     ;
 }
 
-extern int foo();
-void test_safelen() {
+extern int foo(void);
+void test_safelen(void) {
   int i;
 #pragma omp target
 #pragma omp teams
@@ -192,13 +192,13 @@ void test_safelen() {
     ;
 #pragma omp target
 #pragma omp teams
-// expected-error@+1 {{expression is not an integer constant expression}}
+// expected-error@+1 {{integer constant expression}}
 #pragma omp distribute parallel for simd safelen(2.5)
   for (i = 0; i < 16; ++i)
     ;
 #pragma omp target
 #pragma omp teams
-// expected-error@+1 {{expression is not an integer constant expression}}
+// expected-error@+1 {{integer constant expression}}
 #pragma omp distribute parallel for simd safelen(foo())
   for (i = 0; i < 16; ++i)
     ;
@@ -222,7 +222,7 @@ void test_safelen() {
     ;
 }
 
-void test_simdlen() {
+void test_simdlen(void) {
   int i;
 #pragma omp target
 #pragma omp teams
@@ -315,13 +315,13 @@ void test_simdlen() {
     ;
 #pragma omp target
 #pragma omp teams
-// expected-error@+1 {{expression is not an integer constant expression}}
+// expected-error@+1 {{integer constant expression}}
 #pragma omp distribute parallel for simd simdlen(2.5)
   for (i = 0; i < 16; ++i)
     ;
 #pragma omp target
 #pragma omp teams
-// expected-error@+1 {{expression is not an integer constant expression}}
+// expected-error@+1 {{integer constant expression}}
 #pragma omp distribute parallel for simd simdlen(foo())
   for (i = 0; i < 16; ++i)
     ;
@@ -345,7 +345,7 @@ void test_simdlen() {
     ;
 }
 
-void test_safelen_simdlen() {
+void test_safelen_simdlen(void) {
   int i;
 #pragma omp target
 #pragma omp teams
@@ -362,7 +362,7 @@ void test_safelen_simdlen() {
     ;
 }
 
-void test_collapse() {
+void test_collapse(void) {
   int i;
 #pragma omp target
 #pragma omp teams
@@ -459,13 +459,13 @@ void test_collapse() {
     ; // expected-error {{expected 4 for loops after '#pragma omp distribute parallel for simd', but found only 1}}
 #pragma omp target
 #pragma omp teams
-// expected-error@+1 {{expression is not an integer constant expression}}
+// expected-error@+1 {{integer constant expression}}
 #pragma omp distribute parallel for simd collapse(2.5)
   for (i = 0; i < 16; ++i)
     ;
 #pragma omp target
 #pragma omp teams
-// expected-error@+1 {{expression is not an integer constant expression}}
+// expected-error@+1 {{integer constant expression}}
 #pragma omp distribute parallel for simd collapse(foo())
   for (i = 0; i < 16; ++i)
     ;
@@ -498,7 +498,7 @@ void test_collapse() {
         i += j;
 }
 
-void test_linear() {
+void test_linear(void) {
   int i;
 #pragma omp target
 #pragma omp teams
@@ -561,7 +561,7 @@ void test_linear() {
     ;
 }
 
-void test_aligned() {
+void test_aligned(void) {
   int i;
 #pragma omp target
 #pragma omp teams
@@ -699,7 +699,7 @@ void test_aligned() {
 }
 
 
-void test_private() {
+void test_private(void) {
   int i;
 #pragma omp target
 #pragma omp teams
@@ -759,7 +759,7 @@ void test_private() {
   }
 }
 
-void test_lastprivate() {
+void test_lastprivate(void) {
   int i;
 #pragma omp target
 #pragma omp teams
@@ -819,7 +819,7 @@ void test_lastprivate() {
     ;
 }
 
-void test_firstprivate() {
+void test_firstprivate(void) {
   int i;
 #pragma omp target
 #pragma omp teams
@@ -882,7 +882,7 @@ void test_firstprivate() {
     ;
 }
 
-void test_loop_messages() {
+void test_loop_messages(void) {
   float a[100], b[100], c[100];
 #pragma omp target
 #pragma omp teams
@@ -900,7 +900,7 @@ void test_loop_messages() {
   }
 }
 
-void test_nontemporal() {
+void test_nontemporal(void) {
   int i;
 // omp45-error@+1 {{unexpected OpenMP clause 'nontemporal' in directive '#pragma omp distribute parallel for simd'}} expected-error@+1 {{expected expression}} expected-error@+1 {{expected ')'}} expected-note@+1 {{to match this '('}}
 #pragma omp distribute parallel for simd nontemporal(

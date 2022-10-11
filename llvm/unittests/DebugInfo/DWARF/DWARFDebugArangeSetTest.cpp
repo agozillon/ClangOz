@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/DebugInfo/DWARF/DWARFDebugArangeSet.h"
+#include "llvm/DebugInfo/DWARF/DWARFDataExtractor.h"
 #include "llvm/Testing/Support/Error.h"
 #include "gtest/gtest.h"
 
@@ -75,14 +76,14 @@ TEST(DWARFDebugArangeSet, UnsupportedAddressSize) {
       "\x0c\x00\x00\x00"  // Length
       "\x02\x00"          // Version
       "\x00\x00\x00\x00"  // Debug Info Offset
-      "\x02"              // Address Size (not supported)
+      "\x03"              // Address Size (not supported)
       "\x00"              // Segment Selector Size
                           // No padding
       "\x00\x00\x00\x00"; // Termination tuple
   ExpectExtractError(
       DebugArangesSecRaw,
-      "address range table at offset 0x0 has unsupported address size: 2 "
-      "(4 and 8 supported)");
+      "address range table at offset 0x0 has unsupported address size: 3 "
+      "(supported are 2, 4, 8)");
 }
 
 TEST(DWARFDebugArangeSet, UnsupportedSegmentSelectorSize) {
@@ -200,7 +201,7 @@ TEST(DWARFDebugArangeSet, ZeroAddressEntry) {
                     Succeeded());
   auto Range = Set.descriptors();
   auto Iter = Range.begin();
-  ASSERT_EQ(std::distance(Iter, Range.end()), 1u);
+  ASSERT_EQ(std::distance(Iter, Range.end()), 1);
   EXPECT_EQ(Iter->Address, 0u);
   EXPECT_EQ(Iter->Length, 1u);
 }
@@ -227,7 +228,7 @@ TEST(DWARFDebugArangeSet, ZeroLengthEntry) {
                     Succeeded());
   auto Range = Set.descriptors();
   auto Iter = Range.begin();
-  ASSERT_EQ(std::distance(Iter, Range.end()), 1u);
+  ASSERT_EQ(std::distance(Iter, Range.end()), 1);
   EXPECT_EQ(Iter->Address, 1u);
   EXPECT_EQ(Iter->Length, 0u);
 }
@@ -256,7 +257,7 @@ TEST(DWARFDebugArangesSet, PrematureTerminator) {
   ASSERT_THAT_ERROR(Set.extract(Extractor, &Offset, Warnings), Succeeded());
   auto Range = Set.descriptors();
   auto Iter = Range.begin();
-  ASSERT_EQ(std::distance(Iter, Range.end()), 2u);
+  ASSERT_EQ(std::distance(Iter, Range.end()), 2);
   EXPECT_EQ(Iter->Address, 0u);
   EXPECT_EQ(Iter->Length, 0u);
   ++Iter;

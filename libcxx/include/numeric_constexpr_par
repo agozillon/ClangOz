@@ -34,7 +34,7 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 // iota 
 
 template <class _ExecutionPolicy, class _ForwardIterator, class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY constexpr
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               void>

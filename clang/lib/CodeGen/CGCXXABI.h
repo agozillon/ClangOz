@@ -31,7 +31,6 @@ class CXXConstructorDecl;
 class CXXDestructorDecl;
 class CXXMethodDecl;
 class CXXRecordDecl;
-class FieldDecl;
 class MangleContext;
 
 namespace CodeGen {
@@ -42,6 +41,8 @@ struct CatchTypeInfo;
 
 /// Implements C++ ABI-specific code generation functions.
 class CGCXXABI {
+  friend class CodeGenModule;
+
 protected:
   CodeGenModule &CGM;
   std::unique_ptr<MangleContext> MangleCtx;
@@ -57,7 +58,10 @@ protected:
     return CGF.CXXABIThisValue;
   }
   Address getThisAddress(CodeGenFunction &CGF) {
-    return Address(CGF.CXXABIThisValue, CGF.CXXABIThisAlignment);
+    return Address(
+        CGF.CXXABIThisValue,
+        CGF.ConvertTypeForMem(CGF.CXXABIThisDecl->getType()->getPointeeType()),
+        CGF.CXXABIThisAlignment);
   }
 
   /// Issue a diagnostic about unsupported features in the ABI.
@@ -79,6 +83,18 @@ protected:
   void setCXXABIThisValue(CodeGenFunction &CGF, llvm::Value *ThisPtr);
 
   ASTContext &getContext() const { return CGM.getContext(); }
+
+  bool mayNeedDestruction(const VarDecl *VD) const;
+
+  /// Determine whether we will definitely emit this variable with a constant
+  /// initializer, either because the language semantics demand it or because
+  /// we know that the initializer is a constant.
+  // For weak definitions, any initializer available in the current translation
+  // is not necessarily reflective of the initializer used; such initializers
+  // are ignored unless if InspectInitForWeakDef is true.
+  bool
+  isEmittedWithConstantInitializer(const VarDecl *VD,
+                                   bool InspectInitForWeakDef = false) const;
 
   virtual bool requiresArrayCookie(const CXXDeleteExpr *E, QualType eltType);
   virtual bool requiresArrayCookie(const CXXNewExpr *E);
@@ -145,6 +161,13 @@ public:
   /// Returns true if the implicit 'sret' parameter comes after the implicit
   /// 'this' parameter of C++ instance methods.
   virtual bool isSRetParameterAfterThis() const { return false; }
+
+  /// Returns true if the ABI permits the argument to be a homogeneous
+  /// aggregate.
+  virtual bool
+  isPermittedToBeHomogeneousAggregate(const CXXRecordDecl *RD) const {
+    return true;
+  };
 
   /// Find the LLVM type used to represent the given member pointer
   /// type.
@@ -219,12 +242,6 @@ protected:
   /// support an ABI that allows this).  Returns null if no adjustment
   /// is required.
   llvm::Constant *getMemberPointerAdjustment(const CastExpr *E);
-
-  /// Computes the non-virtual adjustment needed for a member pointer
-  /// conversion along an inheritance path stored in an APValue.  Unlike
-  /// getMemberPointerAdjustment(), the adjustment can be negative if the path
-  /// is from a derived type to a base type.
-  CharUnits getMemberPointerPathAdjustment(const APValue &MP);
 
 public:
   virtual void emitVirtualObjectDelete(CodeGenFunction &CGF,

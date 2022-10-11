@@ -1,9 +1,11 @@
 add_llvm_component_library(LLVMCore
   AbstractCallSite.cpp
   AsmWriter.cpp
+  Assumptions.cpp
   Attributes.cpp
   AutoUpgrade.cpp
   BasicBlock.cpp
+  BuiltinGCs.cpp
   Comdat.cpp
   ConstantFold.cpp
   ConstantRange.cpp
@@ -20,10 +22,12 @@ add_llvm_component_library(LLVMCore
   Dominators.cpp
   FPEnv.cpp
   Function.cpp
+  GCStrategy.cpp
   GVMaterializer.cpp
   Globals.cpp
   IRBuilder.cpp
   IRPrintingPasses.cpp
+  SSAContext.cpp
   InlineAsm.cpp
   Instruction.cpp
   Instructions.cpp
@@ -44,22 +48,35 @@ add_llvm_component_library(LLVMCore
   PassManager.cpp
   PassRegistry.cpp
   PassTimingInfo.cpp
+  PrintPasses.cpp
+  ProfDataUtils.cpp
   SafepointIRVerifier.cpp
   ProfileSummary.cpp
+  PseudoProbe.cpp
+  ReplaceConstant.cpp
   Statepoint.cpp
+  StructuralHash.cpp
   Type.cpp
+  TypedPointerType.cpp
   TypeFinder.cpp
   Use.cpp
   User.cpp
   Value.cpp
   ValueSymbolTable.cpp
+  VectorBuilder.cpp
   Verifier.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/IR
 
-  LINK_LIBS ${LLVM_PTHREAD_LIB}
+  LINK_LIBS
+  ${LLVM_PTHREAD_LIB}
 
   DEPENDS
   intrinsics_gen
+
+  LINK_COMPONENTS
+  BinaryFormat
+  Remarks
+  Support
   )

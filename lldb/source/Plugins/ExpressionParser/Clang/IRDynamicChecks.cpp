@@ -22,6 +22,7 @@
 #include "lldb/Target/StackFrame.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/ConstString.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 
 #include "Plugins/LanguageRuntime/ObjC/ObjCLanguageRuntime.h"
@@ -48,29 +49,27 @@ ClangDynamicCheckerFunctions::~ClangDynamicCheckerFunctions() = default;
 
 bool ClangDynamicCheckerFunctions::Install(
     DiagnosticManager &diagnostic_manager, ExecutionContext &exe_ctx) {
-  Status error;
-  m_valid_pointer_check.reset(
-      exe_ctx.GetTargetRef().GetUtilityFunctionForLanguage(
-          g_valid_pointer_check_text, lldb::eLanguageTypeC,
-          VALID_POINTER_CHECK_NAME, error));
-  if (error.Fail())
+  auto utility_fn_or_error = exe_ctx.GetTargetRef().CreateUtilityFunction(
+      g_valid_pointer_check_text, VALID_POINTER_CHECK_NAME,
+      lldb::eLanguageTypeC, exe_ctx);
+  if (!utility_fn_or_error) {
+    llvm::consumeError(utility_fn_or_error.takeError());
     return false;
+  }
+  m_valid_pointer_check = std::move(*utility_fn_or_error);
 
-  if (!m_valid_pointer_check->Install(diagnostic_manager, exe_ctx))
-    return false;
-
-  Process *process = exe_ctx.GetProcessPtr();
-
-  if (process) {
+  if (Process *process = exe_ctx.GetProcessPtr()) {
     ObjCLanguageRuntime *objc_language_runtime =
         ObjCLanguageRuntime::Get(*process);
 
     if (objc_language_runtime) {
-      m_objc_object_check.reset(objc_language_runtime->CreateObjectChecker(
-          VALID_OBJC_OBJECT_CHECK_NAME));
-
-      if (!m_objc_object_check->Install(diagnostic_manager, exe_ctx))
+      auto utility_fn_or_error = objc_language_runtime->CreateObjectChecker(
+          VALID_OBJC_OBJECT_CHECK_NAME, exe_ctx);
+      if (!utility_fn_or_error) {
+        llvm::consumeError(utility_fn_or_error.takeError());
         return false;
+      }
+      m_objc_object_check = std::move(*utility_fn_or_error);
     }
   }
 
@@ -138,8 +137,7 @@ public:
   ///     The module being instrumented.
   Instrumenter(llvm::Module &module,
                std::shared_ptr<UtilityFunction> checker_function)
-      : m_module(module), m_checker_function(checker_function),
-        m_i8ptr_ty(nullptr), m_intptr_ty(nullptr) {}
+      : m_module(module), m_checker_function(checker_function) {}
 
   virtual ~Instrumenter() = default;
 
@@ -303,8 +301,8 @@ protected:
       m_checker_function; ///< The dynamic checker function for the process
 
 private:
-  PointerType *m_i8ptr_ty;
-  IntegerType *m_intptr_ty;
+  PointerType *m_i8ptr_ty = nullptr;
+  IntegerType *m_intptr_ty = nullptr;
 };
 
 class ValidPointerChecker : public Instrumenter {
@@ -318,7 +316,7 @@ public:
 
 protected:
   bool InstrumentInstruction(llvm::Instruction *inst) override {
-    Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_EXPRESSIONS));
+    Log *log = GetLog(LLDBLog::Expressions);
 
     LLDB_LOGF(log, "Instrumenting load/store instruction: %s\n",
               PrintValue(inst).c_str());
@@ -355,7 +353,7 @@ protected:
   }
 
   bool InspectInstruction(llvm::Instruction &i) override {
-    if (dyn_cast<llvm::LoadInst>(&i) || dyn_cast<llvm::StoreInst>(&i))
+    if (isa<llvm::LoadInst>(&i) || isa<llvm::StoreInst>(&i))
       RegisterInstruction(i);
 
     return true;
@@ -469,7 +467,7 @@ protected:
   }
 
   bool InspectInstruction(llvm::Instruction &i) override {
-    Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_EXPRESSIONS));
+    Log *log = GetLog(LLDBLog::Expressions);
 
     CallInst *call_inst = dyn_cast<CallInst>(&i);
 
@@ -540,7 +538,7 @@ IRDynamicChecks::IRDynamicChecks(
 IRDynamicChecks::~IRDynamicChecks() = default;
 
 bool IRDynamicChecks::runOnModule(llvm::Module &M) {
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_EXPRESSIONS));
+  Log *log = GetLog(LLDBLog::Expressions);
 
   llvm::Function *function = M.getFunction(StringRef(m_func_name));
 

@@ -15,8 +15,6 @@
 #ifndef LLVM_IR_PASSTIMINGINFO_H
 #define LLVM_IR_PASSTIMINGINFO_H
 
-#include "llvm/ADT/Any.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -37,11 +35,6 @@ void reportAndResetTimings(raw_ostream *OutStream = nullptr);
 
 /// Request the timer for this legacy-pass-manager's pass instance.
 Timer *getPassTimer(Pass *);
-
-/// If the user specifies the -time-passes argument on an LLVM tool command line
-/// then the value of this boolean will be true, otherwise false.
-/// This is the storage for the -time-passes option.
-extern bool TimePassesIsEnabled;
 
 /// This class implements -time-passes functionality for new pass manager.
 /// It provides the pass-instrumentation callbacks that measure the pass
@@ -70,9 +63,11 @@ class TimePassesHandler {
   raw_ostream *OutStream = nullptr;
 
   bool Enabled;
+  bool PerRun;
 
 public:
-  TimePassesHandler(bool Enabled = TimePassesIsEnabled);
+  TimePassesHandler();
+  TimePassesHandler(bool Enabled, bool PerRun = false);
 
   /// Destructor handles the print action if it has not been handled before.
   ~TimePassesHandler() { print(); }

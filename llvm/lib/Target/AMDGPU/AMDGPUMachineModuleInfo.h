@@ -15,11 +15,7 @@
 #ifndef LLVM_LIB_TARGET_AMDGPU_AMDGPUMACHINEMODULEINFO_H
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPUMACHINEMODULEINFO_H
 
-#include "llvm/ADT/None.h"
-#include "llvm/ADT/Optional.h"
-#include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineModuleInfoImpls.h"
-#include "llvm/IR/LLVMContext.h"
 
 namespace llvm {
 
@@ -135,8 +131,8 @@ public:
     bool IsAOneAddressSpace = isOneAddressSpace(A);
     bool IsBOneAddressSpace = isOneAddressSpace(B);
 
-    return AIO.getValue() >= BIO.getValue() &&
-        (IsAOneAddressSpace == IsBOneAddressSpace || !IsAOneAddressSpace);
+    return AIO.value() >= BIO.value() &&
+           (IsAOneAddressSpace == IsBOneAddressSpace || !IsAOneAddressSpace);
   }
 };
 

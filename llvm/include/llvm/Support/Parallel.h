@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Threading.h"
 
@@ -28,10 +29,22 @@ namespace parallel {
 // initialized before the first use of parallel routines.
 extern ThreadPoolStrategy strategy;
 
-namespace detail {
-
 #if LLVM_ENABLE_THREADS
+#ifdef _WIN32
+// Direct access to thread_local variables from a different DLL isn't
+// possible with Windows Native TLS.
+unsigned getThreadIndex();
+#else
+// Don't access this directly, use the getThreadIndex wrapper.
+extern thread_local unsigned threadIndex;
 
+inline unsigned getThreadIndex() { return threadIndex; }
+#endif
+#else
+inline unsigned getThreadIndex() { return 0; }
+#endif
+
+namespace detail {
 class Latch {
   uint32_t Count;
   mutable std::mutex Mutex;
@@ -39,7 +52,10 @@ class Latch {
 
 public:
   explicit Latch(uint32_t Count = 0) : Count(Count) {}
-  ~Latch() { sync(); }
+  ~Latch() {
+    // Ensure at least that sync() was called.
+    assert(Count == 0);
+  }
 
   void inc() {
     std::lock_guard<std::mutex> lock(Mutex);
@@ -57,20 +73,42 @@ public:
     Cond.wait(lock, [&] { return Count == 0; });
   }
 };
+} // namespace detail
 
 class TaskGroup {
-  Latch L;
+  detail::Latch L;
   bool Parallel;
 
 public:
   TaskGroup();
   ~TaskGroup();
 
+  // Spawn a task, but does not wait for it to finish.
   void spawn(std::function<void()> f);
+
+  // Similar to spawn, but execute the task immediately when ThreadsRequested ==
+  // 1. The difference is to give the following pattern a more intuitive order
+  // when single threading is requested.
+  //
+  // for (size_t begin = 0, i = 0, taskSize = 0;;) {
+  //   taskSize += ...
+  //   bool done = ++i == end;
+  //   if (done || taskSize >= taskSizeLimit) {
+  //     tg.execute([=] { fn(begin, i); });
+  //     if (done)
+  //       break;
+  //     begin = i;
+  //     taskSize = 0;
+  //   }
+  // }
+  void execute(std::function<void()> f);
 
   void sync() const { L.sync(); }
 };
 
+namespace detail {
+
+#if LLVM_ENABLE_THREADS
 const ptrdiff_t MinParallelSize = 1024;
 
 /// Inclusive median.
@@ -120,40 +158,54 @@ void parallel_sort(RandomAccessIterator Start, RandomAccessIterator End,
                       llvm::Log2_64(std::distance(Start, End)) + 1);
 }
 
-template <class IterTy, class FuncTy>
-void parallel_for_each(IterTy Begin, IterTy End, FuncTy Fn) {
-  // TaskGroup has a relatively high overhead, so we want to reduce
-  // the number of spawn() calls. We'll create up to 1024 tasks here.
-  // (Note that 1024 is an arbitrary number. This code probably needs
-  // improving to take the number of available cores into account.)
-  ptrdiff_t TaskSize = std::distance(Begin, End) / 1024;
-  if (TaskSize == 0)
-    TaskSize = 1;
+// TaskGroup has a relatively high overhead, so we want to reduce
+// the number of spawn() calls. We'll create up to 1024 tasks here.
+// (Note that 1024 is an arbitrary number. This code probably needs
+// improving to take the number of available cores into account.)
+enum { MaxTasksPerGroup = 1024 };
 
-  TaskGroup TG;
-  while (TaskSize < std::distance(Begin, End)) {
-    TG.spawn([=, &Fn] { std::for_each(Begin, Begin + TaskSize, Fn); });
-    Begin += TaskSize;
+template <class IterTy, class ResultTy, class ReduceFuncTy,
+          class TransformFuncTy>
+ResultTy parallel_transform_reduce(IterTy Begin, IterTy End, ResultTy Init,
+                                   ReduceFuncTy Reduce,
+                                   TransformFuncTy Transform) {
+  // Limit the number of tasks to MaxTasksPerGroup to limit job scheduling
+  // overhead on large inputs.
+  size_t NumInputs = std::distance(Begin, End);
+  if (NumInputs == 0)
+    return std::move(Init);
+  size_t NumTasks = std::min(static_cast<size_t>(MaxTasksPerGroup), NumInputs);
+  std::vector<ResultTy> Results(NumTasks, Init);
+  {
+    // Each task processes either TaskSize or TaskSize+1 inputs. Any inputs
+    // remaining after dividing them equally amongst tasks are distributed as
+    // one extra input over the first tasks.
+    TaskGroup TG;
+    size_t TaskSize = NumInputs / NumTasks;
+    size_t RemainingInputs = NumInputs % NumTasks;
+    IterTy TBegin = Begin;
+    for (size_t TaskId = 0; TaskId < NumTasks; ++TaskId) {
+      IterTy TEnd = TBegin + TaskSize + (TaskId < RemainingInputs ? 1 : 0);
+      TG.spawn([=, &Transform, &Reduce, &Results] {
+        // Reduce the result of transformation eagerly within each task.
+        ResultTy R = Init;
+        for (IterTy It = TBegin; It != TEnd; ++It)
+          R = Reduce(R, Transform(*It));
+        Results[TaskId] = R;
+      });
+      TBegin = TEnd;
+    }
+    assert(TBegin == End);
   }
-  std::for_each(Begin, End, Fn);
-}
 
-template <class IndexTy, class FuncTy>
-void parallel_for_each_n(IndexTy Begin, IndexTy End, FuncTy Fn) {
-  ptrdiff_t TaskSize = (End - Begin) / 1024;
-  if (TaskSize == 0)
-    TaskSize = 1;
-
-  TaskGroup TG;
-  IndexTy I = Begin;
-  for (; I + TaskSize < End; I += TaskSize) {
-    TG.spawn([=, &Fn] {
-      for (IndexTy J = I, E = I + TaskSize; J != E; ++J)
-        Fn(J);
-    });
-  }
-  for (IndexTy J = I; J < End; ++J)
-    Fn(J);
+  // Do a final reduction. There are at most 1024 tasks, so this only adds
+  // constant single-threaded overhead for large inputs. Hopefully most
+  // reductions are cheaper than the transformation.
+  ResultTy FinalResult = std::move(Results.front());
+  for (ResultTy &PartialResult :
+       makeMutableArrayRef(Results.data() + 1, Results.size() - 1))
+    FinalResult = Reduce(FinalResult, std::move(PartialResult));
+  return std::move(FinalResult);
 }
 
 #endif
@@ -175,27 +227,27 @@ void parallelSort(RandomAccessIterator Start, RandomAccessIterator End,
   llvm::sort(Start, End, Comp);
 }
 
+void parallelFor(size_t Begin, size_t End, function_ref<void(size_t)> Fn);
+
 template <class IterTy, class FuncTy>
 void parallelForEach(IterTy Begin, IterTy End, FuncTy Fn) {
-#if LLVM_ENABLE_THREADS
-  if (parallel::strategy.ThreadsRequested != 1) {
-    parallel::detail::parallel_for_each(Begin, End, Fn);
-    return;
-  }
-#endif
-  std::for_each(Begin, End, Fn);
+  parallelFor(0, End - Begin, [&](size_t I) { Fn(Begin[I]); });
 }
 
-template <class FuncTy>
-void parallelForEachN(size_t Begin, size_t End, FuncTy Fn) {
+template <class IterTy, class ResultTy, class ReduceFuncTy,
+          class TransformFuncTy>
+ResultTy parallelTransformReduce(IterTy Begin, IterTy End, ResultTy Init,
+                                 ReduceFuncTy Reduce,
+                                 TransformFuncTy Transform) {
 #if LLVM_ENABLE_THREADS
   if (parallel::strategy.ThreadsRequested != 1) {
-    parallel::detail::parallel_for_each_n(Begin, End, Fn);
-    return;
+    return parallel::detail::parallel_transform_reduce(Begin, End, Init, Reduce,
+                                                       Transform);
   }
 #endif
-  for (size_t I = Begin; I != End; ++I)
-    Fn(I);
+  for (IterTy I = Begin; I != End; ++I)
+    Init = Reduce(std::move(Init), Transform(*I));
+  return std::move(Init);
 }
 
 // Range wrappers.
@@ -208,6 +260,31 @@ void parallelSort(RangeTy &&R, const Comparator &Comp = Comparator()) {
 template <class RangeTy, class FuncTy>
 void parallelForEach(RangeTy &&R, FuncTy Fn) {
   parallelForEach(std::begin(R), std::end(R), Fn);
+}
+
+template <class RangeTy, class ResultTy, class ReduceFuncTy,
+          class TransformFuncTy>
+ResultTy parallelTransformReduce(RangeTy &&R, ResultTy Init,
+                                 ReduceFuncTy Reduce,
+                                 TransformFuncTy Transform) {
+  return parallelTransformReduce(std::begin(R), std::end(R), Init, Reduce,
+                                 Transform);
+}
+
+// Parallel for-each, but with error handling.
+template <class RangeTy, class FuncTy>
+Error parallelForEachError(RangeTy &&R, FuncTy Fn) {
+  // The transform_reduce algorithm requires that the initial value be copyable.
+  // Error objects are uncopyable. We only need to copy initial success values,
+  // so work around this mismatch via the C API. The C API represents success
+  // values with a null pointer. The joinErrors discards null values and joins
+  // multiple errors into an ErrorList.
+  return unwrap(parallelTransformReduce(
+      std::begin(R), std::end(R), wrap(Error::success()),
+      [](LLVMErrorRef Lhs, LLVMErrorRef Rhs) {
+        return wrap(joinErrors(unwrap(Lhs), unwrap(Rhs)));
+      },
+      [&Fn](auto &&V) { return wrap(Fn(V)); }));
 }
 
 } // namespace llvm

@@ -15,7 +15,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
-#include <algorithm>
 #include <cassert>
 #include <cctype>
 #include <string>
@@ -212,11 +211,12 @@ static MIToken::TokenKind getIdentifierKind(StringRef Identifier) {
       .Case("contract", MIToken::kw_contract)
       .Case("afn", MIToken::kw_afn)
       .Case("reassoc", MIToken::kw_reassoc)
-      .Case("nuw" , MIToken::kw_nuw)
-      .Case("nsw" , MIToken::kw_nsw)
-      .Case("exact" , MIToken::kw_exact)
+      .Case("nuw", MIToken::kw_nuw)
+      .Case("nsw", MIToken::kw_nsw)
+      .Case("exact", MIToken::kw_exact)
       .Case("nofpexcept", MIToken::kw_nofpexcept)
       .Case("debug-location", MIToken::kw_debug_location)
+      .Case("debug-instr-number", MIToken::kw_debug_instr_number)
       .Case("same_value", MIToken::kw_cfi_same_value)
       .Case("offset", MIToken::kw_cfi_offset)
       .Case("rel_offset", MIToken::kw_cfi_rel_offset)
@@ -225,13 +225,15 @@ static MIToken::TokenKind getIdentifierKind(StringRef Identifier) {
       .Case("adjust_cfa_offset", MIToken::kw_cfi_adjust_cfa_offset)
       .Case("escape", MIToken::kw_cfi_escape)
       .Case("def_cfa", MIToken::kw_cfi_def_cfa)
+      .Case("llvm_def_aspace_cfa", MIToken::kw_cfi_llvm_def_aspace_cfa)
       .Case("remember_state", MIToken::kw_cfi_remember_state)
       .Case("restore", MIToken::kw_cfi_restore)
       .Case("restore_state", MIToken::kw_cfi_restore_state)
       .Case("undefined", MIToken::kw_cfi_undefined)
       .Case("register", MIToken::kw_cfi_register)
       .Case("window_save", MIToken::kw_cfi_window_save)
-      .Case("negate_ra_sign_state", MIToken::kw_cfi_aarch64_negate_ra_sign_state)
+      .Case("negate_ra_sign_state",
+            MIToken::kw_cfi_aarch64_negate_ra_sign_state)
       .Case("blockaddress", MIToken::kw_blockaddress)
       .Case("intrinsic", MIToken::kw_intrinsic)
       .Case("target-index", MIToken::kw_target_index)
@@ -247,6 +249,7 @@ static MIToken::TokenKind getIdentifierKind(StringRef Identifier) {
       .Case("dereferenceable", MIToken::kw_dereferenceable)
       .Case("invariant", MIToken::kw_invariant)
       .Case("align", MIToken::kw_align)
+      .Case("basealign", MIToken::kw_basealign)
       .Case("addrspace", MIToken::kw_addrspace)
       .Case("stack", MIToken::kw_stack)
       .Case("got", MIToken::kw_got)
@@ -255,8 +258,9 @@ static MIToken::TokenKind getIdentifierKind(StringRef Identifier) {
       .Case("call-entry", MIToken::kw_call_entry)
       .Case("custom", MIToken::kw_custom)
       .Case("liveout", MIToken::kw_liveout)
-      .Case("address-taken", MIToken::kw_address_taken)
       .Case("landing-pad", MIToken::kw_landing_pad)
+      .Case("inlineasm-br-indirect-target",
+            MIToken::kw_inlineasm_br_indirect_target)
       .Case("ehfunclet-entry", MIToken::kw_ehfunclet_entry)
       .Case("liveins", MIToken::kw_liveins)
       .Case("successors", MIToken::kw_successors)
@@ -266,8 +270,14 @@ static MIToken::TokenKind getIdentifierKind(StringRef Identifier) {
       .Case("pre-instr-symbol", MIToken::kw_pre_instr_symbol)
       .Case("post-instr-symbol", MIToken::kw_post_instr_symbol)
       .Case("heap-alloc-marker", MIToken::kw_heap_alloc_marker)
+      .Case("pcsections", MIToken::kw_pcsections)
+      .Case("cfi-type", MIToken::kw_cfi_type)
       .Case("bbsections", MIToken::kw_bbsections)
       .Case("unknown-size", MIToken::kw_unknown_size)
+      .Case("unknown-address", MIToken::kw_unknown_address)
+      .Case("distinct", MIToken::kw_distinct)
+      .Case("ir-block-address-taken", MIToken::kw_ir_block_address_taken)
+      .Case("machine-block-address-taken", MIToken::kw_machine_block_address_taken)
       .Default(MIToken::Identifier);
 }
 

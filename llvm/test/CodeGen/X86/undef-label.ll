@@ -4,9 +4,9 @@
 ; This is a case where we would incorrectly conclude that LBB0_1 could only
 ; be reached via fall through and would therefore omit the label.
 
-@g = global i32 0
+@g = dso_local global i32 0
 
-define void @xyz() {
+define dso_local void @xyz() {
 ; CHECK-LABEL: xyz:
 ; CHECK:       # %bb.0: # %entry
 ; CHECK-NEXT:    movl $g, %eax
@@ -23,10 +23,10 @@ define void @xyz() {
 ; CHECK-NEXT:  .LBB0_2: # %bar
 ; CHECK-NEXT:    retq
 entry:
-  br i1 fcmp oeq (double bitcast (i64 ptrtoint (i32* @g to i64) to double), double 0.000000e+00), label %bar, label %foo
+  br i1 fcmp oeq (double bitcast (i64 ptrtoint (ptr @g to i64) to double), double 0.000000e+00), label %bar, label %foo
 
 foo:
-  br i1 fcmp ogt (double bitcast (i64 ptrtoint (i32* @g to i64) to double), double 0.000000e+00), label %foo, label %bar
+  br i1 fcmp ogt (double bitcast (i64 ptrtoint (ptr @g to i64) to double), double 0.000000e+00), label %foo, label %bar
 
 bar:
   ret void

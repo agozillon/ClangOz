@@ -38,14 +38,10 @@
 #define LLVM_ANALYSIS_ALIASANALYSIS_H
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/MemoryLocation.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/Instruction.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
 #include <cstdint>
@@ -56,10 +52,19 @@
 namespace llvm {
 
 class AnalysisUsage;
+class AtomicCmpXchgInst;
 class BasicAAResult;
 class BasicBlock;
+class CatchPadInst;
+class CatchReturnInst;
 class DominatorTree;
+class FenceInst;
+class Function;
+class LoopInfo;
+class PreservedAnalyses;
+class TargetLibraryInfo;
 class Value;
+template <typename> class SmallPtrSetImpl;
 
 /// The possible results of an alias query.
 ///
@@ -74,20 +79,63 @@ class Value;
 ///
 /// See docs/AliasAnalysis.html for more information on the specific meanings
 /// of these values.
-enum AliasResult : uint8_t {
-  /// The two locations do not alias at all.
-  ///
-  /// This value is arranged to convert to false, while all other values
-  /// convert to true. This allows a boolean context to convert the result to
-  /// a binary flag indicating whether there is the possibility of aliasing.
-  NoAlias = 0,
-  /// The two locations may or may not alias. This is the least precise result.
-  MayAlias,
-  /// The two locations alias, but only due to a partial overlap.
-  PartialAlias,
-  /// The two locations precisely alias each other.
-  MustAlias,
+class AliasResult {
+private:
+  static const int OffsetBits = 23;
+  static const int AliasBits = 8;
+  static_assert(AliasBits + 1 + OffsetBits <= 32,
+                "AliasResult size is intended to be 4 bytes!");
+
+  unsigned int Alias : AliasBits;
+  unsigned int HasOffset : 1;
+  signed int Offset : OffsetBits;
+
+public:
+  enum Kind : uint8_t {
+    /// The two locations do not alias at all.
+    ///
+    /// This value is arranged to convert to false, while all other values
+    /// convert to true. This allows a boolean context to convert the result to
+    /// a binary flag indicating whether there is the possibility of aliasing.
+    NoAlias = 0,
+    /// The two locations may or may not alias. This is the least precise
+    /// result.
+    MayAlias,
+    /// The two locations alias, but only due to a partial overlap.
+    PartialAlias,
+    /// The two locations precisely alias each other.
+    MustAlias,
+  };
+  static_assert(MustAlias < (1 << AliasBits),
+                "Not enough bit field size for the enum!");
+
+  explicit AliasResult() = delete;
+  constexpr AliasResult(const Kind &Alias)
+      : Alias(Alias), HasOffset(false), Offset(0) {}
+
+  operator Kind() const { return static_cast<Kind>(Alias); }
+
+  constexpr bool hasOffset() const { return HasOffset; }
+  constexpr int32_t getOffset() const {
+    assert(HasOffset && "No offset!");
+    return Offset;
+  }
+  void setOffset(int32_t NewOffset) {
+    if (isInt<OffsetBits>(NewOffset)) {
+      HasOffset = true;
+      Offset = NewOffset;
+    }
+  }
+
+  /// Helper for processing AliasResult for swapped memory location pairs.
+  void swap(bool DoSwap = true) {
+    if (DoSwap && hasOffset())
+      setOffset(-getOffset());
+  }
 };
+
+static_assert(sizeof(AliasResult) == 4,
+              "AliasResult size is intended to be 4 bytes!");
 
 /// << operator for AliasResult.
 raw_ostream &operator<<(raw_ostream &OS, AliasResult AR);
@@ -95,241 +143,320 @@ raw_ostream &operator<<(raw_ostream &OS, AliasResult AR);
 /// Flags indicating whether a memory access modifies or references memory.
 ///
 /// This is no access at all, a modification, a reference, or both
-/// a modification and a reference. These are specifically structured such that
-/// they form a three bit matrix and bit-tests for 'mod' or 'ref' or 'must'
-/// work with any of the possible values.
+/// a modification and a reference.
 enum class ModRefInfo : uint8_t {
-  /// Must is provided for completeness, but no routines will return only
-  /// Must today. See definition of Must below.
-  Must = 0,
-  /// The access may reference the value stored in memory,
-  /// a mustAlias relation was found, and no mayAlias or partialAlias found.
-  MustRef = 1,
-  /// The access may modify the value stored in memory,
-  /// a mustAlias relation was found, and no mayAlias or partialAlias found.
-  MustMod = 2,
-  /// The access may reference, modify or both the value stored in memory,
-  /// a mustAlias relation was found, and no mayAlias or partialAlias found.
-  MustModRef = MustRef | MustMod,
   /// The access neither references nor modifies the value stored in memory.
-  NoModRef = 4,
+  NoModRef = 0,
   /// The access may reference the value stored in memory.
-  Ref = NoModRef | MustRef,
+  Ref = 1,
   /// The access may modify the value stored in memory.
-  Mod = NoModRef | MustMod,
+  Mod = 2,
   /// The access may reference and may modify the value stored in memory.
   ModRef = Ref | Mod,
-
-  /// About Must:
-  /// Must is set in a best effort manner.
-  /// We usually do not try our best to infer Must, instead it is merely
-  /// another piece of "free" information that is presented when available.
-  /// Must set means there was certainly a MustAlias found. For calls,
-  /// where multiple arguments are checked (argmemonly), this translates to
-  /// only MustAlias or NoAlias was found.
-  /// Must is not set for RAR accesses, even if the two locations must
-  /// alias. The reason is that two read accesses translate to an early return
-  /// of NoModRef. An additional alias check to set Must may be
-  /// expensive. Other cases may also not set Must(e.g. callCapturesBefore).
-  /// We refer to Must being *set* when the most significant bit is *cleared*.
-  /// Conversely we *clear* Must information by *setting* the Must bit to 1.
+  LLVM_MARK_AS_BITMASK_ENUM(ModRef),
 };
 
-LLVM_NODISCARD inline bool isNoModRef(const ModRefInfo MRI) {
-  return (static_cast<int>(MRI) & static_cast<int>(ModRefInfo::MustModRef)) ==
-         static_cast<int>(ModRefInfo::Must);
+[[nodiscard]] inline bool isNoModRef(const ModRefInfo MRI) {
+  return MRI == ModRefInfo::NoModRef;
 }
-LLVM_NODISCARD inline bool isModOrRefSet(const ModRefInfo MRI) {
-  return static_cast<int>(MRI) & static_cast<int>(ModRefInfo::MustModRef);
+[[nodiscard]] inline bool isModOrRefSet(const ModRefInfo MRI) {
+  return MRI != ModRefInfo::NoModRef;
 }
-LLVM_NODISCARD inline bool isModAndRefSet(const ModRefInfo MRI) {
-  return (static_cast<int>(MRI) & static_cast<int>(ModRefInfo::MustModRef)) ==
-         static_cast<int>(ModRefInfo::MustModRef);
+[[nodiscard]] inline bool isModAndRefSet(const ModRefInfo MRI) {
+  return MRI == ModRefInfo::ModRef;
 }
-LLVM_NODISCARD inline bool isModSet(const ModRefInfo MRI) {
-  return static_cast<int>(MRI) & static_cast<int>(ModRefInfo::MustMod);
+[[nodiscard]] inline bool isModSet(const ModRefInfo MRI) {
+  return static_cast<int>(MRI) & static_cast<int>(ModRefInfo::Mod);
 }
-LLVM_NODISCARD inline bool isRefSet(const ModRefInfo MRI) {
-  return static_cast<int>(MRI) & static_cast<int>(ModRefInfo::MustRef);
-}
-LLVM_NODISCARD inline bool isMustSet(const ModRefInfo MRI) {
-  return !(static_cast<int>(MRI) & static_cast<int>(ModRefInfo::NoModRef));
+[[nodiscard]] inline bool isRefSet(const ModRefInfo MRI) {
+  return static_cast<int>(MRI) & static_cast<int>(ModRefInfo::Ref);
 }
 
-LLVM_NODISCARD inline ModRefInfo setMod(const ModRefInfo MRI) {
-  return ModRefInfo(static_cast<int>(MRI) |
-                    static_cast<int>(ModRefInfo::MustMod));
+[[deprecated("Use operator | instead")]] [[nodiscard]] inline ModRefInfo
+setMod(const ModRefInfo MRI) {
+  return MRI | ModRefInfo::Mod;
 }
-LLVM_NODISCARD inline ModRefInfo setRef(const ModRefInfo MRI) {
-  return ModRefInfo(static_cast<int>(MRI) |
-                    static_cast<int>(ModRefInfo::MustRef));
+[[deprecated("Use operator | instead")]] [[nodiscard]] inline ModRefInfo
+setRef(const ModRefInfo MRI) {
+  return MRI | ModRefInfo::Ref;
 }
-LLVM_NODISCARD inline ModRefInfo setMust(const ModRefInfo MRI) {
-  return ModRefInfo(static_cast<int>(MRI) &
-                    static_cast<int>(ModRefInfo::MustModRef));
+[[deprecated("Use operator & instead")]] [[nodiscard]] inline ModRefInfo
+clearMod(const ModRefInfo MRI) {
+  return MRI & ModRefInfo::Ref;
 }
-LLVM_NODISCARD inline ModRefInfo setModAndRef(const ModRefInfo MRI) {
-  return ModRefInfo(static_cast<int>(MRI) |
-                    static_cast<int>(ModRefInfo::MustModRef));
+[[deprecated("Use operator & instead")]] [[nodiscard]] inline ModRefInfo
+clearRef(const ModRefInfo MRI) {
+  return MRI & ModRefInfo::Mod;
 }
-LLVM_NODISCARD inline ModRefInfo clearMod(const ModRefInfo MRI) {
-  return ModRefInfo(static_cast<int>(MRI) & static_cast<int>(ModRefInfo::Ref));
+[[deprecated("Use operator | instead")]] [[nodiscard]] inline ModRefInfo
+unionModRef(const ModRefInfo MRI1, const ModRefInfo MRI2) {
+  return MRI1 | MRI2;
 }
-LLVM_NODISCARD inline ModRefInfo clearRef(const ModRefInfo MRI) {
-  return ModRefInfo(static_cast<int>(MRI) & static_cast<int>(ModRefInfo::Mod));
-}
-LLVM_NODISCARD inline ModRefInfo clearMust(const ModRefInfo MRI) {
-  return ModRefInfo(static_cast<int>(MRI) |
-                    static_cast<int>(ModRefInfo::NoModRef));
-}
-LLVM_NODISCARD inline ModRefInfo unionModRef(const ModRefInfo MRI1,
-                                             const ModRefInfo MRI2) {
-  return ModRefInfo(static_cast<int>(MRI1) | static_cast<int>(MRI2));
-}
-LLVM_NODISCARD inline ModRefInfo intersectModRef(const ModRefInfo MRI1,
-                                                 const ModRefInfo MRI2) {
-  return ModRefInfo(static_cast<int>(MRI1) & static_cast<int>(MRI2));
+[[deprecated("Use operator & instead")]] [[nodiscard]] inline ModRefInfo
+intersectModRef(const ModRefInfo MRI1, const ModRefInfo MRI2) {
+  return MRI1 & MRI2;
 }
 
-/// The locations at which a function might access memory.
-///
-/// These are primarily used in conjunction with the \c AccessKind bits to
-/// describe both the nature of access and the locations of access for a
-/// function call.
-enum FunctionModRefLocation {
-  /// Base case is no access to memory.
-  FMRL_Nowhere = 0,
-  /// Access to memory via argument pointers.
-  FMRL_ArgumentPointees = 8,
-  /// Memory that is inaccessible via LLVM IR.
-  FMRL_InaccessibleMem = 16,
-  /// Access to any memory.
-  FMRL_Anywhere = 32 | FMRL_InaccessibleMem | FMRL_ArgumentPointees
-};
+/// Debug print ModRefInfo.
+raw_ostream &operator<<(raw_ostream &OS, ModRefInfo MR);
 
 /// Summary of how a function affects memory in the program.
 ///
 /// Loads from constant globals are not considered memory accesses for this
 /// interface. Also, functions may freely modify stack space local to their
 /// invocation without having to report it through these interfaces.
-enum FunctionModRefBehavior {
-  /// This function does not perform any non-local loads or stores to memory.
-  ///
-  /// This property corresponds to the GCC 'const' attribute.
-  /// This property corresponds to the LLVM IR 'readnone' attribute.
-  /// This property corresponds to the IntrNoMem LLVM intrinsic flag.
-  FMRB_DoesNotAccessMemory =
-      FMRL_Nowhere | static_cast<int>(ModRefInfo::NoModRef),
+class FunctionModRefBehavior {
+public:
+  /// The locations at which a function might access memory.
+  enum Location {
+    /// Access to memory via argument pointers.
+    ArgMem = 0,
+    /// Memory that is inaccessible via LLVM IR.
+    InaccessibleMem = 1,
+    /// Any other memory.
+    Other = 2,
+  };
 
-  /// The only memory references in this function (if it has any) are
-  /// non-volatile loads from objects pointed to by its pointer-typed
-  /// arguments, with arbitrary offsets.
-  ///
-  /// This property corresponds to the combination of the IntrReadMem
-  /// and IntrArgMemOnly LLVM intrinsic flags.
-  FMRB_OnlyReadsArgumentPointees =
-      FMRL_ArgumentPointees | static_cast<int>(ModRefInfo::Ref),
+private:
+  uint32_t Data = 0;
 
-  /// The only memory references in this function (if it has any) are
-  /// non-volatile stores from objects pointed to by its pointer-typed
-  /// arguments, with arbitrary offsets.
-  ///
-  /// This property corresponds to the combination of the IntrWriteMem
-  /// and IntrArgMemOnly LLVM intrinsic flags.
-  FMRB_OnlyWritesArgumentPointees =
-      FMRL_ArgumentPointees | static_cast<int>(ModRefInfo::Mod),
+  static constexpr uint32_t BitsPerLoc = 2;
+  static constexpr uint32_t LocMask = (1 << BitsPerLoc) - 1;
 
-  /// The only memory references in this function (if it has any) are
-  /// non-volatile loads and stores from objects pointed to by its
-  /// pointer-typed arguments, with arbitrary offsets.
-  ///
-  /// This property corresponds to the IntrArgMemOnly LLVM intrinsic flag.
-  FMRB_OnlyAccessesArgumentPointees =
-      FMRL_ArgumentPointees | static_cast<int>(ModRefInfo::ModRef),
+  static uint32_t getLocationPos(Location Loc) {
+    return (uint32_t)Loc * BitsPerLoc;
+  }
 
-  /// The only memory references in this function (if it has any) are
-  /// reads of memory that is otherwise inaccessible via LLVM IR.
-  ///
-  /// This property corresponds to the LLVM IR inaccessiblememonly attribute.
-  FMRB_OnlyReadsInaccessibleMem =
-      FMRL_InaccessibleMem | static_cast<int>(ModRefInfo::Ref),
+  static auto locations() {
+    return enum_seq_inclusive(Location::ArgMem, Location::Other,
+                              force_iteration_on_noniterable_enum);
+  }
 
-  /// The only memory references in this function (if it has any) are
-  /// writes to memory that is otherwise inaccessible via LLVM IR.
-  ///
-  /// This property corresponds to the LLVM IR inaccessiblememonly attribute.
-  FMRB_OnlyWritesInaccessibleMem =
-      FMRL_InaccessibleMem | static_cast<int>(ModRefInfo::Mod),
+  FunctionModRefBehavior(uint32_t Data) : Data(Data) {}
 
-  /// The only memory references in this function (if it has any) are
-  /// references of memory that is otherwise inaccessible via LLVM IR.
-  ///
-  /// This property corresponds to the LLVM IR inaccessiblememonly attribute.
-  FMRB_OnlyAccessesInaccessibleMem =
-      FMRL_InaccessibleMem | static_cast<int>(ModRefInfo::ModRef),
+  void setModRef(Location Loc, ModRefInfo MR) {
+    Data &= ~(LocMask << getLocationPos(Loc));
+    Data |= static_cast<uint32_t>(MR) << getLocationPos(Loc);
+  }
 
-  /// The function may perform non-volatile loads from objects pointed
-  /// to by its pointer-typed arguments, with arbitrary offsets, and
-  /// it may also perform loads of memory that is otherwise
-  /// inaccessible via LLVM IR.
-  ///
-  /// This property corresponds to the LLVM IR
-  /// inaccessiblemem_or_argmemonly attribute.
-  FMRB_OnlyReadsInaccessibleOrArgMem = FMRL_InaccessibleMem |
-                                       FMRL_ArgumentPointees |
-                                       static_cast<int>(ModRefInfo::Ref),
+  friend raw_ostream &operator<<(raw_ostream &OS, FunctionModRefBehavior RMRB);
 
-  /// The function may perform non-volatile stores to objects pointed
-  /// to by its pointer-typed arguments, with arbitrary offsets, and
-  /// it may also perform stores of memory that is otherwise
-  /// inaccessible via LLVM IR.
-  ///
-  /// This property corresponds to the LLVM IR
-  /// inaccessiblemem_or_argmemonly attribute.
-  FMRB_OnlyWritesInaccessibleOrArgMem = FMRL_InaccessibleMem |
-                                        FMRL_ArgumentPointees |
-                                        static_cast<int>(ModRefInfo::Mod),
+public:
+  /// Create FunctionModRefBehavior that can access only the given location
+  /// with the given ModRefInfo.
+  FunctionModRefBehavior(Location Loc, ModRefInfo MR) { setModRef(Loc, MR); }
 
-  /// The function may perform non-volatile loads and stores of objects
-  /// pointed to by its pointer-typed arguments, with arbitrary offsets, and
-  /// it may also perform loads and stores of memory that is otherwise
-  /// inaccessible via LLVM IR.
-  ///
-  /// This property corresponds to the LLVM IR
-  /// inaccessiblemem_or_argmemonly attribute.
-  FMRB_OnlyAccessesInaccessibleOrArgMem = FMRL_InaccessibleMem |
-                                          FMRL_ArgumentPointees |
-                                          static_cast<int>(ModRefInfo::ModRef),
+  /// Create FunctionModRefBehavior that can access any location with the
+  /// given ModRefInfo.
+  explicit FunctionModRefBehavior(ModRefInfo MR) {
+    for (Location Loc : locations())
+      setModRef(Loc, MR);
+  }
 
-  /// This function does not perform any non-local stores or volatile loads,
-  /// but may read from any memory location.
-  ///
-  /// This property corresponds to the GCC 'pure' attribute.
-  /// This property corresponds to the LLVM IR 'readonly' attribute.
-  /// This property corresponds to the IntrReadMem LLVM intrinsic flag.
-  FMRB_OnlyReadsMemory = FMRL_Anywhere | static_cast<int>(ModRefInfo::Ref),
+  /// Create FunctionModRefBehavior that can read and write any memory.
+  static FunctionModRefBehavior unknown() {
+    return FunctionModRefBehavior(ModRefInfo::ModRef);
+  }
 
-  // This function does not read from memory anywhere, but may write to any
-  // memory location.
-  //
-  // This property corresponds to the LLVM IR 'writeonly' attribute.
-  // This property corresponds to the IntrWriteMem LLVM intrinsic flag.
-  FMRB_OnlyWritesMemory = FMRL_Anywhere | static_cast<int>(ModRefInfo::Mod),
+  /// Create FunctionModRefBehavior that cannot read or write any memory.
+  static FunctionModRefBehavior none() {
+    return FunctionModRefBehavior(ModRefInfo::NoModRef);
+  }
 
-  /// This indicates that the function could not be classified into one of the
-  /// behaviors above.
-  FMRB_UnknownModRefBehavior =
-      FMRL_Anywhere | static_cast<int>(ModRefInfo::ModRef)
+  /// Create FunctionModRefBehavior that can read any memory.
+  static FunctionModRefBehavior readOnly() {
+    return FunctionModRefBehavior(ModRefInfo::Ref);
+  }
+
+  /// Create FunctionModRefBehavior that can write any memory.
+  static FunctionModRefBehavior writeOnly() {
+    return FunctionModRefBehavior(ModRefInfo::Mod);
+  }
+
+  /// Create FunctionModRefBehavior that can only access argument memory.
+  static FunctionModRefBehavior argMemOnly(ModRefInfo MR) {
+    return FunctionModRefBehavior(ArgMem, MR);
+  }
+
+  /// Create FunctionModRefBehavior that can only access inaccessible memory.
+  static FunctionModRefBehavior inaccessibleMemOnly(ModRefInfo MR) {
+    return FunctionModRefBehavior(InaccessibleMem, MR);
+  }
+
+  /// Create FunctionModRefBehavior that can only access inaccessible or
+  /// argument memory.
+  static FunctionModRefBehavior inaccessibleOrArgMemOnly(ModRefInfo MR) {
+    FunctionModRefBehavior FRMB = none();
+    FRMB.setModRef(ArgMem, MR);
+    FRMB.setModRef(InaccessibleMem, MR);
+    return FRMB;
+  }
+
+  /// Get ModRefInfo for the given Location.
+  ModRefInfo getModRef(Location Loc) const {
+    return ModRefInfo((Data >> getLocationPos(Loc)) & LocMask);
+  }
+
+  /// Get new FunctionModRefBehavior with modified ModRefInfo for Loc.
+  FunctionModRefBehavior getWithModRef(Location Loc, ModRefInfo MR) const {
+    FunctionModRefBehavior FMRB = *this;
+    FMRB.setModRef(Loc, MR);
+    return FMRB;
+  }
+
+  /// Get new FunctionModRefBehavior with NoModRef on the given Loc.
+  FunctionModRefBehavior getWithoutLoc(Location Loc) const {
+    FunctionModRefBehavior FMRB = *this;
+    FMRB.setModRef(Loc, ModRefInfo::NoModRef);
+    return FMRB;
+  }
+
+  /// Get ModRefInfo for any location.
+  ModRefInfo getModRef() const {
+    ModRefInfo MR = ModRefInfo::NoModRef;
+    for (Location Loc : locations())
+      MR |= getModRef(Loc);
+    return MR;
+  }
+
+  /// Whether this function accesses no memory.
+  bool doesNotAccessMemory() const { return Data == 0; }
+
+  /// Whether this function only (at most) reads memory.
+  bool onlyReadsMemory() const { return !isModSet(getModRef()); }
+
+  /// Whether this function only (at most) writes memory.
+  bool onlyWritesMemory() const { return !isRefSet(getModRef()); }
+
+  /// Whether this function only (at most) accesses argument memory.
+  bool onlyAccessesArgPointees() const {
+    return getWithoutLoc(ArgMem).doesNotAccessMemory();
+  }
+
+  /// Whether this function may access argument memory.
+  bool doesAccessArgPointees() const {
+    return isModOrRefSet(getModRef(ArgMem));
+  }
+
+  /// Whether this function only (at most) accesses inaccessible memory.
+  bool onlyAccessesInaccessibleMem() const {
+    return getWithoutLoc(InaccessibleMem).doesNotAccessMemory();
+  }
+
+  /// Whether this function only (at most) accesses argument and inaccessible
+  /// memory.
+  bool onlyAccessesInaccessibleOrArgMem() const {
+    return isNoModRef(getModRef(Other));
+  }
+
+  /// Intersect with another FunctionModRefBehavior.
+  FunctionModRefBehavior operator&(FunctionModRefBehavior Other) const {
+    return FunctionModRefBehavior(Data & Other.Data);
+  }
+
+  /// Intersect (in-place) with another FunctionModRefBehavior.
+  FunctionModRefBehavior &operator&=(FunctionModRefBehavior Other) {
+    Data &= Other.Data;
+    return *this;
+  }
+
+  /// Union with another FunctionModRefBehavior.
+  FunctionModRefBehavior operator|(FunctionModRefBehavior Other) const {
+    return FunctionModRefBehavior(Data | Other.Data);
+  }
+
+  /// Union (in-place) with another FunctionModRefBehavior.
+  FunctionModRefBehavior &operator|=(FunctionModRefBehavior Other) {
+    Data |= Other.Data;
+    return *this;
+  }
+
+  /// Check whether this is the same as another FunctionModRefBehavior.
+  bool operator==(FunctionModRefBehavior Other) const {
+    return Data == Other.Data;
+  }
+
+  /// Check whether this is different from another FunctionModRefBehavior.
+  bool operator!=(FunctionModRefBehavior Other) const {
+    return !operator==(Other);
+  }
 };
 
-// Wrapper method strips bits significant only in FunctionModRefBehavior,
-// to obtain a valid ModRefInfo. The benefit of using the wrapper is that if
-// ModRefInfo enum changes, the wrapper can be updated to & with the new enum
-// entry with all bits set to 1.
-LLVM_NODISCARD inline ModRefInfo
-createModRefInfo(const FunctionModRefBehavior FMRB) {
-  return ModRefInfo(FMRB & static_cast<int>(ModRefInfo::ModRef));
-}
+/// Debug print FunctionModRefBehavior.
+raw_ostream &operator<<(raw_ostream &OS, FunctionModRefBehavior RMRB);
+
+/// Virtual base class for providers of capture information.
+struct CaptureInfo {
+  virtual ~CaptureInfo() = 0;
+  virtual bool isNotCapturedBeforeOrAt(const Value *Object,
+                                       const Instruction *I) = 0;
+};
+
+/// Context-free CaptureInfo provider, which computes and caches whether an
+/// object is captured in the function at all, but does not distinguish whether
+/// it was captured before or after the context instruction.
+class SimpleCaptureInfo final : public CaptureInfo {
+  SmallDenseMap<const Value *, bool, 8> IsCapturedCache;
+
+public:
+  bool isNotCapturedBeforeOrAt(const Value *Object,
+                               const Instruction *I) override;
+};
+
+/// Context-sensitive CaptureInfo provider, which computes and caches the
+/// earliest common dominator closure of all captures. It provides a good
+/// approximation to a precise "captures before" analysis.
+class EarliestEscapeInfo final : public CaptureInfo {
+  DominatorTree &DT;
+  const LoopInfo &LI;
+
+  /// Map from identified local object to an instruction before which it does
+  /// not escape, or nullptr if it never escapes. The "earliest" instruction
+  /// may be a conservative approximation, e.g. the first instruction in the
+  /// function is always a legal choice.
+  DenseMap<const Value *, Instruction *> EarliestEscapes;
+
+  /// Reverse map from instruction to the objects it is the earliest escape for.
+  /// This is used for cache invalidation purposes.
+  DenseMap<Instruction *, TinyPtrVector<const Value *>> Inst2Obj;
+
+  const SmallPtrSetImpl<const Value *> &EphValues;
+
+public:
+  EarliestEscapeInfo(DominatorTree &DT, const LoopInfo &LI,
+                     const SmallPtrSetImpl<const Value *> &EphValues)
+      : DT(DT), LI(LI), EphValues(EphValues) {}
+
+  bool isNotCapturedBeforeOrAt(const Value *Object,
+                               const Instruction *I) override;
+
+  void removeInstruction(Instruction *I);
+};
+
+/// Reduced version of MemoryLocation that only stores a pointer and size.
+/// Used for caching AATags independent BasicAA results.
+struct AACacheLoc {
+  const Value *Ptr;
+  LocationSize Size;
+};
+
+template <> struct DenseMapInfo<AACacheLoc> {
+  static inline AACacheLoc getEmptyKey() {
+    return {DenseMapInfo<const Value *>::getEmptyKey(),
+            DenseMapInfo<LocationSize>::getEmptyKey()};
+  }
+  static inline AACacheLoc getTombstoneKey() {
+    return {DenseMapInfo<const Value *>::getTombstoneKey(),
+            DenseMapInfo<LocationSize>::getTombstoneKey()};
+  }
+  static unsigned getHashValue(const AACacheLoc &Val) {
+    return DenseMapInfo<const Value *>::getHashValue(Val.Ptr) ^
+           DenseMapInfo<LocationSize>::getHashValue(Val.Size);
+  }
+  static bool isEqual(const AACacheLoc &LHS, const AACacheLoc &RHS) {
+    return LHS.Ptr == RHS.Ptr && LHS.Size == RHS.Size;
+  }
+};
 
 /// This class stores info we want to provide to or retain within an alias
 /// query. By default, the root query is stateless and starts with a freshly
@@ -341,14 +468,49 @@ createModRefInfo(const FunctionModRefBehavior FMRB) {
 /// caches used by BasicAA, but can further be extended to fit other AA needs.
 class AAQueryInfo {
 public:
-  using LocPair = std::pair<MemoryLocation, MemoryLocation>;
-  using AliasCacheT = SmallDenseMap<LocPair, AliasResult, 8>;
+  using LocPair = std::pair<AACacheLoc, AACacheLoc>;
+  struct CacheEntry {
+    AliasResult Result;
+    /// Number of times a NoAlias assumption has been used.
+    /// 0 for assumptions that have not been used, -1 for definitive results.
+    int NumAssumptionUses;
+    /// Whether this is a definitive (non-assumption) result.
+    bool isDefinitive() const { return NumAssumptionUses < 0; }
+  };
+  using AliasCacheT = SmallDenseMap<LocPair, CacheEntry, 8>;
   AliasCacheT AliasCache;
 
-  using IsCapturedCacheT = SmallDenseMap<const Value *, bool, 8>;
-  IsCapturedCacheT IsCapturedCache;
+  CaptureInfo *CI;
 
-  AAQueryInfo() : AliasCache(), IsCapturedCache() {}
+  /// Query depth used to distinguish recursive queries.
+  unsigned Depth = 0;
+
+  /// How many active NoAlias assumption uses there are.
+  int NumAssumptionUses = 0;
+
+  /// Location pairs for which an assumption based result is currently stored.
+  /// Used to remove all potentially incorrect results from the cache if an
+  /// assumption is disproven.
+  SmallVector<AAQueryInfo::LocPair, 4> AssumptionBasedResults;
+
+  AAQueryInfo(CaptureInfo *CI) : CI(CI) {}
+
+  /// Create a new AAQueryInfo based on this one, but with the cache cleared.
+  /// This is used for recursive queries across phis, where cache results may
+  /// not be valid.
+  AAQueryInfo withEmptyCache() {
+    AAQueryInfo NewAAQI(CI);
+    NewAAQI.Depth = Depth;
+    return NewAAQI;
+  }
+};
+
+/// AAQueryInfo that uses SimpleCaptureInfo.
+class SimpleAAQueryInfo : public AAQueryInfo {
+  SimpleCaptureInfo CI;
+
+public:
+  SimpleAAQueryInfo() : AAQueryInfo(&CI) {}
 };
 
 class BatchAAResults;
@@ -401,13 +563,14 @@ public:
 
   /// A convenience wrapper around the primary \c alias interface.
   AliasResult alias(const Value *V1, const Value *V2) {
-    return alias(V1, LocationSize::unknown(), V2, LocationSize::unknown());
+    return alias(MemoryLocation::getBeforeOrAfter(V1),
+                 MemoryLocation::getBeforeOrAfter(V2));
   }
 
   /// A trivial helper function to check to see if the specified pointers are
   /// no-alias.
   bool isNoAlias(const MemoryLocation &LocA, const MemoryLocation &LocB) {
-    return alias(LocA, LocB) == NoAlias;
+    return alias(LocA, LocB) == AliasResult::NoAlias;
   }
 
   /// A convenience wrapper around the \c isNoAlias helper interface.
@@ -418,19 +581,20 @@ public:
 
   /// A convenience wrapper around the \c isNoAlias helper interface.
   bool isNoAlias(const Value *V1, const Value *V2) {
-    return isNoAlias(MemoryLocation(V1), MemoryLocation(V2));
+    return isNoAlias(MemoryLocation::getBeforeOrAfter(V1),
+                     MemoryLocation::getBeforeOrAfter(V2));
   }
 
   /// A trivial helper function to check to see if the specified pointers are
   /// must-alias.
   bool isMustAlias(const MemoryLocation &LocA, const MemoryLocation &LocB) {
-    return alias(LocA, LocB) == MustAlias;
+    return alias(LocA, LocB) == AliasResult::MustAlias;
   }
 
   /// A convenience wrapper around the \c isMustAlias helper interface.
   bool isMustAlias(const Value *V1, const Value *V2) {
     return alias(V1, LocationSize::precise(1), V2, LocationSize::precise(1)) ==
-           MustAlias;
+           AliasResult::MustAlias;
   }
 
   /// Checks whether the given location points to constant memory, or if
@@ -440,7 +604,7 @@ public:
   /// A convenience wrapper around the primary \c pointsToConstantMemory
   /// interface.
   bool pointsToConstantMemory(const Value *P, bool OrLocal = false) {
-    return pointsToConstantMemory(MemoryLocation(P), OrLocal);
+    return pointsToConstantMemory(MemoryLocation::getBeforeOrAfter(P), OrLocal);
   }
 
   /// @}
@@ -452,7 +616,7 @@ public:
   /// result's bits are set to indicate the allowed aliasing ModRef kinds. Note
   /// that these bits do not necessarily account for the overall behavior of
   /// the function, but rather only provide additional per-argument
-  /// information. This never sets ModRefInfo::Must.
+  /// information.
   ModRefInfo getArgModRefInfo(const CallBase *Call, unsigned ArgIdx);
 
   /// Return the behavior of the given call site.
@@ -473,7 +637,7 @@ public:
   ///
   /// This property corresponds to the GCC 'const' attribute.
   bool doesNotAccessMemory(const CallBase *Call) {
-    return getModRefBehavior(Call) == FMRB_DoesNotAccessMemory;
+    return getModRefBehavior(Call).doesNotAccessMemory();
   }
 
   /// Checks if the specified function is known to never read or write memory.
@@ -488,7 +652,7 @@ public:
   ///
   /// This property corresponds to the GCC 'const' attribute.
   bool doesNotAccessMemory(const Function *F) {
-    return getModRefBehavior(F) == FMRB_DoesNotAccessMemory;
+    return getModRefBehavior(F).doesNotAccessMemory();
   }
 
   /// Checks if the specified call is known to only read from non-volatile
@@ -501,7 +665,7 @@ public:
   ///
   /// This property corresponds to the GCC 'pure' attribute.
   bool onlyReadsMemory(const CallBase *Call) {
-    return onlyReadsMemory(getModRefBehavior(Call));
+    return getModRefBehavior(Call).onlyReadsMemory();
   }
 
   /// Checks if the specified function is known to only read from non-volatile
@@ -514,54 +678,7 @@ public:
   ///
   /// This property corresponds to the GCC 'pure' attribute.
   bool onlyReadsMemory(const Function *F) {
-    return onlyReadsMemory(getModRefBehavior(F));
-  }
-
-  /// Checks if functions with the specified behavior are known to only read
-  /// from non-volatile memory (or not access memory at all).
-  static bool onlyReadsMemory(FunctionModRefBehavior MRB) {
-    return !isModSet(createModRefInfo(MRB));
-  }
-
-  /// Checks if functions with the specified behavior are known to only write
-  /// memory (or not access memory at all).
-  static bool doesNotReadMemory(FunctionModRefBehavior MRB) {
-    return !isRefSet(createModRefInfo(MRB));
-  }
-
-  /// Checks if functions with the specified behavior are known to read and
-  /// write at most from objects pointed to by their pointer-typed arguments
-  /// (with arbitrary offsets).
-  static bool onlyAccessesArgPointees(FunctionModRefBehavior MRB) {
-    return !(MRB & FMRL_Anywhere & ~FMRL_ArgumentPointees);
-  }
-
-  /// Checks if functions with the specified behavior are known to potentially
-  /// read or write from objects pointed to be their pointer-typed arguments
-  /// (with arbitrary offsets).
-  static bool doesAccessArgPointees(FunctionModRefBehavior MRB) {
-    return isModOrRefSet(createModRefInfo(MRB)) &&
-           (MRB & FMRL_ArgumentPointees);
-  }
-
-  /// Checks if functions with the specified behavior are known to read and
-  /// write at most from memory that is inaccessible from LLVM IR.
-  static bool onlyAccessesInaccessibleMem(FunctionModRefBehavior MRB) {
-    return !(MRB & FMRL_Anywhere & ~FMRL_InaccessibleMem);
-  }
-
-  /// Checks if functions with the specified behavior are known to potentially
-  /// read or write from memory that is inaccessible from LLVM IR.
-  static bool doesAccessInaccessibleMem(FunctionModRefBehavior MRB) {
-    return isModOrRefSet(createModRefInfo(MRB)) && (MRB & FMRL_InaccessibleMem);
-  }
-
-  /// Checks if functions with the specified behavior are known to read and
-  /// write at most from memory that is inaccessible from LLVM IR or objects
-  /// pointed to by their pointer-typed arguments (with arbitrary offsets).
-  static bool onlyAccessesInaccessibleOrArgMem(FunctionModRefBehavior MRB) {
-    return !(MRB & FMRL_Anywhere &
-             ~(FMRL_InaccessibleMem | FMRL_ArgumentPointees));
+    return getModRefBehavior(F).onlyReadsMemory();
   }
 
   /// getModRefInfo (for call sites) - Return information about whether
@@ -667,7 +784,7 @@ public:
   /// helpers above.
   ModRefInfo getModRefInfo(const Instruction *I,
                            const Optional<MemoryLocation> &OptLoc) {
-    AAQueryInfo AAQIP;
+    SimpleAAQueryInfo AAQIP;
     return getModRefInfo(I, OptLoc, AAQIP);
   }
 
@@ -689,10 +806,12 @@ public:
   /// Return information about whether a particular call site modifies
   /// or reads the specified memory location \p MemLoc before instruction \p I
   /// in a BasicBlock.
-  /// Early exits in callCapturesBefore may lead to ModRefInfo::Must not being
-  /// set.
   ModRefInfo callCapturesBefore(const Instruction *I,
-                                const MemoryLocation &MemLoc, DominatorTree *DT);
+                                const MemoryLocation &MemLoc,
+                                DominatorTree *DT) {
+    SimpleAAQueryInfo AAQIP;
+    return callCapturesBefore(I, MemLoc, DT, AAQIP);
+  }
 
   /// A convenience wrapper to synthesize a memory location.
   ModRefInfo callCapturesBefore(const Instruction *I, const Value *P,
@@ -760,40 +879,10 @@ private:
                            AAQueryInfo &AAQI);
   ModRefInfo getModRefInfo(const Instruction *I,
                            const Optional<MemoryLocation> &OptLoc,
-                           AAQueryInfo &AAQIP) {
-    if (OptLoc == None) {
-      if (const auto *Call = dyn_cast<CallBase>(I)) {
-        return createModRefInfo(getModRefBehavior(Call));
-      }
-    }
-
-    const MemoryLocation &Loc = OptLoc.getValueOr(MemoryLocation());
-
-    switch (I->getOpcode()) {
-    case Instruction::VAArg:
-      return getModRefInfo((const VAArgInst *)I, Loc, AAQIP);
-    case Instruction::Load:
-      return getModRefInfo((const LoadInst *)I, Loc, AAQIP);
-    case Instruction::Store:
-      return getModRefInfo((const StoreInst *)I, Loc, AAQIP);
-    case Instruction::Fence:
-      return getModRefInfo((const FenceInst *)I, Loc, AAQIP);
-    case Instruction::AtomicCmpXchg:
-      return getModRefInfo((const AtomicCmpXchgInst *)I, Loc, AAQIP);
-    case Instruction::AtomicRMW:
-      return getModRefInfo((const AtomicRMWInst *)I, Loc, AAQIP);
-    case Instruction::Call:
-      return getModRefInfo((const CallInst *)I, Loc, AAQIP);
-    case Instruction::Invoke:
-      return getModRefInfo((const InvokeInst *)I, Loc, AAQIP);
-    case Instruction::CatchPad:
-      return getModRefInfo((const CatchPadInst *)I, Loc, AAQIP);
-    case Instruction::CatchRet:
-      return getModRefInfo((const CatchReturnInst *)I, Loc, AAQIP);
-    default:
-      return ModRefInfo::NoModRef;
-    }
-  }
+                           AAQueryInfo &AAQIP);
+  ModRefInfo callCapturesBefore(const Instruction *I,
+                                const MemoryLocation &MemLoc, DominatorTree *DT,
+                                AAQueryInfo &AAQIP);
 
   class Concept;
 
@@ -819,9 +908,12 @@ private:
 class BatchAAResults {
   AAResults &AA;
   AAQueryInfo AAQI;
+  SimpleCaptureInfo SimpleCI;
 
 public:
-  BatchAAResults(AAResults &AAR) : AA(AAR), AAQI() {}
+  BatchAAResults(AAResults &AAR) : AA(AAR), AAQI(&SimpleCI) {}
+  BatchAAResults(AAResults &AAR, CaptureInfo *CI) : AA(AAR), AAQI(CI) {}
+
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB) {
     return AA.alias(LocA, LocB, AAQI);
   }
@@ -846,6 +938,19 @@ public:
   }
   FunctionModRefBehavior getModRefBehavior(const CallBase *Call) {
     return AA.getModRefBehavior(Call);
+  }
+  bool isMustAlias(const MemoryLocation &LocA, const MemoryLocation &LocB) {
+    return alias(LocA, LocB) == AliasResult::MustAlias;
+  }
+  bool isMustAlias(const Value *V1, const Value *V2) {
+    return alias(MemoryLocation(V1, LocationSize::precise(1)),
+                 MemoryLocation(V2, LocationSize::precise(1))) ==
+           AliasResult::MustAlias;
+  }
+  ModRefInfo callCapturesBefore(const Instruction *I,
+                                const MemoryLocation &MemLoc,
+                                DominatorTree *DT) {
+    return AA.callCapturesBefore(I, MemLoc, DT, AAQI);
   }
 };
 
@@ -1073,7 +1178,7 @@ protected:
 public:
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB,
                     AAQueryInfo &AAQI) {
-    return MayAlias;
+    return AliasResult::MayAlias;
   }
 
   bool pointsToConstantMemory(const MemoryLocation &Loc, AAQueryInfo &AAQI,
@@ -1086,11 +1191,11 @@ public:
   }
 
   FunctionModRefBehavior getModRefBehavior(const CallBase *Call) {
-    return FMRB_UnknownModRefBehavior;
+    return FunctionModRefBehavior::unknown();
   }
 
   FunctionModRefBehavior getModRefBehavior(const Function *F) {
-    return FMRB_UnknownModRefBehavior;
+    return FunctionModRefBehavior::unknown();
   }
 
   ModRefInfo getModRefInfo(const CallBase *Call, const MemoryLocation &Loc,
@@ -1107,9 +1212,6 @@ public:
 /// Return true if this pointer is returned by a noalias function.
 bool isNoAliasCall(const Value *V);
 
-/// Return true if this is an argument with the noalias attribute.
-bool isNoAliasArgument(const Value *V);
-
 /// Return true if this pointer refers to a distinct and identifiable object.
 /// This returns true for:
 ///    Global Variables and Functions (but not Global Aliases)
@@ -1125,6 +1227,18 @@ bool isIdentifiedObject(const Value *V);
 /// arguments other than itself, which is not necessarily true for
 /// IdentifiedObjects.
 bool isIdentifiedFunctionLocal(const Value *V);
+
+/// Returns true if the pointer is one which would have been considered an
+/// escape by isNonEscapingLocalObject.
+bool isEscapeSource(const Value *V);
+
+/// Return true if Object memory is not visible after an unwind, in the sense
+/// that program semantics cannot depend on Object containing any particular
+/// value on unwind. If the RequiresNoCaptureBeforeUnwind out parameter is set
+/// to true, then the memory is only not visible if the object has not been
+/// captured prior to the unwind. Otherwise it is not visible even if captured.
+bool isNotVisibleOnUnwind(const Value *Object,
+                          bool &RequiresNoCaptureBeforeUnwind);
 
 /// A manager for alias analyses.
 ///
@@ -1157,12 +1271,7 @@ public:
     ResultGetters.push_back(&getModuleAAResultImpl<AnalysisT>);
   }
 
-  Result run(Function &F, FunctionAnalysisManager &AM) {
-    Result R(AM.getResult<TargetLibraryAnalysis>(F));
-    for (auto &Getter : ResultGetters)
-      (*Getter)(F, AM, R);
-    return R;
-  }
+  Result run(Function &F, FunctionAnalysisManager &AM);
 
 private:
   friend AnalysisInfoMixin<AAManager>;

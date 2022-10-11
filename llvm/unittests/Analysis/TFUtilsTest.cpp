@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Analysis/Utils/TFUtils.h"
+#include "llvm/Analysis/ModelUnderTrainingRunner.h"
+#include "llvm/Analysis/TensorSpec.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
@@ -57,7 +59,7 @@ TEST(TFUtilsTest, LoadAndExecuteTest) {
     auto ER = Evaluator.evaluate();
     EXPECT_TRUE(ER.hasValue());
     float Ret = *ER->getTensorValue<float>(0);
-    EXPECT_EQ(static_cast<size_t>(Ret), 80);
+    EXPECT_EQ(static_cast<int64_t>(Ret), 80);
     EXPECT_EQ(ER->getUntypedTensorValue(0),
               reinterpret_cast<const void *>(ER->getTensorValue<float>(0)));
   }
@@ -72,7 +74,7 @@ TEST(TFUtilsTest, LoadAndExecuteTest) {
     auto ER = Evaluator.evaluate();
     EXPECT_TRUE(ER.hasValue());
     float Ret = *ER->getTensorValue<float>(0);
-    EXPECT_EQ(static_cast<size_t>(Ret), 80);
+    EXPECT_EQ(static_cast<int64_t>(Ret), 80);
   }
 }
 
@@ -87,58 +89,44 @@ TEST(TFUtilsTest, EvalError) {
       TensorSpec::createSpec<float>("StatefulPartitionedCall", {1})};
 
   TFModelEvaluator Evaluator(getModelPath(), InputSpecs, OutputSpecs);
-  EXPECT_TRUE(Evaluator.isValid());
-
-  int32_t *V = Evaluator.getInput<int32_t>(0);
-  // Fill it up with 1's, we know the output.
-  for (auto I = 0; I < KnownSize; ++I) {
-    V[I] = 1;
-  }
-  auto ER = Evaluator.evaluate();
-  EXPECT_FALSE(ER.hasValue());
   EXPECT_FALSE(Evaluator.isValid());
 }
 
-TEST(TFUtilsTest, JSONParsing) {
-  auto Value = json::parse(
-      R"({"name": "tensor_name", 
-        "port": 2, 
-        "type": "int32", 
-        "shape":[1,4]
-        })");
-  EXPECT_TRUE(!!Value);
+TEST(TFUtilsTest, UnsupportedFeature) {
+  const static int64_t KnownSize = 214;
+  std::vector<TensorSpec> InputSpecs{
+      TensorSpec::createSpec<int32_t>("serving_default_input_1",
+                                      {1, KnownSize}),
+      TensorSpec::createSpec<float>("this_feature_does_not_exist", {2, 5})};
+
   LLVMContext Ctx;
-  Optional<TensorSpec> Spec = getTensorSpecFromJSON(Ctx, *Value);
-  EXPECT_TRUE(Spec.hasValue());
-  EXPECT_EQ(*Spec, TensorSpec::createSpec<int32_t>("tensor_name", {1, 4}, 2));
+  auto Evaluator = ModelUnderTrainingRunner::createAndEnsureValid(
+      Ctx, getModelPath(), "StatefulPartitionedCall", InputSpecs,
+      {LoggedFeatureSpec{
+          TensorSpec::createSpec<float>("StatefulPartitionedCall", {1}),
+          None}});
+  int32_t *V = Evaluator->getTensor<int32_t>(0);
+  // Fill it up with 1s, we know the output.
+  for (auto I = 0; I < KnownSize; ++I)
+    V[I] = 1;
+
+  float *F = Evaluator->getTensor<float>(1);
+  for (auto I = 0; I < 2 * 5; ++I)
+    F[I] = 3.14 + I;
+  float Ret = Evaluator->evaluate<float>();
+  EXPECT_EQ(static_cast<int64_t>(Ret), 80);
+  // The input vector should be unchanged
+  for (auto I = 0; I < KnownSize; ++I)
+    EXPECT_EQ(V[I], 1);
+  for (auto I = 0; I < 2 * 5; ++I)
+    EXPECT_FLOAT_EQ(F[I], 3.14 + I);
 }
 
-TEST(TFUtilsTest, JSONParsingInvalidTensorType) {
-  auto Value = json::parse(
-      R"(
-        {"name": "tensor_name", 
-        "port": 2, 
-        "type": "no such type", 
-        "shape":[1,4]
-        }
-      )");
-  EXPECT_TRUE(!!Value);
-  LLVMContext Ctx;
-  auto Spec = getTensorSpecFromJSON(Ctx, *Value);
-  EXPECT_FALSE(Spec.hasValue());
-}
+TEST(TFUtilsTest, MissingFeature) {
+  std::vector<TensorSpec> InputSpecs{};
+  std::vector<TensorSpec> OutputSpecs{
+      TensorSpec::createSpec<float>("StatefulPartitionedCall", {1})};
 
-TEST(TFUtilsTest, TensorSpecSizesAndTypes) {
-  auto Spec1D = TensorSpec::createSpec<int16_t>("Hi1", {1});
-  auto Spec2D = TensorSpec::createSpec<int16_t>("Hi2", {1, 1});
-  auto Spec1DLarge = TensorSpec::createSpec<float>("Hi3", {10});
-  auto Spec3DLarge = TensorSpec::createSpec<float>("Hi3", {2, 4, 10});
-  EXPECT_TRUE(Spec1D.isElementType<int16_t>());
-  EXPECT_FALSE(Spec3DLarge.isElementType<double>());
-  EXPECT_EQ(Spec1D.getElementCount(), 1);
-  EXPECT_EQ(Spec2D.getElementCount(), 1);
-  EXPECT_EQ(Spec1DLarge.getElementCount(), 10);
-  EXPECT_EQ(Spec3DLarge.getElementCount(), 80);
-  EXPECT_EQ(Spec3DLarge.getElementByteSize(), sizeof(float));
-  EXPECT_EQ(Spec1D.getElementByteSize(), sizeof(int16_t));
+  TFModelEvaluator Evaluator(getModelPath(), InputSpecs, OutputSpecs);
+  EXPECT_FALSE(Evaluator.isValid());
 }

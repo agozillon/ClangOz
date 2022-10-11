@@ -1,8 +1,10 @@
 // RUN: %clang_cc1 -triple x86_64 -verify=expected,dev -std=c++11\
 // RUN:            -verify-ignore-unexpected=note \
-// RUN:            -fopenmp -fopenmp-version=50 -o - %s
+// RUN:            -fopenmp -fopenmp-version=45 -o - %s
 
-// expected-no-diagnostics
+// RUN: %clang_cc1 -triple x86_64 -verify=expected,dev -std=c++11\
+// RUN:            -verify-ignore-unexpected=note \
+// RUN:            -fopenmp -o - %s
 
 // Test no infinite recursion in DeferredDiagnosticEmitter.
 constexpr int foo(int *x) {
@@ -33,3 +35,14 @@ public:
      }
   }
 };
+
+// Test that deleting an incomplete class type doesn't cause an assertion.
+namespace TestDeleteIncompleteClassDefinition {
+struct a;
+struct b {
+  b() {
+    delete c; // expected-warning {{deleting pointer to incomplete type 'a' may cause undefined behavior}}
+  }
+  a *c;
+};
+} // namespace TestDeleteIncompleteClassDefinition

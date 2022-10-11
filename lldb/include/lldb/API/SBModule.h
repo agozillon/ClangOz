@@ -37,6 +37,8 @@ public:
 
   void Clear();
 
+  bool IsFileBacked() const;
+
   /// Get const accessor for the module file specification.
   ///
   /// This function returns the file for the module on the host system
@@ -300,6 +302,7 @@ private:
   friend class SBSection;
   friend class SBSymbolContext;
   friend class SBTarget;
+  friend class SBType;
 
   explicit SBModule(const lldb::ModuleSP &module_sp);
 

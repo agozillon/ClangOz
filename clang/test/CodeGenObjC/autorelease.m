@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -emit-llvm -fobjc-arc -fobjc-runtime=macosx-10.7 -fexceptions -fobjc-exceptions -o - %s | FileCheck %s
-// RUN: %clang_cc1 -triple x86_64-apple-darwin11 -emit-llvm -fobjc-runtime=macosx-10.7 -fexceptions -fobjc-exceptions -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-apple-darwin10 -emit-llvm -fobjc-arc -fobjc-runtime=macosx-10.7 -fexceptions -fobjc-exceptions -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-apple-darwin11 -emit-llvm -fobjc-runtime=macosx-10.7 -fexceptions -fobjc-exceptions -o - %s | FileCheck %s
 // rdar://8881826
 // rdar://9412038
 
@@ -39,7 +39,7 @@ int tryTo(int (*f)(void)) {
     return 0;
   }
 }
-// CHECK-LABEL:    define i32 @tryTo(i32 ()*
+// CHECK-LABEL:    define{{.*}} i32 @tryTo(i32 ()*
 // CHECK:      [[RET:%.*]] = alloca i32,
 // CHECK:      [[T0:%.*]] = call i8* @llvm.objc.autoreleasePoolPush()
 // CHECK-NEXT: [[T1:%.*]] = load i32 ()*, i32 ()** {{%.*}},

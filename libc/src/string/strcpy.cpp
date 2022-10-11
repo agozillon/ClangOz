@@ -7,17 +7,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "src/string/strcpy.h"
-#include "src/string/strlen.h"
-#include "src/string/memcpy.h"
+#include "src/string/memory_utils/memcpy_implementations.h"
+#include "src/string/string_utils.h"
 
 #include "src/__support/common.h"
 
 namespace __llvm_libc {
 
-char *LLVM_LIBC_ENTRYPOINT(strcpy)(char *__restrict dest,
-                                   const char *__restrict src) {
-  return reinterpret_cast<char *>(
-      __llvm_libc::memcpy(dest, src, __llvm_libc::strlen(src) + 1));
+LLVM_LIBC_FUNCTION(char *, strcpy,
+                   (char *__restrict dest, const char *__restrict src)) {
+  size_t size = internal::string_length(src) + 1;
+  inline_memcpy(dest, src, size);
+  return dest;
 }
 
 } // namespace __llvm_libc

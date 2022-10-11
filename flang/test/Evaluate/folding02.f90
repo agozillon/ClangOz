@@ -1,7 +1,10 @@
-! RUN: %S/test_folding.sh %s %t %f18
+! RUN: %python %S/test_folding.py %s %flang_fc1
+
 ! Check intrinsic function folding with host runtime library
 
 module m
+  real(2), parameter :: eps2 = 0.001_2
+  real(2), parameter :: eps3 = 0.001_3
   real(4), parameter :: eps4 = 0.000001_4
   real(8), parameter :: eps8 = 0.000000000000001_8
 
@@ -19,15 +22,23 @@ module m
   ! Expected values come from libpgmath-precise for Real(4) and Real(8) and
   ! were computed on X86_64.
 
+  logical, parameter :: test_sign_i4 = sign(1_4,2) == 1_4 .and. sign(1_4,-3_8) == -1_4
+  logical, parameter :: test_sign_i8 = sign(1_8,2) == 1_8 .and. sign(1_8,-3_8) == -1_8
+
 ! Real scalar intrinsic function tests
+#define TEST_FLOATING(name, result, expected, t, k) \
+  t(kind = k), parameter ::res_##name##_##t##k = result; \
+  t(kind = k), parameter ::exp_##name##_##t##k = expected; \
+  logical, parameter ::test_##name##_##t##k = abs(res_##name##_##t##k - exp_##name##_##t##k).LE.(eps##k)
 
-  #define TEST_R4(name, result, expected) \
-  real(kind=4), parameter :: res_##name##_r4 = result; \
-  real(kind=4), parameter :: exp_##name##_r4 = expected; \
-  logical, parameter :: test_##name##_r4 = abs(res_##name##_r4 - exp_##name##_r4).LE.(eps4)
+#define TEST_R2(name, result, expected) TEST_FLOATING(name, result, expected, real, 2)
+#define TEST_R3(name, result, expected) TEST_FLOATING(name, result, expected, real, 3)
+#define TEST_R4(name, result, expected) TEST_FLOATING(name, result, expected, real, 4)
+#define TEST_R8(name, result, expected) TEST_FLOATING(name, result, expected, real, 8)
+#define TEST_C4(name, result, expected) TEST_FLOATING(name, result, expected, complex, 4)
+#define TEST_C8(name, result, expected) TEST_FLOATING(name, result, expected, complex, 8)
 
-  logical, parameter :: test_sign_i4 = sign(1_4,2_4) == 1_4 .and. sign(1_4,-3_4) == -1_4
-  logical, parameter :: test_sign_i8 = sign(1_8,2_8) == 1_8 .and. sign(1_8,-3_8) == -1_8
+! REAL(4) tests.
 
   logical, parameter :: test_abs_r4 = abs(-2._4).EQ.(2._4)
   TEST_R4(acos, acos(0.5_4), 1.0471975803375244140625_4)
@@ -56,19 +67,14 @@ module m
   TEST_R4(log_gamma, log_gamma(3.5_4), 1.20097362995147705078125_4)
   TEST_R4(mod, mod(-8.1_4, 5._4), (-3.1000003814697265625_4))
   TEST_R4(real, real(z'3f800000'), 1._4)
-  logical, parameter :: test_sign_r4 = sign(1._4,2._4) == 1._4 .and. sign(1._4,-2._4) == -1._4
+  logical, parameter :: test_sign_r4 = sign(1._4,2._8) == 1._4 .and. sign(1._4,-2._4) == -1._4
   TEST_R4(sin, sin(1.6_4), 0.99957358837127685546875_4)
   TEST_R4(sinh, sinh(0.9_4), 1.0265166759490966796875_4)
   TEST_R4(sqrt, sqrt(1.1_4), 1.0488088130950927734375_4)
   TEST_R4(tan, tan(0.8_4), 1.0296385288238525390625_4)
   TEST_R4(tanh, tanh(3._4), 0.995054781436920166015625_4)
 
-! Real(kind=8) tests.
-
-  #define TEST_R8(name, result, expected) \
-  real(kind=8), parameter :: res_##name##_r8 = result; \
-  real(kind=8), parameter :: exp_##name##_r8 = expected; \
-  logical, parameter :: test_##name##_r8 = abs(res_##name##_r8 - exp_##name##_r8).LE.(eps8)
+! REAL(8) tests.
 
   logical, parameter :: test_abs_r8 = abs(-2._8).EQ.(2._8)
   TEST_R8(acos, acos(0.5_8), &
@@ -110,7 +116,7 @@ module m
   TEST_R8(mod, mod(-8.1_8, 5._8), &
     (-3.0999999999999996447286321199499070644378662109375_8))
   TEST_R8(real, real(z'3ff0000000000000',8), 1._8)
-  logical, parameter :: test_sign_r8 = sign(1._8,2._8) == 1._8 .and. sign(1._8,-2._8) == -1._8
+  logical, parameter :: test_sign_r8 = sign(1._8,2._8) == 1._8 .and. sign(1._8,-2._4) == -1._8
   TEST_R8(sin, sin(1.6_8), &
     0.99957360304150510987852840116829611361026763916015625_8)
   TEST_R8(sinh, sinh(0.9_8), &
@@ -122,10 +128,7 @@ module m
   TEST_R8(tanh, tanh(3._8), &
     0.995054753686730464323773048818111419677734375_8)
 
-  #define TEST_C4(name, result, expected) \
-  complex(kind=4), parameter :: res_##name##_c4 = result; \
-  complex(kind=4), parameter :: exp_##name##_c4 = expected; \
-  logical, parameter :: test_##name##_c4 = abs(res_##name##_c4 - exp_##name##_c4).LE.(eps4)
+! COMPLEX(4) tests.
 
   logical, parameter :: test_abs_c4 = abs(abs((1.1_4, 0.1_4)) &
     - 1.10453617572784423828125_4).LE.(eps4)
@@ -161,10 +164,7 @@ module m
   TEST_C4(tanh, tanh((0.4_4, 1.1_4)), &
     (1.1858270168304443359375_4,1.07952976226806640625_4))
 
-  #define TEST_C8(name, result, expected) \
-  complex(kind=8), parameter :: res_##name##_c8 = result; \
-  complex(kind=8), parameter :: exp_##name##_c8 = expected; \
-  logical, parameter :: test_##name##_c8 = abs(res_##name##_c8 - exp_##name##_c8).LE.(eps8)
+! COMPLEX(8) tests.
 
   logical, parameter :: test_abs_c8 = abs(abs((1.1_8, 0.1_8)) &
     - 1.1045361017187260710414875575224868953227996826171875_8).LE.(eps4)
@@ -215,6 +215,15 @@ module m
     (1.1858270353667335061942367246956564486026763916015625_8, &
       (1.07952982287592025301137255155481398105621337890625_8)))
 
+
+  ! Only test a few REAL(2)/REAL(3) cases since they anyway use the real 4
+  ! runtime mapping.
+  TEST_R2(acos, acos(0.5_2), 1.046875_2)
+  TEST_R2(atan2, atan2(1.5_2, 1._2), 9.8291015625e-1_2)
+
+  TEST_R3(acos, acos(0.5_3), 1.046875_3)
+  TEST_R3(atan2, atan2(1.3_2, 1._3), 9.140625e-1_3)
+
 #ifdef TEST_LIBPGMATH
 ! Bessel functions and erfc_scaled can only be folded if libpgmath
 ! is used.
@@ -240,6 +249,22 @@ module m
     (-0.93219375976297402797143831776338629424571990966796875_8))
    TEST_R8(erfc_scaled, erfc_scaled(0.1_8), &
     0.89645697996912654392787089818739332258701324462890625_8)
+
+  real(4), parameter :: bessel_jn_transformational(*) = bessel_jn(1,3, 3.2_4)
+  logical, parameter :: test_bessel_jn_shape = size(bessel_jn_transformational, 1).eq.3
+  logical, parameter :: test_bessel_jn_t1 = bessel_jn_transformational(1).eq.bessel_jn(1, 3.2_4)
+  logical, parameter :: test_bessel_jn_t2 = bessel_jn_transformational(2).eq.bessel_jn(2, 3.2_4)
+  logical, parameter :: test_bessel_jn_t3 = bessel_jn_transformational(3).eq.bessel_jn(3, 3.2_4)
+  real(4), parameter :: bessel_jn_empty(*) = bessel_jn(3,1, 3.2_4)
+  logical, parameter :: test_bessel_jn_empty = size(bessel_jn_empty, 1).eq.0
+
+  real(4), parameter :: bessel_yn_transformational(*) = bessel_yn(1,3, 1.6_4)
+  logical, parameter :: test_bessel_yn_shape = size(bessel_yn_transformational, 1).eq.3
+  logical, parameter :: test_bessel_yn_t1 = bessel_yn_transformational(1).eq.bessel_yn(1, 1.6_4)
+  logical, parameter :: test_bessel_yn_t2 = bessel_yn_transformational(2).eq.bessel_yn(2, 1.6_4)
+  logical, parameter :: test_bessel_yn_t3 = bessel_yn_transformational(3).eq.bessel_yn(3, 1.6_4)
+  real(4), parameter :: bessel_yn_empty(*) = bessel_yn(3,1, 3.2_4)
+  logical, parameter :: test_bessel_yn_empty = size(bessel_yn_empty, 1).eq.0
 #endif
 
 ! Test exponentiation by real or complex folding (it is using host runtime)
@@ -251,5 +276,19 @@ module m
   TEST_C8(pow, ((0.5_8, 0.6_8)**(0.74_8, -1.1_8)), &
     (1.3223499632715445262221010125358588993549346923828125_8, &
      1.7371201007364975854585509296157397329807281494140625_8))
+
+! Extension specific intrinsic variants of ABS
+  logical, parameter, test_babs1 = kind(babs(-1_1)) == 1
+  logical, parameter, test_babs2 = babs(-1_1) == 1_1
+  logical, parameter, test_iiabs1 = kind(iiabs(-1_2)) == 2
+  logical, parameter, test_iiabs2 = iiabs(-1_2) == 1_2
+  logical, parameter, test_jiabs1 = kind(jiabs(-1_4)) == 4
+  logical, parameter, test_jiabs2 = jiabs(-1_4) == 1_4
+  logical, parameter, test_kiabs1 = kind(kiabs(-1_8)) == 8
+  logical, parameter, test_kiabs2 = kiabs(-1_8) == 1_8
+  logical, parameter, test_zabs1 = kind(zabs((3._8,4._8))) == 8
+  logical, parameter, test_zabs2 = zabs((3._8,4._8)) == 5_8
+  logical, parameter, test_cdabs1 = kind(cdabs((3._8,4._8))) == kind(1.d0)
+  logical, parameter, test_cdabs2 = cdabs((3._8,4._8)) == real(5, kind(1.d0))
 
 end

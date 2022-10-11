@@ -14,21 +14,22 @@
 #include "llvm/LTO/legacy/ThinLTOCodeGenerator.h"
 #include "llvm/Support/CommandLine.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ModuleSummaryAnalysis.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/Bitcode/BitcodeWriterPass.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LLVMRemarkStreamer.h"
-#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/IR/PassTimingInfo.h"
 #include "llvm/IR/Verifier.h"
@@ -36,7 +37,11 @@
 #include "llvm/LTO/LTO.h"
 #include "llvm/LTO/SummaryBasedOptimizations.h"
 #include "llvm/MC/SubtargetFeature.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Object/IRObjectFile.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/StandardInstrumentations.h"
+#include "llvm/Remarks/HotnessThresholdParser.h"
 #include "llvm/Support/CachePruning.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Error.h"
@@ -44,15 +49,13 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/SHA1.h"
 #include "llvm/Support/SmallVectorMemoryBuffer.h"
-#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/Threading.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Transforms/IPO.h"
+#include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/Transforms/IPO/FunctionImport.h"
 #include "llvm/Transforms/IPO/Internalize.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/IPO/WholeProgramDevirt.h"
 #include "llvm/Transforms/ObjCARC.h"
 #include "llvm/Transforms/Utils/FunctionImportUtils.h"
@@ -75,6 +78,8 @@ extern cl::opt<bool> LTODiscardValueNames;
 extern cl::opt<std::string> RemarksFilename;
 extern cl::opt<std::string> RemarksPasses;
 extern cl::opt<bool> RemarksWithHotness;
+extern cl::opt<Optional<uint64_t>, false, remarks::HotnessThresholdParser>
+    RemarksHotnessThreshold;
 extern cl::opt<std::string> RemarksFormat;
 }
 
@@ -231,32 +236,58 @@ crossImportIntoModule(Module &TheModule, const ModuleSummaryIndex &Index,
 
 static void optimizeModule(Module &TheModule, TargetMachine &TM,
                            unsigned OptLevel, bool Freestanding,
-                           ModuleSummaryIndex *Index) {
-  // Populate the PassManager
-  PassManagerBuilder PMB;
-  PMB.LibraryInfo = new TargetLibraryInfoImpl(TM.getTargetTriple());
+                           bool DebugPassManager, ModuleSummaryIndex *Index) {
+  Optional<PGOOptions> PGOOpt;
+  LoopAnalysisManager LAM;
+  FunctionAnalysisManager FAM;
+  CGSCCAnalysisManager CGAM;
+  ModuleAnalysisManager MAM;
+
+  PassInstrumentationCallbacks PIC;
+  StandardInstrumentations SI(DebugPassManager);
+  SI.registerCallbacks(PIC, &FAM);
+  PipelineTuningOptions PTO;
+  PTO.LoopVectorization = true;
+  PTO.SLPVectorization = true;
+  PassBuilder PB(&TM, PTO, PGOOpt, &PIC);
+
+  std::unique_ptr<TargetLibraryInfoImpl> TLII(
+      new TargetLibraryInfoImpl(Triple(TM.getTargetTriple())));
   if (Freestanding)
-    PMB.LibraryInfo->disableAllFunctions();
-  PMB.Inliner = createFunctionInliningPass();
-  // FIXME: should get it from the bitcode?
-  PMB.OptLevel = OptLevel;
-  PMB.LoopVectorize = true;
-  PMB.SLPVectorize = true;
-  // Already did this in verifyLoadedModule().
-  PMB.VerifyInput = false;
-  PMB.VerifyOutput = false;
-  PMB.ImportSummary = Index;
+    TLII->disableAllFunctions();
+  FAM.registerPass([&] { return TargetLibraryAnalysis(*TLII); });
 
-  legacy::PassManager PM;
+  // Register all the basic analyses with the managers.
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
-  // Add the TTI (required to inform the vectorizer about register size for
-  // instance)
-  PM.add(createTargetTransformInfoWrapperPass(TM.getTargetIRAnalysis()));
+  ModulePassManager MPM;
 
-  // Add optimizations
-  PMB.populateThinLTOPassManager(PM);
+  OptimizationLevel OL;
 
-  PM.run(TheModule);
+  switch (OptLevel) {
+  default:
+    llvm_unreachable("Invalid optimization level");
+  case 0:
+    OL = OptimizationLevel::O0;
+    break;
+  case 1:
+    OL = OptimizationLevel::O1;
+    break;
+  case 2:
+    OL = OptimizationLevel::O2;
+    break;
+  case 3:
+    OL = OptimizationLevel::O3;
+    break;
+  }
+
+  MPM.addPass(PB.buildThinLTODefaultPipeline(OL, Index));
+
+  MPM.run(TheModule, MAM);
 }
 
 static void
@@ -269,16 +300,26 @@ addUsedSymbolToPreservedGUID(const lto::InputFile &File,
 }
 
 // Convert the PreservedSymbols map from "Name" based to "GUID" based.
+static void computeGUIDPreservedSymbols(const lto::InputFile &File,
+                                        const StringSet<> &PreservedSymbols,
+                                        const Triple &TheTriple,
+                                        DenseSet<GlobalValue::GUID> &GUIDs) {
+  // Iterate the symbols in the input file and if the input has preserved symbol
+  // compute the GUID for the symbol.
+  for (const auto &Sym : File.symbols()) {
+    if (PreservedSymbols.count(Sym.getName()) && !Sym.getIRName().empty())
+      GUIDs.insert(GlobalValue::getGUID(GlobalValue::getGlobalIdentifier(
+          Sym.getIRName(), GlobalValue::ExternalLinkage, "")));
+  }
+}
+
 static DenseSet<GlobalValue::GUID>
-computeGUIDPreservedSymbols(const StringSet<> &PreservedSymbols,
+computeGUIDPreservedSymbols(const lto::InputFile &File,
+                            const StringSet<> &PreservedSymbols,
                             const Triple &TheTriple) {
   DenseSet<GlobalValue::GUID> GUIDPreservedSymbols(PreservedSymbols.size());
-  for (auto &Entry : PreservedSymbols) {
-    StringRef Name = Entry.first();
-    if (TheTriple.isOSBinFormatMachO() && Name.size() > 0 && Name[0] == '_')
-      Name = Name.drop_front();
-    GUIDPreservedSymbols.insert(GlobalValue::getGUID(Name));
-  }
+  computeGUIDPreservedSymbols(File, PreservedSymbols, TheTriple,
+                              GUIDPreservedSymbols);
   return GUIDPreservedSymbols;
 }
 
@@ -303,7 +344,8 @@ std::unique_ptr<MemoryBuffer> codegenModule(Module &TheModule,
     // Run codegen now. resulting binary is in OutputBuffer.
     PM.run(TheModule);
   }
-  return std::make_unique<SmallVectorMemoryBuffer>(std::move(OutputBuffer));
+  return std::make_unique<SmallVectorMemoryBuffer>(
+      std::move(OutputBuffer), /*RequiresNullTerminator=*/false);
 }
 
 /// Manage caching for a single Module.
@@ -408,7 +450,12 @@ ProcessThinLTOModule(Module &TheModule, ModuleSummaryIndex &Index,
                      const GVSummaryMapTy &DefinedGlobals,
                      const ThinLTOCodeGenerator::CachingOptions &CacheOptions,
                      bool DisableCodeGen, StringRef SaveTempsDir,
-                     bool Freestanding, unsigned OptLevel, unsigned count) {
+                     bool Freestanding, unsigned OptLevel, unsigned count,
+                     bool DebugPassManager) {
+  // See comment at call to updateVCallVisibilityInIndex() for why
+  // WholeProgramVisibilityEnabledInLTO is false.
+  updatePublicTypeTestCalls(TheModule,
+                            /* WholeProgramVisibilityEnabledInLTO */ false);
 
   // "Benchmark"-like optimization: single-source case
   bool SingleModule = (ModuleMap.size() == 1);
@@ -424,7 +471,7 @@ ProcessThinLTOModule(Module &TheModule, ModuleSummaryIndex &Index,
     promoteModule(TheModule, Index, ClearDSOLocalOnDeclarations);
 
     // Apply summary-based prevailing-symbol resolution decisions.
-    thinLTOResolvePrevailingInModule(TheModule, DefinedGlobals);
+    thinLTOFinalizeInModule(TheModule, DefinedGlobals, /*PropagateAttrs=*/true);
 
     // Save temps: after promotion.
     saveTempBitcode(TheModule, SaveTempsDir, count, ".1.promoted.bc");
@@ -448,7 +495,8 @@ ProcessThinLTOModule(Module &TheModule, ModuleSummaryIndex &Index,
     saveTempBitcode(TheModule, SaveTempsDir, count, ".3.imported.bc");
   }
 
-  optimizeModule(TheModule, TM, OptLevel, Freestanding, &Index);
+  optimizeModule(TheModule, TM, OptLevel, Freestanding, DebugPassManager,
+                 &Index);
 
   saveTempBitcode(TheModule, SaveTempsDir, count, ".4.opt.bc");
 
@@ -461,7 +509,8 @@ ProcessThinLTOModule(Module &TheModule, ModuleSummaryIndex &Index,
       auto Index = buildModuleSummaryIndex(TheModule, nullptr, &PSI);
       WriteBitcodeToFile(TheModule, OS, true, &Index);
     }
-    return std::make_unique<SmallVectorMemoryBuffer>(std::move(OutputBuffer));
+    return std::make_unique<SmallVectorMemoryBuffer>(
+        std::move(OutputBuffer), /*RequiresNullTerminator=*/false);
   }
 
   return codegenModule(TheModule, TM);
@@ -494,7 +543,9 @@ static void resolvePrevailingInIndex(
     ResolvedODR[ModuleIdentifier][GUID] = NewLinkage;
   };
 
-  thinLTOResolvePrevailingInIndex(Index, isPrevailing, recordNewLinkage,
+  // TODO Conf.VisibilityScheme can be lto::Config::ELF for ELF.
+  lto::Config Conf;
+  thinLTOResolvePrevailingInIndex(Conf, Index, isPrevailing, recordNewLinkage,
                                   GUIDPreservedSymbols);
 }
 
@@ -522,7 +573,7 @@ void ThinLTOCodeGenerator::addModule(StringRef Identifier, StringRef Data) {
 
   auto InputOrError = lto::InputFile::create(Buffer);
   if (!InputOrError)
-    report_fatal_error("ThinLTO cannot create input file: " +
+    report_fatal_error(Twine("ThinLTO cannot create input file: ") +
                        toString(InputOrError.takeError()));
 
   auto TripleStr = (*InputOrError)->getTargetTriple();
@@ -557,7 +608,7 @@ std::unique_ptr<TargetMachine> TargetMachineBuilder::create() const {
   const Target *TheTarget =
       TargetRegistry::lookupTarget(TheTriple.str(), ErrMsg);
   if (!TheTarget) {
-    report_fatal_error("Can't load target for this Triple: " + ErrMsg);
+    report_fatal_error(Twine("Can't load target for this Triple: ") + ErrMsg);
   }
 
   // Use MAttr as the default set of features.
@@ -565,9 +616,12 @@ std::unique_ptr<TargetMachine> TargetMachineBuilder::create() const {
   Features.getDefaultSubtargetFeatures(TheTriple);
   std::string FeatureStr = Features.getString();
 
-  return std::unique_ptr<TargetMachine>(
+  std::unique_ptr<TargetMachine> TM(
       TheTarget->createTargetMachine(TheTriple.str(), MCpu, FeatureStr, Options,
                                      RelocModel, None, CGOptLevel));
+  assert(TM && "Cannot create target machine");
+
+  return TM;
 }
 
 /**
@@ -652,7 +706,7 @@ void ThinLTOCodeGenerator::promote(Module &TheModule, ModuleSummaryIndex &Index,
 
   // Convert the preserved symbols set from string to GUID
   auto GUIDPreservedSymbols = computeGUIDPreservedSymbols(
-      PreservedSymbols, Triple(TheModule.getTargetTriple()));
+      File, PreservedSymbols, Triple(TheModule.getTargetTriple()));
 
   // Add used symbol to the preserved symbols.
   addUsedSymbolToPreservedGUID(File, GUIDPreservedSymbols);
@@ -674,8 +728,9 @@ void ThinLTOCodeGenerator::promote(Module &TheModule, ModuleSummaryIndex &Index,
   resolvePrevailingInIndex(Index, ResolvedODR, GUIDPreservedSymbols,
                            PrevailingCopy);
 
-  thinLTOResolvePrevailingInModule(
-      TheModule, ModuleToDefinedGVSummaries[ModuleIdentifier]);
+  thinLTOFinalizeInModule(TheModule,
+                          ModuleToDefinedGVSummaries[ModuleIdentifier],
+                          /*PropagateAttrs=*/false);
 
   // Promote the exported values in the index, so that they are promoted
   // in the module.
@@ -702,7 +757,7 @@ void ThinLTOCodeGenerator::crossModuleImport(Module &TheModule,
 
   // Convert the preserved symbols set from string to GUID
   auto GUIDPreservedSymbols = computeGUIDPreservedSymbols(
-      PreservedSymbols, Triple(TheModule.getTargetTriple()));
+      File, PreservedSymbols, Triple(TheModule.getTargetTriple()));
 
   addUsedSymbolToPreservedGUID(File, GUIDPreservedSymbols);
 
@@ -737,7 +792,7 @@ void ThinLTOCodeGenerator::gatherImportedSummariesForModule(
 
   // Convert the preserved symbols set from string to GUID
   auto GUIDPreservedSymbols = computeGUIDPreservedSymbols(
-      PreservedSymbols, Triple(TheModule.getTargetTriple()));
+      File, PreservedSymbols, Triple(TheModule.getTargetTriple()));
 
   addUsedSymbolToPreservedGUID(File, GUIDPreservedSymbols);
 
@@ -770,7 +825,7 @@ void ThinLTOCodeGenerator::emitImports(Module &TheModule, StringRef OutputName,
 
   // Convert the preserved symbols set from string to GUID
   auto GUIDPreservedSymbols = computeGUIDPreservedSymbols(
-      PreservedSymbols, Triple(TheModule.getTargetTriple()));
+      File, PreservedSymbols, Triple(TheModule.getTargetTriple()));
 
   addUsedSymbolToPreservedGUID(File, GUIDPreservedSymbols);
 
@@ -808,7 +863,7 @@ void ThinLTOCodeGenerator::internalize(Module &TheModule,
 
   // Convert the preserved symbols set from string to GUID
   auto GUIDPreservedSymbols =
-      computeGUIDPreservedSymbols(PreservedSymbols, TMBuilder.TheTriple);
+      computeGUIDPreservedSymbols(File, PreservedSymbols, TMBuilder.TheTriple);
 
   addUsedSymbolToPreservedGUID(File, GUIDPreservedSymbols);
 
@@ -849,8 +904,9 @@ void ThinLTOCodeGenerator::internalize(Module &TheModule,
   promoteModule(TheModule, Index, /*ClearDSOLocalOnDeclarations=*/false);
 
   // Internalization
-  thinLTOResolvePrevailingInModule(
-      TheModule, ModuleToDefinedGVSummaries[ModuleIdentifier]);
+  thinLTOFinalizeInModule(TheModule,
+                          ModuleToDefinedGVSummaries[ModuleIdentifier],
+                          /*PropagateAttrs=*/false);
 
   thinLTOInternalizeModule(TheModule,
                            ModuleToDefinedGVSummaries[ModuleIdentifier]);
@@ -864,7 +920,7 @@ void ThinLTOCodeGenerator::optimize(Module &TheModule) {
 
   // Optimize now
   optimizeModule(TheModule, *TMBuilder.create(), OptLevel, Freestanding,
-                 nullptr);
+                 DebugPassManager, nullptr);
 }
 
 /// Write out the generated object file, either from CacheEntryPath or from
@@ -901,13 +957,18 @@ ThinLTOCodeGenerator::writeGeneratedObject(int count, StringRef CacheEntryPath,
   std::error_code Err;
   raw_fd_ostream OS(OutputPath, Err, sys::fs::OF_None);
   if (Err)
-    report_fatal_error("Can't open output '" + OutputPath + "'\n");
+    report_fatal_error(Twine("Can't open output '") + OutputPath + "'\n");
   OS << OutputBuffer.getBuffer();
   return std::string(OutputPath.str());
 }
 
 // Main entry point for the ThinLTO processing
 void ThinLTOCodeGenerator::run() {
+  timeTraceProfilerBegin("ThinLink", StringRef(""));
+  auto TimeTraceScopeExit = llvm::make_scope_exit([]() {
+    if (llvm::timeTraceProfilerEnabled())
+      llvm::timeTraceProfilerEnd();
+  });
   // Prepare the resulting object vector
   assert(ProducedBinaries.empty() && "The generator should not be reused");
   if (SavedObjectsDirectoryPath.empty())
@@ -917,7 +978,7 @@ void ThinLTOCodeGenerator::run() {
     bool IsDir;
     sys::fs::is_directory(SavedObjectsDirectoryPath, IsDir);
     if (!IsDir)
-      report_fatal_error("Unexistent dir: '" + SavedObjectsDirectoryPath + "'");
+      report_fatal_error(Twine("Unexistent dir: '") + SavedObjectsDirectoryPath + "'");
     ProducedBinaryFiles.resize(Modules.size());
   }
 
@@ -958,7 +1019,7 @@ void ThinLTOCodeGenerator::run() {
     if (EC)
       report_fatal_error(Twine("Failed to open ") + SaveTempPath +
                          " to save optimized bitcode\n");
-    WriteIndexToFile(*Index, OS);
+    writeIndexToFile(*Index, OS);
   }
 
 
@@ -972,8 +1033,10 @@ void ThinLTOCodeGenerator::run() {
 
   // Convert the preserved symbols set from string to GUID, this is needed for
   // computing the caching hash and the internalization.
-  auto GUIDPreservedSymbols =
-      computeGUIDPreservedSymbols(PreservedSymbols, TMBuilder.TheTriple);
+  DenseSet<GlobalValue::GUID> GUIDPreservedSymbols;
+  for (const auto &M : Modules)
+    computeGUIDPreservedSymbols(*M, PreservedSymbols, TMBuilder.TheTriple,
+                                GUIDPreservedSymbols);
 
   // Add used symbol from inputs to the preserved symbols.
   for (const auto &M : Modules)
@@ -988,8 +1051,13 @@ void ThinLTOCodeGenerator::run() {
   // Currently there is no support for enabling whole program visibility via a
   // linker option in the old LTO API, but this call allows it to be specified
   // via the internal option. Must be done before WPD below.
+  if (hasWholeProgramVisibility(/* WholeProgramVisibilityEnabledInLTO */ false))
+    Index->setWithWholeProgramVisibility();
   updateVCallVisibilityInIndex(*Index,
-                               /* WholeProgramVisibilityEnabledInLTO */ false);
+                               /* WholeProgramVisibilityEnabledInLTO */ false,
+                               // FIXME: This needs linker information via a
+                               // TBD new interface.
+                               /* DynamicExportSymbols */ {});
 
   // Perform index-based WPD. This will return immediately if there are
   // no index entries in the typeIdMetadata map (e.g. if we are instead
@@ -1031,6 +1099,8 @@ void ThinLTOCodeGenerator::run() {
       *Index, IsExported(ExportLists, GUIDPreservedSymbols),
       IsPrevailing(PrevailingCopy));
 
+  thinLTOPropagateFunctionAttrs(*Index, IsPrevailing(PrevailingCopy));
+
   // Make sure that every module has an entry in the ExportLists, ImportList,
   // GVSummary and ResolvedODR maps to enable threaded access to these maps
   // below.
@@ -1042,19 +1112,16 @@ void ThinLTOCodeGenerator::run() {
     ModuleToDefinedGVSummaries[ModuleIdentifier];
   }
 
-  // Compute the ordering we will process the inputs: the rough heuristic here
-  // is to sort them per size so that the largest module get schedule as soon as
-  // possible. This is purely a compile-time optimization.
-  std::vector<int> ModulesOrdering;
-  ModulesOrdering.resize(Modules.size());
-  std::iota(ModulesOrdering.begin(), ModulesOrdering.end(), 0);
-  llvm::sort(ModulesOrdering, [&](int LeftIndex, int RightIndex) {
-    auto LSize =
-        Modules[LeftIndex]->getSingleBitcodeModule().getBuffer().size();
-    auto RSize =
-        Modules[RightIndex]->getSingleBitcodeModule().getBuffer().size();
-    return LSize > RSize;
-  });
+  std::vector<BitcodeModule *> ModulesVec;
+  ModulesVec.reserve(Modules.size());
+  for (auto &Mod : Modules)
+    ModulesVec.push_back(&Mod->getSingleBitcodeModule());
+  std::vector<int> ModulesOrdering = lto::generateModulesOrdering(ModulesVec);
+
+  if (llvm::timeTraceProfilerEnabled())
+    llvm::timeTraceProfilerEnd();
+
+  TimeTraceScopeExit.release();
 
   // Parallel optimizer + codegen
   {
@@ -1097,7 +1164,7 @@ void ThinLTOCodeGenerator::run() {
         Context.enableDebugTypeODRUniquing();
         auto DiagFileOrErr = lto::setupLLVMOptimizationRemarks(
             Context, RemarksFilename, RemarksPasses, RemarksFormat,
-            RemarksWithHotness, count);
+            RemarksWithHotness, RemarksHotnessThreshold, count);
         if (!DiagFileOrErr) {
           errs() << "Error: " << toString(DiagFileOrErr.takeError()) << "\n";
           report_fatal_error("ThinLTO: Can't get an output file for the "
@@ -1117,7 +1184,8 @@ void ThinLTOCodeGenerator::run() {
             *TheModule, *Index, ModuleMap, *TMBuilder.create(), ImportList,
             ExportList, GUIDPreservedSymbols,
             ModuleToDefinedGVSummaries[ModuleIdentifier], CacheOptions,
-            DisableCodeGen, SaveTempsDir, Freestanding, OptLevel, count);
+            DisableCodeGen, SaveTempsDir, Freestanding, OptLevel, count,
+            DebugPassManager);
 
         // Commit to the cache (if enabled)
         CacheEntry.write(*OutputBuffer);

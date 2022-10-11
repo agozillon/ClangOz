@@ -1,7 +1,5 @@
 """Test the lldb public C++ api breakpoint callbacks."""
 
-from __future__ import print_function
-
 # __package__ = "lldbsuite.test"
 
 
@@ -20,11 +18,20 @@ class SBBreakpointCallbackCase(TestBase):
         self.generateSource('driver.cpp')
         self.generateSource('listener_test.cpp')
         self.generateSource('test_breakpoint_callback.cpp')
+        self.generateSource('test_breakpoint_location_callback.cpp')
         self.generateSource('test_listener_event_description.cpp')
         self.generateSource('test_listener_event_process_state.cpp')
         self.generateSource('test_listener_resume.cpp')
+        self.generateSource('test_stop-hook.cpp')
 
-    mydir = TestBase.compute_mydir(__file__)
+    @skipIfRemote
+    @skipIfNoSBHeaders
+    # clang-cl does not support throw or catch (llvm.org/pr24538)
+    @skipIfWindows
+    def test_python_stop_hook(self):
+        """Test that you can run a python command in a stop-hook when stdin is File based. """
+        self.build_and_test('driver.cpp test_stop-hook.cpp',
+                            'test_python_stop_hook')
 
     @skipIfRemote
     @skipIfNoSBHeaders
@@ -34,6 +41,15 @@ class SBBreakpointCallbackCase(TestBase):
         """Test the that SBBreakpoint callback is invoked when a breakpoint is hit. """
         self.build_and_test('driver.cpp test_breakpoint_callback.cpp',
                             'test_breakpoint_callback')
+
+    @skipIfRemote
+    @skipIfNoSBHeaders
+    # clang-cl does not support throw or catch (llvm.org/pr24538)
+    @skipIfWindows
+    def test_breakpoint_location_callback(self):
+        """Test the that SBBreakpointLocation callback is invoked when a breakpoint is hit. """
+        self.build_and_test('driver.cpp test_breakpoint_location_callback.cpp',
+                            'test_breakpoint_location_callback')
 
     @skipIfRemote
     @skipIfNoSBHeaders
@@ -98,12 +114,15 @@ class SBBreakpointCallbackCase(TestBase):
         env = {self.dylibPath: self.getLLDBLibraryEnvVal()}
         if 'LLDB_DEBUGSERVER_PATH' in os.environ:
             env['LLDB_DEBUGSERVER_PATH'] = os.environ['LLDB_DEBUGSERVER_PATH']
-        if self.TraceOn():
-            print("Running test %s" % " ".join(exe))
-            check_call(exe, env=env)
-        else:
-            with open(os.devnull, 'w') as fnull:
-                check_call(exe, env=env, stdout=fnull, stderr=fnull)
+        try:
+            if self.TraceOn():
+                print("Running test %s" % " ".join(exe))
+                check_call(exe, env=env)
+            else:
+                with open(os.devnull, 'w') as fnull:
+                    check_call(exe, env=env, stdout=fnull, stderr=fnull)
+        except subprocess.CalledProcessError as e:
+            self.fail(e)
 
     def build_program(self, sources, program):
         return self.buildDriver(sources, program)

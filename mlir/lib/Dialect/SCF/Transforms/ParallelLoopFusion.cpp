@@ -10,14 +10,19 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "PassDetail.h"
-#include "mlir/Dialect/SCF/Passes.h"
-#include "mlir/Dialect/SCF/SCF.h"
-#include "mlir/Dialect/SCF/Transforms.h"
-#include "mlir/Dialect/StandardOps/IR/Ops.h"
+#include "mlir/Dialect/SCF/Transforms/Passes.h"
+
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Transforms/Transforms.h"
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/OpDefinition.h"
+
+namespace mlir {
+#define GEN_PASS_DEF_SCFPARALLELLOOPFUSION
+#include "mlir/Dialect/SCF/Transforms/Passes.h.inc"
+} // namespace mlir
 
 using namespace mlir;
 using namespace mlir::scf;
@@ -40,9 +45,11 @@ static bool equalIterationSpaces(ParallelOp firstPloop,
     // TODO: Extend this to support aliases and equal constants.
     return std::equal(lhs.begin(), lhs.end(), rhs.begin());
   };
-  return matchOperands(firstPloop.lowerBound(), secondPloop.lowerBound()) &&
-         matchOperands(firstPloop.upperBound(), secondPloop.upperBound()) &&
-         matchOperands(firstPloop.step(), secondPloop.step());
+  return matchOperands(firstPloop.getLowerBound(),
+                       secondPloop.getLowerBound()) &&
+         matchOperands(firstPloop.getUpperBound(),
+                       secondPloop.getUpperBound()) &&
+         matchOperands(firstPloop.getStep(), secondPloop.getStep());
 }
 
 /// Checks if the parallel loops have mixed access to the same buffers. Returns
@@ -52,14 +59,14 @@ static bool haveNoReadsAfterWriteExceptSameIndex(
     ParallelOp firstPloop, ParallelOp secondPloop,
     const BlockAndValueMapping &firstToSecondPloopIndices) {
   DenseMap<Value, SmallVector<ValueRange, 1>> bufferStores;
-  firstPloop.getBody()->walk([&](StoreOp store) {
-    bufferStores[store.getMemRef()].push_back(store.indices());
+  firstPloop.getBody()->walk([&](memref::StoreOp store) {
+    bufferStores[store.getMemRef()].push_back(store.getIndices());
   });
-  auto walkResult = secondPloop.getBody()->walk([&](LoadOp load) {
+  auto walkResult = secondPloop.getBody()->walk([&](memref::LoadOp load) {
     // Stop if the memref is defined in secondPloop body. Careful alias analysis
     // is needed.
     auto *memrefDef = load.getMemRef().getDefiningOp();
-    if (memrefDef && memrefDef->getBlock() == load.getOperation()->getBlock())
+    if (memrefDef && memrefDef->getBlock() == load->getBlock())
       return WalkResult::interrupt();
 
     auto write = bufferStores.find(load.getMemRef());
@@ -73,7 +80,7 @@ static bool haveNoReadsAfterWriteExceptSameIndex(
     // Check that the load indices of secondPloop coincide with store indices of
     // firstPloop for the same memrefs.
     auto storeIndices = write->second.front();
-    auto loadIndices = load.indices();
+    auto loadIndices = load.getIndices();
     if (storeIndices.size() != loadIndices.size())
       return WalkResult::interrupt();
     for (int i = 0, e = storeIndices.size(); i < e; ++i) {
@@ -160,7 +167,7 @@ void mlir::scf::naivelyFuseParallelOps(Region &region) {
 
 namespace {
 struct ParallelLoopFusion
-    : public SCFParallelLoopFusionBase<ParallelLoopFusion> {
+    : public impl::SCFParallelLoopFusionBase<ParallelLoopFusion> {
   void runOnOperation() override {
     getOperation()->walk([&](Operation *child) {
       for (Region &region : child->getRegions())

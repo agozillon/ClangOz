@@ -6,8 +6,13 @@
   
 -->
 
-The F18 Parser
-==============
+# The F18 Parser
+
+```eval_rst
+.. contents::
+   :local:
+```
+
 This program source code implements a parser for the Fortran programming
 language.
 
@@ -42,8 +47,8 @@ source file and receive its parse tree and error messages.  The interfaces
 of the Parsing class correspond to the two major passes of the parser,
 which are described below.
 
-Prescanning and Preprocessing
------------------------------
+## Prescanning and Preprocessing
+
 The first pass is performed by an instance of the Prescanner class,
 with help from an instance of Preprocessor.
 
@@ -100,8 +105,8 @@ The content of the cooked character stream is available and useful
 for debugging, being as it is a simple value forwarded from the first major
 pass of the compiler to the second.
 
-Source Provenance
------------------
+## Source Provenance
+
 The prescanner constructs a chronicle of every file that is read by the
 parser, viz. the original source file and all others that it directly
 or indirectly includes.  One copy of the content of each of these files
@@ -124,18 +129,28 @@ Simple `const char *` pointers to characters in the cooked character
 stream, or to contiguous ranges thereof, are used as source position
 indicators within the parser and in the parse tree.
 
-Messages
---------
+## Messages
+
 Message texts, and snprintf-like formatting strings for constructing
 messages, are instantiated in the various components of the parser with
-C++ user defined character literals tagged with `_err_en_US` and `_en_US`
-(signifying fatality and language, with the default being the dialect of
-English used in the United States) so that they may be easily identified
-for localization.  As described above, messages are associated with
+C++ user defined character literals tagged with `_err_en_US`, `_warn_en_US`,
+`port_en_US`, and `_en_US` to signify severity and language; the default
+language is the dialect of English used in the United States.
+
+All "fatal" errors that do not immediately abort compilation but do
+prevent the generation of binary and module files are `_err_en_US`.
+Warnings about detected flaws in the program that probably indicate
+problems worth attention are `_warn_en_US`.
+Non-conforming extensions, legacy features, and obsolescent or deleted
+features will raise `_port_en_US` messages when those are enabled.
+Other messages have a simple `_en_US` suffix, including all messages
+that are explanatory attachments.
+
+As described above, messages are associated with
 source code positions by means of provenance values.
 
-The Parse Tree
---------------
+## The Parse Tree
+
 Each of the ca. 450 numbered requirement productions in the standard
 Fortran language grammar, as well as the productions implied by legacy
 extensions and preserved obsolescent features, maps to a distinct class
@@ -174,8 +189,8 @@ stability of pointers into these lists.
 There is a general purpose library by means of which parse trees may
 be traversed.
 
-Parsing
--------
+## Parsing
+
 This compiler attempts to recognize the entire cooked character stream
 (see above) as a Fortran program.  It records the reductions made during
 a successful recognition as a parse tree value.  The recognized grammar
@@ -203,8 +218,8 @@ of "parser combinator" template functions that compose them to form more
 complicated recognizers and their correspondences to the construction
 of parse tree values.
 
-Unparsing
----------
+## Unparsing
+
 Parse trees can be converted back into free form Fortran source code.
 This formatter is not really a classical "pretty printer", but is
 more of a data structure dump whose output is suitable for compilation

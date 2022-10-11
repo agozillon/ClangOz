@@ -2,8 +2,8 @@
 
 %struct.x = type { i8, i8, i8, i8, i8, i8, i8, i8, i8, i8, i8 }
 
-@src = external global %struct.x
-@dst = external global %struct.x
+@src = external dso_local global %struct.x
+@dst = external dso_local global %struct.x
 
 @.str1 = private unnamed_addr constant [31 x i8] c"DHRYSTONE PROGRAM, SOME STRING\00", align 1
 @.str2 = private unnamed_addr constant [36 x i8] c"DHRYSTONE PROGRAM, SOME STRING BLAH\00", align 1
@@ -28,9 +28,9 @@ define void @t1(i8* nocapture %C) nounwind {
 entry:
 ; CHECK-LABEL: t1:
 ; CHECK: ldr [[DEST:q[0-9]+]], [x[[BASEREG]]]
+; CHECK: str [[DEST:q[0-9]+]], [x0]
 ; CHECK: ldur [[DEST:q[0-9]+]], [x[[BASEREG:[0-9]+]], #15]
 ; CHECK: stur [[DEST:q[0-9]+]], [x0, #15]
-; CHECK: str [[DEST:q[0-9]+]], [x0]
   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* %C, i8* getelementptr inbounds ([31 x i8], [31 x i8]* @.str1, i64 0, i64 0), i64 31, i1 false)
   ret void
 }
@@ -51,9 +51,9 @@ define void @t3(i8* nocapture %C) nounwind {
 entry:
 ; CHECK-LABEL: t3:
 ; CHECK: ldr [[DEST:q[0-9]+]], [x[[BASEREG]]]
+; CHECK: str [[DEST]], [x0]
 ; CHECK: ldr [[REG4:x[0-9]+]], [x[[BASEREG:[0-9]+]], #16]
 ; CHECK: str [[REG4]], [x0, #16]
-; CHECK: str [[DEST]], [x0]
   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* %C, i8* getelementptr inbounds ([24 x i8], [24 x i8]* @.str3, i64 0, i64 0), i64 24, i1 false)
   ret void
 }

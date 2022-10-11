@@ -66,7 +66,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Transforms/Utils/FixIrreducible.h"
 #include "llvm/ADT/SCCIterator.h"
+#include "llvm/Analysis/DomTreeUpdater.h"
 #include "llvm/Analysis/LoopIterator.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
@@ -104,7 +106,7 @@ FunctionPass *llvm::createFixIrreduciblePass() { return new FixIrreducible(); }
 INITIALIZE_PASS_BEGIN(FixIrreducible, "fix-irreducible",
                       "Convert irreducible control-flow into natural loops",
                       false /* Only looks at CFG */, false /* Analysis Pass */)
-INITIALIZE_PASS_DEPENDENCY(LowerSwitch)
+INITIALIZE_PASS_DEPENDENCY(LowerSwitchLegacyPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_END(FixIrreducible, "fix-irreducible",
@@ -123,23 +125,30 @@ static void reconnectChildLoops(LoopInfo &LI, Loop *ParentLoop, Loop *NewLoop,
   // children to a new vector.
   auto FirstChild = std::partition(
       CandidateLoops.begin(), CandidateLoops.end(), [&](Loop *L) {
-        return L == NewLoop || Blocks.count(L->getHeader()) == 0;
+        return L == NewLoop || !Blocks.contains(L->getHeader());
       });
   SmallVector<Loop *, 8> ChildLoops(FirstChild, CandidateLoops.end());
   CandidateLoops.erase(FirstChild, CandidateLoops.end());
 
-  for (auto II = ChildLoops.begin(), IE = ChildLoops.end(); II != IE; ++II) {
-    auto Child = *II;
+  for (Loop *Child : ChildLoops) {
     LLVM_DEBUG(dbgs() << "child loop: " << Child->getHeader()->getName()
                       << "\n");
     // TODO: A child loop whose header is also a header in the current
     // SCC gets destroyed since its backedges are removed. That may
     // not be necessary if we can retain such backedges.
     if (Headers.count(Child->getHeader())) {
-      for (auto BB : Child->blocks()) {
+      for (auto *BB : Child->blocks()) {
+        if (LI.getLoopFor(BB) != Child)
+          continue;
         LI.changeLoopFor(BB, NewLoop);
         LLVM_DEBUG(dbgs() << "moved block from child: " << BB->getName()
                           << "\n");
+      }
+      std::vector<Loop *> GrandChildLoops;
+      std::swap(GrandChildLoops, Child->getSubLoopsVector());
+      for (auto *GrandChildLoop : GrandChildLoops) {
+        GrandChildLoop->setParentLoop(nullptr);
+        NewLoop->addChildLoop(GrandChildLoop);
       }
       LI.destroy(Child);
       LLVM_DEBUG(dbgs() << "subsumed child loop (common header)\n");
@@ -161,14 +170,14 @@ static void createNaturalLoopInternal(LoopInfo &LI, DominatorTree &DT,
                                       SetVector<BasicBlock *> &Headers) {
 #ifndef NDEBUG
   // All headers are part of the SCC
-  for (auto H : Headers) {
+  for (auto *H : Headers) {
     assert(Blocks.count(H));
   }
 #endif
 
   SetVector<BasicBlock *> Predecessors;
-  for (auto H : Headers) {
-    for (auto P : predecessors(H)) {
+  for (auto *H : Headers) {
+    for (auto *P : predecessors(H)) {
       Predecessors.insert(P);
     }
   }
@@ -205,13 +214,13 @@ static void createNaturalLoopInternal(LoopInfo &LI, DominatorTree &DT,
   // in the loop. This ensures that it is recognized as the
   // header. Since the new loop is already in LoopInfo, the new blocks
   // are also propagated up the chain of parent loops.
-  for (auto G : GuardBlocks) {
+  for (auto *G : GuardBlocks) {
     LLVM_DEBUG(dbgs() << "added guard block: " << G->getName() << "\n");
     NewLoop->addBasicBlockToLoop(G, LI);
   }
 
   // Add the SCC blocks to the new loop.
-  for (auto BB : Blocks) {
+  for (auto *BB : Blocks) {
     NewLoop->addBlockEntry(BB);
     if (LI.getLoopFor(BB) == ParentLoop) {
       LLVM_DEBUG(dbgs() << "moved block from parent: " << BB->getName()
@@ -279,7 +288,7 @@ static bool makeReducible(LoopInfo &LI, DominatorTree &DT, Graph &&G) {
     // match. So we discover the headers using the reverse of the block order.
     SetVector<BasicBlock *> Headers;
     LLVM_DEBUG(dbgs() << "Found headers:");
-    for (auto BB : reverse(Blocks)) {
+    for (auto *BB : reverse(Blocks)) {
       for (const auto P : predecessors(BB)) {
         // Skip unreachable predecessors.
         if (!DT.isReachableFromEntry(P))
@@ -304,11 +313,9 @@ static bool makeReducible(LoopInfo &LI, DominatorTree &DT, Graph &&G) {
   return Changed;
 }
 
-bool FixIrreducible::runOnFunction(Function &F) {
+static bool FixIrreducibleImpl(Function &F, LoopInfo &LI, DominatorTree &DT) {
   LLVM_DEBUG(dbgs() << "===== Fix irreducible control-flow in function: "
                     << F.getName() << "\n");
-  auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 
   bool Changed = false;
   SmallVector<Loop *, 8> WorkList;
@@ -318,13 +325,10 @@ bool FixIrreducible::runOnFunction(Function &F) {
 
   // Any SCCs reduced are now already in the list of top-level loops, so simply
   // add them all to the worklist.
-  for (auto L : LI) {
-    WorkList.push_back(L);
-  }
+  append_range(WorkList, LI);
 
   while (!WorkList.empty()) {
-    auto L = WorkList.back();
-    WorkList.pop_back();
+    auto L = WorkList.pop_back_val();
     LLVM_DEBUG(dbgs() << "visiting loop with header "
                       << L->getHeader()->getName() << "\n");
     Changed |= makeReducible(LI, DT, *L);
@@ -334,4 +338,22 @@ bool FixIrreducible::runOnFunction(Function &F) {
   }
 
   return Changed;
+}
+
+bool FixIrreducible::runOnFunction(Function &F) {
+  auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  return FixIrreducibleImpl(F, LI, DT);
+}
+
+PreservedAnalyses FixIrreduciblePass::run(Function &F,
+                                          FunctionAnalysisManager &AM) {
+  auto &LI = AM.getResult<LoopAnalysis>(F);
+  auto &DT = AM.getResult<DominatorTreeAnalysis>(F);
+  if (!FixIrreducibleImpl(F, LI, DT))
+    return PreservedAnalyses::all();
+  PreservedAnalyses PA;
+  PA.preserve<LoopAnalysis>();
+  PA.preserve<DominatorTreeAnalysis>();
+  return PA;
 }

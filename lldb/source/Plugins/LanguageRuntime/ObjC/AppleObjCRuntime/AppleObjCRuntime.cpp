@@ -31,6 +31,7 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Utility/ConstString.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/Scalar.h"
 #include "lldb/Utility/Status.h"
@@ -48,7 +49,7 @@ LLDB_PLUGIN_DEFINE(AppleObjCRuntime)
 
 char AppleObjCRuntime::ID = 0;
 
-AppleObjCRuntime::~AppleObjCRuntime() {}
+AppleObjCRuntime::~AppleObjCRuntime() = default;
 
 AppleObjCRuntime::AppleObjCRuntime(Process *process)
     : ObjCLanguageRuntime(process), m_read_objc_library(false),
@@ -122,7 +123,8 @@ bool AppleObjCRuntime::GetObjectDescription(Stream &strm, Value &value,
     }
   } else {
     // If it is not a pointer, see if we can make it into a pointer.
-    TypeSystemClang *ast_context = TypeSystemClang::GetScratch(*target);
+    TypeSystemClang *ast_context =
+        ScratchTypeSystemClang::GetForTarget(*target);
     if (!ast_context)
       return false;
 
@@ -137,7 +139,7 @@ bool AppleObjCRuntime::GetObjectDescription(Stream &strm, Value &value,
   arg_value_list.PushValue(value);
 
   // This is the return value:
-  TypeSystemClang *ast_context = TypeSystemClang::GetScratch(*target);
+  TypeSystemClang *ast_context = ScratchTypeSystemClang::GetForTarget(*target);
   if (!ast_context)
     return false;
 
@@ -317,7 +319,7 @@ bool AppleObjCRuntime::AppleIsModuleObjCLibrary(const ModuleSP &module_sp) {
 // we use the version of Foundation to make assumptions about the ObjC runtime
 // on a target
 uint32_t AppleObjCRuntime::GetFoundationVersion() {
-  if (!m_Foundation_major.hasValue()) {
+  if (!m_Foundation_major) {
     const ModuleList &modules = m_process->GetTarget().GetImages();
     for (uint32_t idx = 0; idx < modules.GetSize(); idx++) {
       lldb::ModuleSP module_sp = modules.GetModuleAtIndex(idx);
@@ -331,7 +333,7 @@ uint32_t AppleObjCRuntime::GetFoundationVersion() {
     }
     return LLDB_INVALID_MODULE_VERSION;
   } else
-    return m_Foundation_major.getValue();
+    return *m_Foundation_major;
 }
 
 void AppleObjCRuntime::GetValuesForGlobalCFBooleans(lldb::addr_t &cf_true,
@@ -376,12 +378,7 @@ AppleObjCRuntime::GetObjCVersion(Process *process, ModuleSP &objc_module_sp) {
       llvm::Triple::VendorType::Apple)
     return ObjCRuntimeVersions::eObjC_VersionUnknown;
 
-  const ModuleList &target_modules = target.GetImages();
-  std::lock_guard<std::recursive_mutex> gaurd(target_modules.GetMutex());
-
-  size_t num_images = target_modules.GetSize();
-  for (size_t i = 0; i < num_images; i++) {
-    ModuleSP module_sp = target_modules.GetModuleAtIndexUnlocked(i);
+  for (ModuleSP module_sp : target.GetImages().Modules()) {
     // One tricky bit here is that we might get called as part of the initial
     // module loading, but before all the pre-run libraries get winnowed from
     // the module list.  So there might actually be an old and incorrect ObjC
@@ -506,9 +503,9 @@ ValueObjectSP AppleObjCRuntime::GetExceptionObjectForThread(
 /// \param msg The message to add to the log.
 /// \return An invalid ThreadSP to be returned from
 ///         GetBacktraceThreadFromException.
-LLVM_NODISCARD
+[[nodiscard]]
 static ThreadSP FailExceptionParsing(llvm::StringRef msg) {
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_LANGUAGE));
+  Log *log = GetLog(LLDBLog::Language);
   LLDB_LOG(log, "Failed getting backtrace from exception: {0}", msg);
   return ThreadSP();
 }
@@ -525,7 +522,7 @@ ThreadSP AppleObjCRuntime::GetBacktraceThreadFromException(
     return FailExceptionParsing("Failed to get synthetic value.");
 
   TypeSystemClang *clang_ast_context =
-      TypeSystemClang::GetScratch(*exception_sp->GetTargetSP());
+      ScratchTypeSystemClang::GetForTarget(*exception_sp->GetTargetSP());
   if (!clang_ast_context)
     return FailExceptionParsing("Failed to get scratch AST.");
   CompilerType objc_id =

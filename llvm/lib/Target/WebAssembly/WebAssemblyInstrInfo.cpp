@@ -14,6 +14,7 @@
 
 #include "WebAssemblyInstrInfo.h"
 #include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
+#include "Utils/WebAssemblyUtilities.h"
 #include "WebAssembly.h"
 #include "WebAssemblyMachineFunctionInfo.h"
 #include "WebAssemblySubtarget.h"
@@ -39,7 +40,7 @@ WebAssemblyInstrInfo::WebAssemblyInstrInfo(const WebAssemblySubtarget &STI)
       RI(STI.getTargetTriple()) {}
 
 bool WebAssemblyInstrInfo::isReallyTriviallyReMaterializable(
-    const MachineInstr &MI, AAResults *AA) const {
+    const MachineInstr &MI) const {
   switch (MI.getOpcode()) {
   case WebAssembly::CONST_I32:
   case WebAssembly::CONST_I64:
@@ -65,21 +66,7 @@ void WebAssemblyInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
           ? MRI.getRegClass(DestReg)
           : MRI.getTargetRegisterInfo()->getMinimalPhysRegClass(DestReg);
 
-  unsigned CopyOpcode;
-  if (RC == &WebAssembly::I32RegClass)
-    CopyOpcode = WebAssembly::COPY_I32;
-  else if (RC == &WebAssembly::I64RegClass)
-    CopyOpcode = WebAssembly::COPY_I64;
-  else if (RC == &WebAssembly::F32RegClass)
-    CopyOpcode = WebAssembly::COPY_F32;
-  else if (RC == &WebAssembly::F64RegClass)
-    CopyOpcode = WebAssembly::COPY_F64;
-  else if (RC == &WebAssembly::V128RegClass)
-    CopyOpcode = WebAssembly::COPY_V128;
-  else if (RC == &WebAssembly::EXNREFRegClass)
-    CopyOpcode = WebAssembly::COPY_EXNREF;
-  else
-    llvm_unreachable("Unexpected register class");
+  unsigned CopyOpcode = WebAssembly::getCopyOpcodeForRegClass(RC);
 
   BuildMI(MBB, I, DL, get(CopyOpcode), DestReg)
       .addReg(SrcReg, KillSrc ? RegState::Kill : 0);
@@ -139,14 +126,6 @@ bool WebAssemblyInstrInfo::analyzeBranch(MachineBasicBlock &MBB,
       else
         FBB = MI.getOperand(0).getMBB();
       break;
-    case WebAssembly::BR_ON_EXN:
-      if (HaveCond)
-        return true;
-      Cond.push_back(MachineOperand::CreateImm(true));
-      Cond.push_back(MI.getOperand(2));
-      TBB = MI.getOperand(0).getMBB();
-      HaveCond = true;
-      break;
     }
     if (MI.isBarrier())
       break;
@@ -192,24 +171,10 @@ unsigned WebAssemblyInstrInfo::insertBranch(
 
   assert(Cond.size() == 2 && "Expected a flag and a successor block");
 
-  MachineFunction &MF = *MBB.getParent();
-  auto &MRI = MF.getRegInfo();
-  bool IsBrOnExn = Cond[1].isReg() && MRI.getRegClass(Cond[1].getReg()) ==
-                                          &WebAssembly::EXNREFRegClass;
-
-  if (Cond[0].getImm()) {
-    if (IsBrOnExn) {
-      const char *CPPExnSymbol = MF.createExternalSymbolName("__cpp_exception");
-      BuildMI(&MBB, DL, get(WebAssembly::BR_ON_EXN))
-          .addMBB(TBB)
-          .addExternalSymbol(CPPExnSymbol)
-          .add(Cond[1]);
-    } else
-      BuildMI(&MBB, DL, get(WebAssembly::BR_IF)).addMBB(TBB).add(Cond[1]);
-  } else {
-    assert(!IsBrOnExn && "br_on_exn does not have a reversed condition");
+  if (Cond[0].getImm())
+    BuildMI(&MBB, DL, get(WebAssembly::BR_IF)).addMBB(TBB).add(Cond[1]);
+  else
     BuildMI(&MBB, DL, get(WebAssembly::BR_UNLESS)).addMBB(TBB).add(Cond[1]);
-  }
   if (!FBB)
     return 1;
 
@@ -220,14 +185,6 @@ unsigned WebAssemblyInstrInfo::insertBranch(
 bool WebAssemblyInstrInfo::reverseBranchCondition(
     SmallVectorImpl<MachineOperand> &Cond) const {
   assert(Cond.size() == 2 && "Expected a flag and a condition expression");
-
-  // br_on_exn's condition cannot be reversed
-  MachineFunction &MF = *Cond[1].getParent()->getParent()->getParent();
-  auto &MRI = MF.getRegInfo();
-  if (Cond[1].isReg() &&
-      MRI.getRegClass(Cond[1].getReg()) == &WebAssembly::EXNREFRegClass)
-    return true;
-
   Cond.front() = MachineOperand::CreateImm(!Cond.front().getImm());
   return false;
 }
@@ -238,6 +195,12 @@ WebAssemblyInstrInfo::getSerializableTargetIndices() const {
       {WebAssembly::TI_LOCAL, "wasm-local"},
       {WebAssembly::TI_GLOBAL_FIXED, "wasm-global-fixed"},
       {WebAssembly::TI_OPERAND_STACK, "wasm-operand-stack"},
-      {WebAssembly::TI_GLOBAL_RELOC, "wasm-global-reloc"}};
+      {WebAssembly::TI_GLOBAL_RELOC, "wasm-global-reloc"},
+      {WebAssembly::TI_LOCAL_INDIRECT, "wasm-local-indirect"}};
   return makeArrayRef(TargetIndices);
+}
+
+const MachineOperand &
+WebAssemblyInstrInfo::getCalleeOperand(const MachineInstr &MI) const {
+  return WebAssembly::getCalleeOp(MI);
 }

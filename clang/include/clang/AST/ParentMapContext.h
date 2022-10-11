@@ -64,9 +64,10 @@ public:
   Expr *traverseIgnored(Expr *E) const;
   DynTypedNode traverseIgnored(const DynTypedNode &N) const;
 
+  class ParentMap;
+
 private:
   ASTContext &ASTCtx;
-  class ParentMap;
   TraversalKind Traversal = TK_AsIs;
   std::unique_ptr<ParentMap> Parents;
 };
@@ -89,30 +90,27 @@ public:
 /// Container for either a single DynTypedNode or for an ArrayRef to
 /// DynTypedNode. For use with ParentMap.
 class DynTypedNodeList {
-  llvm::AlignedCharArrayUnion<DynTypedNode, ArrayRef<DynTypedNode>> Storage;
+  union {
+    DynTypedNode SingleNode;
+    ArrayRef<DynTypedNode> Nodes;
+  };
   bool IsSingleNode;
 
 public:
   DynTypedNodeList(const DynTypedNode &N) : IsSingleNode(true) {
-    new (Storage.buffer) DynTypedNode(N);
+    new (&SingleNode) DynTypedNode(N);
   }
 
   DynTypedNodeList(ArrayRef<DynTypedNode> A) : IsSingleNode(false) {
-    new (Storage.buffer) ArrayRef<DynTypedNode>(A);
+    new (&Nodes) ArrayRef<DynTypedNode>(A);
   }
 
   const DynTypedNode *begin() const {
-    if (!IsSingleNode)
-      return reinterpret_cast<const ArrayRef<DynTypedNode> *>(Storage.buffer)
-          ->begin();
-    return reinterpret_cast<const DynTypedNode *>(Storage.buffer);
+    return !IsSingleNode ? Nodes.begin() : &SingleNode;
   }
 
   const DynTypedNode *end() const {
-    if (!IsSingleNode)
-      return reinterpret_cast<const ArrayRef<DynTypedNode> *>(Storage.buffer)
-          ->end();
-    return reinterpret_cast<const DynTypedNode *>(Storage.buffer) + 1;
+    return !IsSingleNode ? Nodes.end() : &SingleNode + 1;
   }
 
   size_t size() const { return end() - begin(); }

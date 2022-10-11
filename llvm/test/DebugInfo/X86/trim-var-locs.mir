@@ -81,8 +81,7 @@ body:             |
     ;     block is not trimmed.
     ;
     ; CHECK:      DW_TAG_variable
-    ; CHECK-NEXT:   DW_AT_location
-    ; CHECK-NEXT:     DW_OP_reg5 RDI
+    ; CHECK-NEXT:   DW_AT_location (DW_OP_reg5 RDI)
     ; CHECK-NEXT:   DW_AT_name ("localb")
     ;
     ; localb range 2 clobber in scope fun !7 (outside block !14)
@@ -117,5 +116,5 @@ body:             |
     $edi = MOV32ri 9, debug-location !26
 
     ; scope fun !7
-    RETQ debug-location !15
+    RET64 debug-location !15
 ...

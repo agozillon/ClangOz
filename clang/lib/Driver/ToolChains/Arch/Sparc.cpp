@@ -12,6 +12,7 @@
 #include "clang/Driver/Options.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Option/ArgList.h"
+#include "llvm/Support/Host.h"
 
 using namespace clang::driver;
 using namespace clang::driver::tools;
@@ -21,12 +22,19 @@ using namespace llvm::opt;
 const char *sparc::getSparcAsmModeForCPU(StringRef Name,
                                          const llvm::Triple &Triple) {
   if (Triple.getArch() == llvm::Triple::sparcv9) {
+    const char *DefV9CPU;
+
+    if (Triple.isOSLinux() || Triple.isOSFreeBSD() || Triple.isOSOpenBSD())
+      DefV9CPU = "-Av9a";
+    else
+      DefV9CPU = "-Av9";
+
     return llvm::StringSwitch<const char *>(Name)
         .Case("niagara", "-Av9b")
         .Case("niagara2", "-Av9b")
         .Case("niagara3", "-Av9d")
         .Case("niagara4", "-Av9d")
-        .Default("-Av9");
+        .Default(DefV9CPU);
   } else {
     return llvm::StringSwitch<const char *>(Name)
         .Case("v8", "-Av8")
@@ -104,6 +112,30 @@ sparc::FloatABI sparc::getSparcFloatABI(const Driver &D,
   }
 
   return ABI;
+}
+
+std::string sparc::getSparcTargetCPU(const Driver &D, const ArgList &Args,
+                                     const llvm::Triple &Triple) {
+  if (const Arg *A = Args.getLastArg(clang::driver::options::OPT_march_EQ)) {
+    D.Diag(diag::err_drv_unsupported_opt_for_target)
+        << A->getSpelling() << Triple.getTriple();
+    return "";
+  }
+
+  if (const Arg *A = Args.getLastArg(clang::driver::options::OPT_mcpu_EQ)) {
+    StringRef CPUName = A->getValue();
+    if (CPUName == "native") {
+      std::string CPU = std::string(llvm::sys::getHostCPUName());
+      if (!CPU.empty() && CPU != "generic")
+        return CPU;
+      return "";
+    }
+    return std::string(CPUName);
+  }
+
+  if (Triple.getArch() == llvm::Triple::sparc && Triple.isOSSolaris())
+    return "v9";
+  return "";
 }
 
 void sparc::getSparcTargetFeatures(const Driver &D, const ArgList &Args,

@@ -14,157 +14,7 @@
 #define MLIR_TRANSFORMS_PASSES
 
 include "mlir/Pass/PassBase.td"
-
-def AffineLoopFusion : FunctionPass<"affine-loop-fusion"> {
-  let summary = "Fuse affine loop nests";
-  let constructor = "mlir::createLoopFusionPass()";
-  let options = [
-    Option<"computeToleranceThreshold", "fusion-compute-tolerance", "double",
-           /*default=*/"0.30f", "Fractional increase in additional computation "
-                                "tolerated while fusing">,
-    Option<"fastMemorySpace", "fusion-fast-mem-space", "unsigned",
-           /*default=*/"0",
-           "Faster memory space number to promote fusion buffers to">,
-    Option<"localBufSizeThreshold", "fusion-local-buf-threshold", "uint64_t",
-           /*default=*/"0", "Threshold size (KiB) for promoting local buffers "
-                            "to fast memory space">,
-    Option<"maximalFusion", "fusion-maximal", "bool", /*default=*/"false",
-           "Enables maximal loop fusion">,
-  ];
-}
-
-def AffinePipelineDataTransfer
-    : FunctionPass<"affine-pipeline-data-transfer"> {
-  let summary = "Pipeline non-blocking data transfers between explicitly "
-                "managed levels of the memory hierarchy";
-  let description = [{
-    This pass performs a transformation to overlap non-blocking DMA operations
-    in a loop with computations through double buffering. This is achieved by
-    advancing dma_start operations with respect to other operations.
-
-    Input
-
-    ```mlir
-    func @pipelinedatatransfer() {
-      %0 = alloc() : memref<256xf32>
-      %1 = alloc() : memref<32xf32, 1>
-      %2 = alloc() : memref<1xf32>
-      %c0 = constant 0 : index
-      %c128 = constant 128 : index
-      affine.for %i0 = 0 to 8 {
-        affine.dma_start %0[%i0], %1[%i0], %2[%c0], %c128 : memref<256xf32>, memref<32xf32, 1>, memref<1xf32>
-        affine.dma_wait %2[%c0], %c128 : memref<1xf32>
-        %3 = affine.load %1[%i0] : memref<32xf32, 1>
-        %4 = "compute"(%3) : (f32) -> f32
-        affine.store %4, %1[%i0] : memref<32xf32, 1>
-      }
-      return
-    }
-    ```
-
-    Output
-
-    ```mlir
-    module {
-      func @pipelinedatatransfer() {
-        %c8 = constant 8 : index
-        %c0 = constant 0 : index
-        %0 = alloc() : memref<256xf32>
-        %c0_0 = constant 0 : index
-        %c128 = constant 128 : index
-        %1 = alloc() : memref<2x32xf32, 1>
-        %2 = alloc() : memref<2x1xf32>
-        affine.dma_start %0[%c0], %1[%c0 mod 2, %c0], %2[%c0 mod 2, symbol(%c0_0)], %c128 : memref<256xf32>, memref<2x32xf32, 1>, memref<2x1xf32>
-        affine.for %arg0 = 1 to 8 {
-          affine.dma_start %0[%arg0], %1[%arg0 mod 2, %arg0], %2[%arg0 mod 2, symbol(%c0_0)], %c128 : memref<256xf32>, memref<2x32xf32, 1>, memref<2x1xf32>
-          %8 = affine.apply #map3(%arg0)
-          %9 = affine.apply #map4(%8)
-          %10 = affine.apply #map4(%8)
-          affine.dma_wait %2[%8 mod 2, symbol(%c0_0)], %c128 : memref<2x1xf32>
-          %11 = affine.load %1[%8 mod 2, %8] : memref<2x32xf32, 1>
-          %12 = "compute"(%11) : (f32) -> f32
-          affine.store %12, %1[%8 mod 2, %8] : memref<2x32xf32, 1>
-        }
-        %3 = affine.apply #map3(%c8)
-        %4 = affine.apply #map4(%3)
-        %5 = affine.apply #map4(%3)
-        affine.dma_wait %2[%3 mod 2, symbol(%c0_0)], %c128 : memref<2x1xf32>
-        %6 = affine.load %1[%3 mod 2, %3] : memref<2x32xf32, 1>
-        %7 = "compute"(%6) : (f32) -> f32
-        affine.store %7, %1[%3 mod 2, %3] : memref<2x32xf32, 1>
-        dealloc %2 : memref<2x1xf32>
-        dealloc %1 : memref<2x32xf32, 1>
-        return
-      }
-    }
-    ```
-  }];
-  let constructor = "mlir::createPipelineDataTransferPass()";
-}
-
-def BufferPlacement : FunctionPass<"buffer-placement"> {
-  let summary = "Optimizes placement of alloc and dealloc operations";
-  let description = [{
-    This pass implements an algorithm to optimize the placement of alloc and
-    dealloc operations. This pass also inserts missing dealloc operations
-    automatically to reclaim memory.
-
-
-    Input
-
-    ```mlir
-    #map0 = affine_map<(d0) -> (d0)>
-    module {
-      func @condBranch(%arg0: i1, %arg1: memref<2xf32>, %arg2: memref<2xf32>) {
-        cond_br %arg0, ^bb1, ^bb2
-      ^bb1:
-        br ^bb3(%arg1 : memref<2xf32>)
-      ^bb2:
-        %0 = alloc() : memref<2xf32>
-        linalg.generic {args_in = 1 : i64, args_out = 1 : i64, indexing_maps = [#map0, #map0], iterator_types = ["parallel"]} %arg1, %0 {
-        ^bb0(%gen1_arg0: f32, %gen1_arg1: f32):
-          %tmp1 = exp %gen1_arg0 : f32
-          linalg.yield %tmp1 : f32
-        }: memref<2xf32>, memref<2xf32>
-        br ^bb3(%0 : memref<2xf32>)
-      ^bb3(%1: memref<2xf32>):
-        "linalg.copy"(%1, %arg2) : (memref<2xf32>, memref<2xf32>) -> ()
-        return
-      }
-    }
-
-    ```
-
-    Output
-
-    ```mlir
-    #map0 = affine_map<(d0) -> (d0)>
-    module {
-      func @condBranch(%arg0: i1, %arg1: memref<2xf32>, %arg2: memref<2xf32>) {
-        %0 = alloc() : memref<2xf32>
-        cond_br %arg0, ^bb1, ^bb2
-      ^bb1: // pred: ^bb0
-        br ^bb3(%arg1 : memref<2xf32>)
-      ^bb2: // pred: ^bb0
-        linalg.generic {args_in = 1 : i64, args_out = 1 : i64, indexing_maps = [#map0, #map0], iterator_types = ["parallel"]} %arg1, %0 {
-        ^bb0(%arg3: f32, %arg4: f32):       // no predecessors
-          %2 = exp %arg3 : f32
-          linalg.yield %2 : f32
-        }: memref<2xf32>, memref<2xf32>
-        br ^bb3(%0 : memref<2xf32>)
-      ^bb3(%1: memref<2xf32>):      // 2 preds: ^bb1, ^bb2
-        linalg.copy(%1, %arg2) : memref<2xf32>, memref<2xf32>
-        dealloc %0 : memref<2xf32>
-        return
-      }
-    }
-    ```
-
-  }];
-  let constructor = "mlir::createBufferPlacementPass()";
-  // TODO: this pass likely shouldn't depend on Linalg?
-  let dependentDialects = ["linalg::LinalgDialect"];
-}
+include "mlir/Rewrite/PassUtil.td"
 
 def Canonicalizer : Pass<"canonicalize"> {
   let summary = "Canonicalize operations";
@@ -174,11 +24,41 @@ def Canonicalizer : Pass<"canonicalize"> {
     details.
   }];
   let constructor = "mlir::createCanonicalizerPass()";
+  let options = [
+    Option<"topDownProcessingEnabled", "top-down", "bool",
+           /*default=*/"true",
+           "Seed the worklist in general top-down order">,
+    Option<"enableRegionSimplification", "region-simplify", "bool",
+           /*default=*/"true",
+           "Seed the worklist in general top-down order">,
+    Option<"maxIterations", "max-iterations", "int64_t",
+           /*default=*/"10",
+           "Seed the worklist in general top-down order">
+  ] # RewritePassUtils.options;
 }
 
-def CopyRemoval : FunctionPass<"copy-removal"> {
-  let summary = "Remove the redundant copies from input IR";
-  let constructor = "mlir::createCopyRemovalPass()";
+def ControlFlowSink : Pass<"control-flow-sink"> {
+  let summary = "Sink operations into conditional blocks";
+  let description = [{
+    This pass implements control-flow sink on operations that implement
+    `RegionBranchOpInterface` by moving dominating operations whose only uses
+    are in a conditionally-executed regions into those regions so that
+    executions paths where their results are not needed do not perform
+    unnecessary computations.
+
+    This is similar (but opposite) to loop-invariant code motion, which hoists
+    operations out of regions executed more than once. The implementation of
+    control-flow sink uses a simple and conversative cost model: operations are
+    never duplicated and are only moved into singly-executed regions.
+
+    It is recommended to run canonicalization first to remove unreachable
+    blocks: ops in unreachable blocks may prevent other operations from being
+    sunk as they may contain uses of their results
+  }];
+  let constructor = "::mlir::createControlFlowSinkPass()";
+  let statistics = [
+    Statistic<"numSunk", "num-sunk", "Number of operations sunk">,
+  ];
 }
 
 def CSE : Pass<"cse"> {
@@ -201,9 +81,11 @@ def Inliner : Pass<"inline"> {
   let summary = "Inline function calls";
   let constructor = "mlir::createInlinerPass()";
   let options = [
-    Option<"disableCanonicalization", "disable-simplify", "bool",
-           /*default=*/"false",
-           "Disable running simplifications during inlining">,
+    Option<"defaultPipelineStr", "default-pipeline", "std::string",
+           /*default=*/"", "The default optimizer pipeline used for callables">,
+    ListOption<"opPipelineList", "op-pipelines", "OpPassManager",
+               "Callable operation specific optimizer pipelines (in the form "
+               "of `dialect.op(pipeline)`)">,
     Option<"maxInliningIterations", "max-iterations", "unsigned",
            /*default=*/"4",
            "Maximum number of iterations when inlining within an SCC">,
@@ -255,96 +137,18 @@ def LocationSnapshot : Pass<"snapshot-op-locations"> {
   ];
 }
 
-def LoopCoalescing : FunctionPass<"loop-coalescing"> {
-  let summary = "Coalesce nested loops with independent bounds into a single "
-                "loop";
-  let constructor = "mlir::createLoopCoalescingPass()";
-}
-
 def LoopInvariantCodeMotion : Pass<"loop-invariant-code-motion"> {
   let summary = "Hoist loop invariant instructions outside of the loop";
   let constructor = "mlir::createLoopInvariantCodeMotionPass()";
 }
 
-def MemRefDataFlowOpt : FunctionPass<"memref-dataflow-opt"> {
-  let summary = "Perform store/load forwarding for memrefs";
-  let description = [{
-    This pass performs store to load forwarding for memref's to eliminate memory
-    accesses and potentially the entire memref if all its accesses are
-    forwarded.
-
-    Input
-
-    ```mlir
-    func @store_load_affine_apply() -> memref<10x10xf32> {
-      %cf7 = constant 7.0 : f32
-      %m = alloc() : memref<10x10xf32>
-      affine.for %i0 = 0 to 10 {
-        affine.for %i1 = 0 to 10 {
-          affine.store %cf7, %m[%i0, %i1] : memref<10x10xf32>
-          %v0 = affine.load %m[%i0, %i1] : memref<10x10xf32>
-          %v1 = addf %v0, %v0 : f32
-        }
-      }
-      return %m : memref<10x10xf32>
-    }
-    ```
-
-    Output
-
-    ```mlir
-    module {
-      func @store_load_affine_apply() -> memref<10x10xf32> {
-        %cst = constant 7.000000e+00 : f32
-        %0 = alloc() : memref<10x10xf32>
-        affine.for %arg0 = 0 to 10 {
-          affine.for %arg1 = 0 to 10 {
-            affine.store %cst, %0[%arg0, %arg1] : memref<10x10xf32>
-            %1 = addf %cst, %cst : f32
-          }
-        }
-        return %0 : memref<10x10xf32>
-      }
-    }
-    ```
-  }];
-  let constructor = "mlir::createMemRefDataFlowOptPass()";
-}
-
-def NormalizeMemRefs : Pass<"normalize-memrefs", "ModuleOp"> {
-  let summary = "Normalize memrefs";
-  let constructor = "mlir::createNormalizeMemRefsPass()";
-}
-
-def ParallelLoopCollapsing : Pass<"parallel-loop-collapsing"> {
-  let summary = "Collapse parallel loops to use less induction variables";
-  let constructor = "mlir::createParallelLoopCollapsingPass()";
-  let options = [
-    ListOption<"clCollapsedIndices0", "collapsed-indices-0", "unsigned",
-               "Which loop indices to combine 0th loop index",
-               "llvm::cl::MiscFlags::CommaSeparated">,
-    ListOption<"clCollapsedIndices1", "collapsed-indices-1", "unsigned",
-               "Which loop indices to combine into the position 1 loop index",
-               "llvm::cl::MiscFlags::CommaSeparated">,
-    ListOption<"clCollapsedIndices2", "collapsed-indices-2", "unsigned",
-               "Which loop indices to combine into the position 2 loop index",
-               "llvm::cl::MiscFlags::CommaSeparated">,
-  ];
-}
-
-def PrintCFG : FunctionPass<"print-cfg-graph"> {
-  let summary = "Print CFG graph per-Region";
-  let constructor = "mlir::createPrintCFGGraphPass()";
-}
-
-def PrintOpStats : Pass<"print-op-stats", "ModuleOp"> {
+def PrintOpStats : Pass<"print-op-stats"> {
   let summary = "Print statistics of operations";
   let constructor = "mlir::createPrintOpStatsPass()";
-}
-
-def PrintOp : Pass<"print-op-graph", "ModuleOp"> {
-  let summary = "Print op graph per-Region";
-  let constructor = "mlir::createPrintOpGraphPass()";
+  let options = [
+    Option<"printAsJSON", "json", "bool", /*default=*/"false",
+           "print the stats as JSON">
+  ];
 }
 
 def SCCP : Pass<"sccp"> {
@@ -384,11 +188,11 @@ def SymbolDCE : Pass<"symbol-dce"> {
     For example, consider the following input:
 
     ```mlir
-    func @dead_private_function() attributes { sym_visibility = "private" }
-    func @live_private_function() attributes { sym_visibility = "private" }
+    func.func private @dead_private_function()
+    func.func private @live_private_function()
 
     // Note: The `public` isn't necessary here, as this is the default.
-    func @public_function() attributes { sym_visibility = "public" } {
+    func.func public @public_function() {
       "foo.return"() {uses = [@live_private_function]} : () -> ()
     }
     ```
@@ -400,9 +204,9 @@ def SymbolDCE : Pass<"symbol-dce"> {
     are no links to known-live operations. After running, we get the expected:
 
     ```mlir
-    func @live_private_function() attributes { sym_visibility = "private" }
+    func.func private @live_private_function()
 
-    func @public_function() attributes { sym_visibility = "public" } {
+    func.func public @public_function() {
       "foo.return"() {uses = [@live_private_function]} : () -> ()
     }
     ```
@@ -411,5 +215,70 @@ def SymbolDCE : Pass<"symbol-dce"> {
     information on `Symbols`.
   }];
   let constructor = "mlir::createSymbolDCEPass()";
+
+  let statistics = [
+    Statistic<"numDCE", "num-dce'd", "Number of symbols DCE'd">,
+  ];
 }
+
+def SymbolPrivatize : Pass<"symbol-privatize"> {
+  let summary = "Mark symbols private";
+  let description = [{
+    This pass marks all top-level symbols of the operation run as `private`
+    except if listed in `exclude` pass option.
+  }];
+  let options = [
+    ListOption<"exclude", "exclude", "std::string",
+       "Comma separated list of symbols that should not be marked private">
+  ];
+  let constructor = "mlir::createSymbolPrivatizePass()";
+}
+
+def ViewOpGraph : Pass<"view-op-graph"> {
+  let summary = "Print Graphviz visualization of an operation";
+  let description = [{
+    This pass prints a Graphviz graph of a module.
+
+    - Operations are represented as nodes;
+    - Uses (data flow) as edges;
+    - Control flow as dashed edges;
+    - Regions/blocks as subgraphs.
+
+    By default, only data flow edges are printed.
+
+    Note: See https://www.graphviz.org/doc/info/lang.html for more information
+    about the Graphviz DOT language.
+  }];
+  let options = [
+    Option<"maxLabelLen", "max-label-len", "unsigned",
+            /*default=*/"20", "Limit attribute/type length to number of chars">,
+    Option<"printAttrs", "print-attrs", "bool",
+           /*default=*/"true", "Print attributes of operations">,
+    Option<"printControlFlowEdges", "print-control-flow-edges", "bool",
+           /*default=*/"false", "Print control flow edges">,
+    Option<"printDataFlowEdges", "print-data-flow-edges", "bool",
+           /*default=*/"true", "Print data flow edges">,
+    Option<"printResultTypes", "print-result-types", "bool",
+            /*default=*/"true", "Print result types of operations">
+  ];
+  let constructor = "mlir::createPrintOpGraphPass()";
+}
+
+def TopologicalSort : Pass<"topological-sort"> {
+  let summary = "Sort regions without SSA dominance in topological order";
+  let description = [{
+    Recursively sorts all nested regions without SSA dominance in topological
+    order. The main purpose is readability, as well as potentially processing of
+    certain transformations and analyses. The function sorts the operations in
+    all nested regions such that, as much as possible, all users appear after
+    their producers.
+
+    This sort is stable. If the block is already topologically sorted, the IR
+    is not changed. Operations that form a cycle are moved to the end of the
+    regions in a stable order.
+  }];
+
+  let constructor = "mlir::createTopologicalSortPass()";
+}
+
 #endif // MLIR_TRANSFORMS_PASSES

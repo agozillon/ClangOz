@@ -290,6 +290,7 @@ class declaration(object):
         self.col = col
 
 class value_iter(object):
+    '''Allows iterating over the children of an :py:class:`SBValue`.'''
     def __iter__(self):
         return self
 
@@ -311,19 +312,19 @@ class value_iter(object):
         self.length = self.sbvalue.GetNumChildren()
 
 class value(object):
-    '''A class designed to wrap lldb.SBValue() objects so the resulting object
-    can be used as a variable would be in code. So if you have a Point structure
-    variable in your code in the current frame named "pt", you can initialize an instance
-    of this class with it:
+    '''Wraps :py:class:`SBValue` objects so the resulting object can be used as a variable would be in code.
 
-    pt = lldb.value(lldb.frame.FindVariable("pt"))
-    print pt
-    print pt.x
-    print pt.y
+    So if you have a Point structure variable in your code in the current frame named "pt",
+    you can initialize an instance of this class with it: ::
 
-    pt = lldb.value(lldb.frame.FindVariable("rectangle_array"))
-    print rectangle_array[12]
-    print rectangle_array[5].origin.x'''
+        pt = lldb.value(lldb.frame.FindVariable("pt"))
+        print pt
+        print pt.x
+        print pt.y
+
+        pt = lldb.value(lldb.frame.FindVariable("rectangle_array"))
+        print rectangle_array[12]
+        print rectangle_array[5].origin.x'''
     def __init__(self, sbvalue):
         self.sbvalue = sbvalue
 
@@ -564,6 +565,7 @@ def is_numeric_type(basic_type):
     if basic_type == eBasicTypeUnsignedWChar: return (True,False)
     if basic_type == eBasicTypeChar16: return (True,False)
     if basic_type == eBasicTypeChar32: return (True,False)
+    if basic_type == eBasicTypeChar8: return (True,False)
     if basic_type == eBasicTypeShort: return (True,True)
     if basic_type == eBasicTypeUnsignedShort: return (True,False)
     if basic_type == eBasicTypeInt: return (True,True)

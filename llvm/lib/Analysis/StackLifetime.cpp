@@ -19,17 +19,12 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Pass.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormattedStream.h"
 #include <algorithm>
-#include <memory>
 #include <tuple>
 
 using namespace llvm;
@@ -64,10 +59,36 @@ bool StackLifetime::isAliveAfter(const AllocaInst *AI,
   return getLiveRange(AI).test(InstNum);
 }
 
+// Returns unique alloca annotated by lifetime marker only if
+// markers has the same size and points to the alloca start.
+static const AllocaInst *findMatchingAlloca(const IntrinsicInst &II,
+                                            const DataLayout &DL) {
+  const AllocaInst *AI = findAllocaForValue(II.getArgOperand(1), true);
+  if (!AI)
+    return nullptr;
+
+  auto AllocaSizeInBits = AI->getAllocationSizeInBits(DL);
+  if (!AllocaSizeInBits)
+    return nullptr;
+  int64_t AllocaSize = *AllocaSizeInBits / 8;
+
+  auto *Size = dyn_cast<ConstantInt>(II.getArgOperand(0));
+  if (!Size)
+    return nullptr;
+  int64_t LifetimeSize = Size->getSExtValue();
+
+  if (LifetimeSize != -1 && LifetimeSize != AllocaSize)
+    return nullptr;
+
+  return AI;
+}
+
 void StackLifetime::collectMarkers() {
   InterestingAllocas.resize(NumAllocas);
   DenseMap<const BasicBlock *, SmallDenseMap<const IntrinsicInst *, Marker>>
       BBMarkerSet;
+
+  const DataLayout &DL = F.getParent()->getDataLayout();
 
   // Compute the set of start/end markers per basic block.
   for (const BasicBlock *BB : depth_first(&F)) {
@@ -75,7 +96,7 @@ void StackLifetime::collectMarkers() {
       const IntrinsicInst *II = dyn_cast<IntrinsicInst>(&I);
       if (!II || !II->isLifetimeStartOrEnd())
         continue;
-      const AllocaInst *AI = llvm::findAllocaForValue(II->getArgOperand(1));
+      const AllocaInst *AI = findMatchingAlloca(*II, DL);
       if (!AI) {
         HasUnknownLifetimeStartOrEnd = true;
         continue;
@@ -161,7 +182,7 @@ void StackLifetime::calculateLocalLiveness() {
 
       // Compute LiveIn by unioning together the LiveOut sets of all preds.
       BitVector LocalLiveIn;
-      for (auto *PredBB : predecessors(BB)) {
+      for (const auto *PredBB : predecessors(BB)) {
         LivenessMap::const_iterator I = BlockLiveness.find(PredBB);
         // If a predecessor is unreachable, ignore it.
         if (I == BlockLiveness.end())
@@ -231,14 +252,12 @@ void StackLifetime::calculateLiveIntervals() {
       unsigned AllocaNo = It.second.AllocaNo;
 
       if (IsStart) {
-        assert(!Started.test(AllocaNo) || Start[AllocaNo] == BBStart);
         if (!Started.test(AllocaNo)) {
           Started.set(AllocaNo);
           Ended.reset(AllocaNo);
           Start[AllocaNo] = InstNo;
         }
       } else {
-        assert(!Ended.test(AllocaNo));
         if (Started.test(AllocaNo)) {
           LiveRanges[AllocaNo].addRange(Start[AllocaNo], InstNo);
           Started.reset(AllocaNo);
@@ -266,7 +285,7 @@ LLVM_DUMP_METHOD void StackLifetime::dumpBlockLiveness() const {
     const BasicBlock *BB = IT.getFirst();
     const BlockLifetimeInfo &BlockInfo = BlockLiveness.find(BB)->getSecond();
     auto BlockRange = BlockInstRange.find(BB)->getSecond();
-    dbgs() << "  BB [" << BlockRange.first << ", " << BlockRange.second
+    dbgs() << "  BB (" << BB->getName() << ") [" << BlockRange.first << ", " << BlockRange.second
            << "): begin " << BlockInfo.Begin << ", end " << BlockInfo.End
            << ", livein " << BlockInfo.LiveIn << ", liveout "
            << BlockInfo.LiveOut << "\n";
@@ -373,4 +392,20 @@ PreservedAnalyses StackLifetimePrinterPass::run(Function &F,
   SL.run();
   SL.print(OS);
   return PreservedAnalyses::all();
+}
+
+void StackLifetimePrinterPass::printPipeline(
+    raw_ostream &OS, function_ref<StringRef(StringRef)> MapClassName2PassName) {
+  static_cast<PassInfoMixin<StackLifetimePrinterPass> *>(this)->printPipeline(
+      OS, MapClassName2PassName);
+  OS << "<";
+  switch (Type) {
+  case StackLifetime::LivenessType::May:
+    OS << "may";
+    break;
+  case StackLifetime::LivenessType::Must:
+    OS << "must";
+    break;
+  }
+  OS << ">";
 }

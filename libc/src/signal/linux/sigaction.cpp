@@ -21,19 +21,19 @@ namespace __llvm_libc {
 extern "C" void __restore_rt();
 
 template <typename T, typename V>
-static void copySigaction(T &dest, const V &source) {
+static void copy_sigaction(T &dest, const V &source) {
   dest.sa_handler = source.sa_handler;
   dest.sa_mask = source.sa_mask;
   dest.sa_flags = source.sa_flags;
   dest.sa_restorer = source.sa_restorer;
 }
 
-int LLVM_LIBC_ENTRYPOINT(sigaction)(
-    int signal, const struct __sigaction *__restrict libc_new,
-    struct __sigaction *__restrict libc_old) {
+LLVM_LIBC_FUNCTION(int, sigaction,
+                   (int signal, const struct __sigaction *__restrict libc_new,
+                    struct __sigaction *__restrict libc_old)) {
   struct sigaction kernel_new;
   if (libc_new) {
-    copySigaction(kernel_new, *libc_new);
+    copy_sigaction(kernel_new, *libc_new);
     if (!(kernel_new.sa_flags & SA_RESTORER)) {
       kernel_new.sa_flags |= SA_RESTORER;
       kernel_new.sa_restorer = __restore_rt;
@@ -49,7 +49,7 @@ int LLVM_LIBC_ENTRYPOINT(sigaction)(
   }
 
   if (libc_old)
-    copySigaction(*libc_old, kernel_old);
+    copy_sigaction(*libc_old, kernel_old);
   return 0;
 }
 

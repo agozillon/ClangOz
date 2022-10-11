@@ -10,6 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "CompileCommands.h"
+#include "Compiler.h"
 #include "index/IndexAction.h"
 #include "index/Merge.h"
 #include "index/Ref.h"
@@ -18,11 +20,11 @@
 #include "index/SymbolCollector.h"
 #include "support/Logger.h"
 #include "clang/Tooling/ArgumentsAdjusters.h"
-#include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Execution.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Signals.h"
+#include <utility>
 
 namespace clang {
 namespace clangd {
@@ -43,6 +45,16 @@ public:
   std::unique_ptr<FrontendAction> create() override {
     SymbolCollector::Options Opts;
     Opts.CountReferences = true;
+    Opts.FileFilter = [&](const SourceManager &SM, FileID FID) {
+      const auto *F = SM.getFileEntryForID(FID);
+      if (!F)
+        return false; // Skip invalid files.
+      auto AbsPath = getCanonicalPath(F, SM);
+      if (!AbsPath)
+        return false; // Skip files without absolute path.
+      std::lock_guard<std::mutex> Lock(FilesMu);
+      return Files.insert(*AbsPath).second; // Skip already processed files.
+    };
     return createStaticIndexingAction(
         Opts,
         [&](SymbolSlab S) {
@@ -56,7 +68,7 @@ public:
           }
         },
         [&](RefSlab S) {
-          std::lock_guard<std::mutex> Lock(SymbolsMu);
+          std::lock_guard<std::mutex> Lock(RefsMu);
           for (const auto &Sym : S) {
             // Deduplication happens during insertion.
             for (const auto &Ref : Sym.second)
@@ -64,12 +76,21 @@ public:
           }
         },
         [&](RelationSlab S) {
-          std::lock_guard<std::mutex> Lock(SymbolsMu);
+          std::lock_guard<std::mutex> Lock(RelsMu);
           for (const auto &R : S) {
             Relations.insert(R);
           }
         },
         /*IncludeGraphCallback=*/nullptr);
+  }
+
+  bool runInvocation(std::shared_ptr<CompilerInvocation> Invocation,
+                     FileManager *Files,
+                     std::shared_ptr<PCHContainerOperations> PCHContainerOps,
+                     DiagnosticConsumer *DiagConsumer) override {
+    disableUnsupportedOptions(*Invocation);
+    return tooling::FrontendActionFactory::runInvocation(
+        std::move(Invocation), Files, std::move(PCHContainerOps), DiagConsumer);
   }
 
   // Awkward: we write the result in the destructor, because the executor
@@ -82,9 +103,13 @@ public:
 
 private:
   IndexFileIn &Result;
+  std::mutex FilesMu;
+  llvm::StringSet<> Files;
   std::mutex SymbolsMu;
   SymbolSlab::Builder Symbols;
+  std::mutex RefsMu;
   RefSlab::Builder Refs;
+  std::mutex RelsMu;
   RelationSlab::Builder Relations;
 };
 
@@ -110,7 +135,7 @@ int main(int argc, const char **argv) {
   )";
 
   auto Executor = clang::tooling::createExecutorFromCommandLineArgs(
-      argc, argv, llvm::cl::GeneralCategory, Overview);
+      argc, argv, llvm::cl::getGeneralCategory(), Overview);
 
   if (!Executor) {
     llvm::errs() << llvm::toString(Executor.takeError()) << "\n";
@@ -121,7 +146,8 @@ int main(int argc, const char **argv) {
   clang::clangd::IndexFileIn Data;
   auto Err = Executor->get()->execute(
       std::make_unique<clang::clangd::IndexActionFactory>(Data),
-      clang::tooling::getStripPluginsAdjuster());
+      clang::tooling::ArgumentsAdjuster(
+          clang::clangd::CommandMangler::detect()));
   if (Err) {
     clang::clangd::elog("{0}", std::move(Err));
   }

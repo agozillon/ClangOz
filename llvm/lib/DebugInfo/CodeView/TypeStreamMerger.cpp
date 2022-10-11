@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/DebugInfo/CodeView/TypeStreamMerger.h"
-#include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/Optional.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/DebugInfo/CodeView/GlobalTypeTableBuilder.h"
 #include "llvm/DebugInfo/CodeView/MergingTypeTableBuilder.h"
 #include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
@@ -38,7 +38,7 @@ namespace {
 /// 0x1000.
 ///
 /// Type records are only allowed to use type indices smaller than their own, so
-/// a type stream is effectively a topologically sorted DAG. Cycles occuring in
+/// a type stream is effectively a topologically sorted DAG. Cycles occurring in
 /// the type graph of the source program are resolved with forward declarations
 /// of composite types. This class implements the following type stream merging
 /// algorithm, which relies on this DAG structure:
@@ -487,7 +487,7 @@ Expected<bool> TypeStreamMerger::shouldRemapType(const CVType &Type) {
     if (auto EC = TypeDeserializer::deserializeAs(const_cast<CVType &>(Type),
                                                   EP))
       return joinErrors(std::move(EC), errorCorruptRecord());
-    if (PCHSignature.hasValue())
+    if (PCHSignature)
       return errorCorruptRecord();
     PCHSignature.emplace(EP.getSignature());
     return false;

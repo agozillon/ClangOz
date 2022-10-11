@@ -379,8 +379,8 @@ public:
   }
 
   bool isCommon() const {
-    return isExternal() && getSectionNumber() == COFF::IMAGE_SYM_UNDEFINED &&
-           getValue() != 0;
+    return (isExternal() || isSection()) &&
+           getSectionNumber() == COFF::IMAGE_SYM_UNDEFINED && getValue() != 0;
   }
 
   bool isUndefined() const {
@@ -576,25 +576,26 @@ struct coff_tls_directory {
 
   uint32_t getAlignment() const {
     // Bit [20:24] contains section alignment.
-    uint32_t Shift = (Characteristics & 0x00F00000) >> 20;
+    uint32_t Shift = (Characteristics & COFF::IMAGE_SCN_ALIGN_MASK) >> 20;
     if (Shift > 0)
       return 1U << (Shift - 1);
     return 0;
+  }
+
+  void setAlignment(uint32_t Align) {
+    uint32_t AlignBits = 0;
+    if (Align) {
+      assert(llvm::isPowerOf2_32(Align) && "alignment is not a power of 2");
+      assert(llvm::Log2_32(Align) <= 13 && "alignment requested is too large");
+      AlignBits = (llvm::Log2_32(Align) + 1) << 20;
+    }
+    Characteristics =
+        (Characteristics & ~COFF::IMAGE_SCN_ALIGN_MASK) | AlignBits;
   }
 };
 
 using coff_tls_directory32 = coff_tls_directory<support::little32_t>;
 using coff_tls_directory64 = coff_tls_directory<support::little64_t>;
-
-/// Bits in control flow guard flags as we understand them.
-enum class coff_guard_flags : uint32_t {
-  CFInstrumented = 0x00000100,
-  HasFidTable = 0x00000400,
-  ProtectDelayLoadIAT = 0x00001000,
-  DelayLoadIATSection = 0x00002000, // Delay load in separate section
-  HasLongJmpTable = 0x00010000,
-  FidTableHasFlags = 0x10000000, // Indicates that fid tables are 5 bytes
-};
 
 enum class frame_type : uint16_t { Fpo = 0, Trap = 1, Tss = 2, NonFpo = 3 };
 
@@ -650,6 +651,17 @@ struct coff_load_configuration32 {
   support::ulittle16_t Reserved2;
   support::ulittle32_t GuardRFVerifyStackPointerFunctionPointer;
   support::ulittle32_t HotPatchTableOffset;
+
+  // Added in MSVC 2019
+  support::ulittle32_t Reserved3;
+  support::ulittle32_t EnclaveConfigurationPointer;
+  support::ulittle32_t VolatileMetadataPointer;
+  support::ulittle32_t GuardEHContinuationTable;
+  support::ulittle32_t GuardEHContinuationCount;
+  support::ulittle32_t GuardXFGCheckFunctionPointer;
+  support::ulittle32_t GuardXFGDispatchFunctionPointer;
+  support::ulittle32_t GuardXFGTableDispatchFunctionPointer;
+  support::ulittle32_t CastGuardOsDeterminedFailureMode;
 };
 
 /// 64-bit load config (IMAGE_LOAD_CONFIG_DIRECTORY64)
@@ -697,6 +709,17 @@ struct coff_load_configuration64 {
   support::ulittle16_t Reserved2;
   support::ulittle64_t GuardRFVerifyStackPointerFunctionPointer;
   support::ulittle32_t HotPatchTableOffset;
+
+  // Added in MSVC 2019
+  support::ulittle32_t Reserved3;
+  support::ulittle64_t EnclaveConfigurationPointer;
+  support::ulittle64_t VolatileMetadataPointer;
+  support::ulittle64_t GuardEHContinuationTable;
+  support::ulittle64_t GuardEHContinuationCount;
+  support::ulittle64_t GuardXFGCheckFunctionPointer;
+  support::ulittle64_t GuardXFGDispatchFunctionPointer;
+  support::ulittle64_t GuardXFGTableDispatchFunctionPointer;
+  support::ulittle64_t CastGuardOsDeterminedFailureMode;
 };
 
 struct coff_runtime_function_x64 {
@@ -786,6 +809,8 @@ private:
   const coff_base_reloc_block_header *BaseRelocEnd;
   const debug_directory *DebugDirectoryBegin;
   const debug_directory *DebugDirectoryEnd;
+  const coff_tls_directory32 *TLSDirectory32;
+  const coff_tls_directory64 *TLSDirectory64;
   // Either coff_load_configuration32 or coff_load_configuration64.
   const void *LoadConfig = nullptr;
 
@@ -805,6 +830,7 @@ private:
   Error initExportTablePtr();
   Error initBaseRelocPtr();
   Error initDebugDirectoryPtr();
+  Error initTLSDirectoryPtr();
   Error initLoadConfigPtr();
 
 public:
@@ -922,7 +948,7 @@ protected:
   bool isSectionData(DataRefImpl Sec) const override;
   bool isSectionBSS(DataRefImpl Sec) const override;
   bool isSectionVirtual(DataRefImpl Sec) const override;
-  bool isDebugSection(StringRef SectionName) const override;
+  bool isDebugSection(DataRefImpl Sec) const override;
   relocation_iterator section_rel_begin(DataRefImpl Sec) const override;
   relocation_iterator section_rel_end(DataRefImpl Sec) const override;
 
@@ -974,6 +1000,13 @@ public:
   iterator_range<base_reloc_iterator> base_relocs() const;
   iterator_range<const debug_directory *> debug_directories() const {
     return make_range(debug_directory_begin(), debug_directory_end());
+  }
+
+  const coff_tls_directory32 *getTLSDirectory32() const {
+    return TLSDirectory32;
+  }
+  const coff_tls_directory64 *getTLSDirectory64() const {
+    return TLSDirectory64;
   }
 
   const dos_header *getDOSHeader() const {
@@ -1035,13 +1068,15 @@ public:
 
   uint64_t getImageBase() const;
   Error getVaPtr(uint64_t VA, uintptr_t &Res) const;
-  Error getRvaPtr(uint32_t Rva, uintptr_t &Res) const;
+  Error getRvaPtr(uint32_t Rva, uintptr_t &Res,
+                  const char *ErrorContext = nullptr) const;
 
   /// Given an RVA base and size, returns a valid array of bytes or an error
   /// code if the RVA and size is not contained completely within a valid
   /// section.
   Error getRvaAndSizeAsBytes(uint32_t RVA, uint32_t Size,
-                             ArrayRef<uint8_t> &Contents) const;
+                             ArrayRef<uint8_t> &Contents,
+                             const char *ErrorContext = nullptr) const;
 
   Error getHintName(uint32_t Rva, uint16_t &Hint,
                               StringRef &Name) const;
@@ -1250,6 +1285,12 @@ struct FpoData {
 
   // cbFrame: frame pointer
   frame_type getFP() const { return static_cast<frame_type>(Attributes >> 14); }
+};
+
+class SectionStrippedError
+    : public ErrorInfo<SectionStrippedError, BinaryError> {
+public:
+  SectionStrippedError() { setErrorCode(object_error::section_stripped); }
 };
 
 } // end namespace object

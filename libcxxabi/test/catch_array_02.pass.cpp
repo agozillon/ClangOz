@@ -1,4 +1,4 @@
-//===---------------------- catch_array_02.cpp ----------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -11,7 +11,7 @@
 
 #include <cassert>
 
-int main()
+int main(int, char**)
 {
     typedef char Array[4];
     Array a = {'H', 'i', '!', 0};
@@ -27,4 +27,6 @@ int main()
     {
         assert(false);
     }
+
+    return 0;
 }

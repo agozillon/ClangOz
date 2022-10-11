@@ -5,12 +5,11 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+#include "AST.h"
 #include "Annotations.h"
 #include "CollectMacros.h"
-#include "Matchers.h"
 #include "SourceCode.h"
 #include "TestTU.h"
-#include "index/SymbolID.h"
 #include "clang/Basic/SourceLocation.h"
 #include "llvm/Support/ScopedPrinter.h"
 #include "gmock/gmock.h"
@@ -95,14 +94,18 @@ TEST(CollectMainFileMacros, SelectedMacros) {
       assert(Macro);
       auto SID = getSymbolID(Macro->Name, Macro->Info, SM);
 
-      EXPECT_THAT(ExpectedRefs,
-                  UnorderedElementsAreArray(ActualMacroRefs.MacroRefs[*SID]))
+      std::vector<Range> Ranges;
+      for (const auto &Ref : ActualMacroRefs.MacroRefs[SID])
+        Ranges.push_back(Ref.Rng);
+      EXPECT_THAT(ExpectedRefs, UnorderedElementsAreArray(Ranges))
           << "Annotation=" << I << ", MacroName=" << Macro->Name
           << ", Test = " << Test;
     }
     // Unknown macros.
-    EXPECT_THAT(AST.getMacros().UnknownMacros,
-                UnorderedElementsAreArray(T.ranges("Unknown")))
+    std::vector<Range> Ranges;
+    for (const auto &Ref : AST.getMacros().UnknownMacros)
+      Ranges.push_back(Ref.Rng);
+    EXPECT_THAT(Ranges, UnorderedElementsAreArray(T.ranges("Unknown")))
         << "Unknown macros doesn't match in " << Test;
   }
 }

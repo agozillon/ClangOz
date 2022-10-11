@@ -27,6 +27,7 @@ class CallOpInterface;
 struct CallInterfaceCallable;
 class Operation;
 class Region;
+class SymbolTableCollection;
 
 //===----------------------------------------------------------------------===//
 // CallGraphNode
@@ -59,13 +60,13 @@ public:
     };
 
   public:
-    /// Returns if this edge represents an `Abstract` edge.
+    /// Returns true if this edge represents an `Abstract` edge.
     bool isAbstract() const { return targetAndKind.getInt() == Kind::Abstract; }
 
-    /// Returns if this edge represents a `Call` edge.
+    /// Returns true if this edge represents a `Call` edge.
     bool isCall() const { return targetAndKind.getInt() == Kind::Call; }
 
-    /// Returns if this edge represents a `Child` edge.
+    /// Returns true if this edge represents a `Child` edge.
     bool isChild() const { return targetAndKind.getInt() == Kind::Child; }
 
     /// Returns the target node for this edge.
@@ -87,7 +88,7 @@ public:
     friend class CallGraphNode;
   };
 
-  /// Returns if this node is the external node.
+  /// Returns true if this node is an external node.
   bool isExternal() const;
 
   /// Returns the callable region this node represents. This can only be called
@@ -138,8 +139,8 @@ private:
   Region *callableRegion;
 
   /// A set of out-going edges from this node to other nodes in the graph.
-  llvm::SetVector<Edge, SmallVector<Edge, 4>,
-                  llvm::SmallDenseSet<Edge, 4, EdgeKeyInfo>>
+  SetVector<Edge, SmallVector<Edge, 4>,
+            llvm::SmallDenseSet<Edge, 4, EdgeKeyInfo>>
       edges;
 
   // Provide access to private methods.
@@ -183,14 +184,22 @@ public:
   /// registered.
   CallGraphNode *lookupNode(Region *region) const;
 
-  /// Return the callgraph node representing the indirect-external callee.
-  CallGraphNode *getExternalNode() const {
-    return const_cast<CallGraphNode *>(&externalNode);
+  /// Return the callgraph node representing an external caller.
+  CallGraphNode *getExternalCallerNode() const {
+    return const_cast<CallGraphNode *>(&externalCallerNode);
+  }
+
+  /// Return the callgraph node representing an indirect callee.
+  CallGraphNode *getUnknownCalleeNode() const {
+    return const_cast<CallGraphNode *>(&unknownCalleeNode);
   }
 
   /// Resolve the callable for given callee to a node in the callgraph, or the
-  /// external node if a valid node was not resolved.
-  CallGraphNode *resolveCallable(CallOpInterface call) const;
+  /// external node if a valid node was not resolved. The provided symbol table
+  /// is used when resolving calls that reference callables via a symbol
+  /// reference.
+  CallGraphNode *resolveCallable(CallOpInterface call,
+                                 SymbolTableCollection &symbolTable) const;
 
   /// Erase the given node from the callgraph.
   void eraseNode(CallGraphNode *node);
@@ -208,16 +217,20 @@ private:
   /// The set of nodes within the callgraph.
   NodeMapT nodes;
 
-  /// A special node used to indicate an external edges.
-  CallGraphNode externalNode;
+  /// A special node used to indicate an external caller.
+  CallGraphNode externalCallerNode;
+
+  /// A special node used to indicate an unknown callee.
+  CallGraphNode unknownCalleeNode;
 };
 
-} // end namespace mlir
+} // namespace mlir
 
 namespace llvm {
 // Provide graph traits for traversing call graphs using standard graph
 // traversals.
-template <> struct GraphTraits<const mlir::CallGraphNode *> {
+template <>
+struct GraphTraits<const mlir::CallGraphNode *> {
   using NodeRef = mlir::CallGraphNode *;
   static NodeRef getEntryNode(NodeRef node) { return node; }
 
@@ -241,7 +254,7 @@ struct GraphTraits<const mlir::CallGraph *>
     : public GraphTraits<const mlir::CallGraphNode *> {
   /// The entry node into the graph is the external node.
   static NodeRef getEntryNode(const mlir::CallGraph *cg) {
-    return cg->getExternalNode();
+    return cg->getExternalCallerNode();
   }
 
   // nodes_iterator/begin/end - Allow iteration over all nodes in the graph
@@ -249,6 +262,6 @@ struct GraphTraits<const mlir::CallGraph *>
   static nodes_iterator nodes_begin(mlir::CallGraph *cg) { return cg->begin(); }
   static nodes_iterator nodes_end(mlir::CallGraph *cg) { return cg->end(); }
 };
-} // end namespace llvm
+} // namespace llvm
 
 #endif // MLIR_ANALYSIS_CALLGRAPH_H

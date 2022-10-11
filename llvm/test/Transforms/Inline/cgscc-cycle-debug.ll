@@ -10,7 +10,7 @@
 ; REQUIRES: asserts
 ; RUN: opt < %s -passes='cgscc(inline)' -inline-threshold=500 -debug-only=cgscc -S 2>&1 | FileCheck %s
 
-; CHECK: Running an SCC pass across the RefSCC: [(test1_c, test1_a, test1_b)]
+; CHECK: Running an SCC pass across the RefSCC: [(test1_a, test1_b, test1_c)]
 ; CHECK: Enqueuing the existing SCC in the worklist:(test1_b)
 ; CHECK: Enqueuing a newly formed SCC:(test1_c)
 ; CHECK: Enqueuing a new RefSCC in the update worklist: [(test1_b)]
@@ -18,7 +18,6 @@
 ; CHECK: Switch an internal ref edge to a call edge from 'test1_a' to 'test1_a'
 ; CHECK: Re-running SCC passes after a refinement of the current SCC: (test1_c, test1_a)
 ; CHECK: Skipping redundant run on SCC: (test1_c, test1_a)
-; CHECK: Skipping an SCC that is now part of some other RefSCC...
 
 declare void @external(i32 %seed)
 

@@ -29,6 +29,8 @@ static void
 populateParentNamespaces(llvm::SmallVector<Reference, 4> &Namespaces,
                          const T *D, bool &IsAnonymousNamespace);
 
+static void populateMemberTypeInfo(MemberTypeInfo &I, const FieldDecl *D);
+
 // A function to extract the appropriate relative path for a given info's
 // documentation. The path returned is a composite of the parent namespaces.
 //
@@ -166,7 +168,7 @@ void ClangDocCommentVisitor::visitVerbatimLineComment(
 }
 
 bool ClangDocCommentVisitor::isWhitespaceOnly(llvm::StringRef S) const {
-  return std::all_of(S.begin(), S.end(), isspace);
+  return llvm::all_of(S, isspace);
 }
 
 std::string ClangDocCommentVisitor::getCommandName(unsigned CommandID) const {
@@ -293,9 +295,11 @@ static void parseFields(RecordInfo &I, const RecordDecl *D, bool PublicOnly,
         continue;
       }
     }
-    I.Members.emplace_back(
+
+    auto& member = I.Members.emplace_back(
         F->getTypeSourceInfo()->getType().getAsString(), F->getNameAsString(),
         getFinalAccessSpecifier(Access, F->getAccessUnsafe()));
+    populateMemberTypeInfo(member, F);
   }
 }
 
@@ -357,7 +361,7 @@ template <typename T>
 static void
 populateParentNamespaces(llvm::SmallVector<Reference, 4> &Namespaces,
                          const T *D, bool &IsInAnonymousNamespace) {
-  const auto *DC = dyn_cast<DeclContext>(D);
+  const auto *DC = cast<DeclContext>(D);
   while ((DC = DC->getParent())) {
     if (const auto *N = dyn_cast<NamespaceDecl>(DC)) {
       std::string Namespace;
@@ -382,7 +386,7 @@ populateParentNamespaces(llvm::SmallVector<Reference, 4> &Namespaces,
   // corresponds to a Record and if it doesn't have any namespace (because this
   // means it's in the global namespace). Also if its outermost namespace is a
   // record because that record matches the previous condition mentioned.
-  if ((Namespaces.empty() && dyn_cast<RecordDecl>(D)) ||
+  if ((Namespaces.empty() && isa<RecordDecl>(D)) ||
       (!Namespaces.empty() && Namespaces.back().RefType == InfoType::IT_record))
     Namespaces.emplace_back(SymbolID(), "GlobalNamespace",
                             InfoType::IT_namespace);
@@ -419,16 +423,33 @@ static void populateFunctionInfo(FunctionInfo &I, const FunctionDecl *D,
   populateSymbolInfo(I, D, FC, LineNumber, Filename, IsFileInRootDir,
                      IsInAnonymousNamespace);
   if (const auto *T = getDeclForType(D->getReturnType())) {
-    if (dyn_cast<EnumDecl>(T))
+    if (isa<EnumDecl>(T))
       I.ReturnType = TypeInfo(getUSRForDecl(T), T->getNameAsString(),
                               InfoType::IT_enum, getInfoRelativePath(T));
-    else if (dyn_cast<RecordDecl>(T))
+    else if (isa<RecordDecl>(T))
       I.ReturnType = TypeInfo(getUSRForDecl(T), T->getNameAsString(),
                               InfoType::IT_record, getInfoRelativePath(T));
   } else {
     I.ReturnType = TypeInfo(D->getReturnType().getAsString());
   }
   parseParameters(I, D);
+}
+
+static void populateMemberTypeInfo(MemberTypeInfo &I, const FieldDecl *D) {
+  assert(D && "Expect non-null FieldDecl in populateMemberTypeInfo");
+
+  ASTContext& Context = D->getASTContext();
+  // TODO investigate whether we can use ASTContext::getCommentForDecl instead
+  // of this logic. See also similar code in Mapper.cpp.
+  RawComment *Comment = Context.getRawCommentForDeclNoCache(D);
+  if (!Comment)
+    return;
+
+  Comment->setAttached();
+  if (comments::FullComment* fc = Comment->parse(Context, nullptr, D)) {
+    I.Description.emplace_back();
+    parseFullComment(fc, I.Description.back());
+  }
 }
 
 static void

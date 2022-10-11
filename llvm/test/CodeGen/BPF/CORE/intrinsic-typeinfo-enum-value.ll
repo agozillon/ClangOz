@@ -1,5 +1,6 @@
-; RUN: llc -march=bpfel -filetype=asm -o - %s | FileCheck %s
-; RUN: llc -march=bpfel -mattr=+alu32 -filetype=asm -o - %s | FileCheck %s
+; RUN: opt -O2 %s | llvm-dis > %t1
+; RUN: llc -filetype=asm -o - %t1 | FileCheck %s
+; RUN: llc -mattr=+alu32 -filetype=asm -o - %t1 | FileCheck %s
 ;
 ; Source:
 ;   enum AA { VAL1 = -100, VAL2 = 0xffff8000 };
@@ -10,7 +11,9 @@
 ;            __builtin_preserve_enum_value(*(__BB *)VAL10, 1);
 ;   }
 ; Compiler flag to generate IR:
-;   clang -target bpf -S -O2 -g -emit-llvm t1.c
+;   clang -target bpf -S -O2 -g -emit-llvm -Xclang -disable-llvm-passes t1.c
+
+target triple = "bpf"
 
 @0 = private unnamed_addr constant [10 x i8] c"VAL1:-100\00", align 1
 @1 = private unnamed_addr constant [16 x i8] c"VAL2:4294934528\00", align 1
@@ -33,14 +36,33 @@ entry:
 ; CHECK:             r{{[0-9]+}} = -2147483648 ll
 ; CHECK:             exit
 
-; CHECK:             .long   16                              # BTF_KIND_ENUM(id = 4)
-; CHECK:             .long   57                              # BTF_KIND_TYPEDEF(id = 5)
+; CHECK:             .long   16                              # BTF_KIND_ENUM64(id = 4)
+; CHECK-NEXT:        .long   2466250754                      # 0x93000002
+; CHECK-NEXT:        .long   8
+; CHECK-NEXT:        .long   19
+; CHECK-NEXT:        .long   4294967196                      # 0xffffff9c
+; CHECK-NEXT:        .long   4294967295                      # 0xffffffff
+; CHECK-NEXT:        .long   24
+; CHECK-NEXT:        .long   4294934528                      # 0xffff8000
+; CHECK-NEXT:        .long   0                               # 0x0
+; CHECK-NEXT:        .long   57                              # BTF_KIND_TYPEDEF(id = 5)
+; CHECK-NEXT:        .long   134217728                       # 0x8000000
+; CHECK-NEXT:        .long   6
+; CHECK-NEXT:        .long   0                               # BTF_KIND_ENUM64(id = 6)
+; CHECK-NEXT:        .long   318767105                       # 0x13000001
+; CHECK-NEXT:        .long   8
+; CHECK-NEXT:        .long   62
+; CHECK-NEXT:        .long   2147483648                      # 0x80000000
+; CHECK-NEXT:        .long   4294967295                      # 0xffffffff
 
 ; CHECK:             .ascii  ".text"                         # string offset=10
 ; CHECK:             .ascii  "AA"                            # string offset=16
+; CHECK:             .ascii  "VAL1"                          # string offset=19
+; CHECK:             .ascii  "VAL2"                          # string offset=24
 ; CHECK:             .byte   48                              # string offset=29
 ; CHECK:             .byte   49                              # string offset=55
 ; CHECK:             .ascii  "__BB"                          # string offset=57
+; CHECK:             .ascii  "VAL10"                         # string offset=62
 
 ; CHECK:             .long   16                              # FieldReloc
 ; CHECK-NEXT:        .long   10                              # Field reloc section string offset=10

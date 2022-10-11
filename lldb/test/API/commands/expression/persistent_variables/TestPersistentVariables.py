@@ -10,8 +10,6 @@ from lldbsuite.test.lldbtest import *
 
 class PersistentVariablesTestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     def test_persistent_variables(self):
         """Test that lldb persistent variables works correctly."""
         self.build()
@@ -41,3 +39,19 @@ class PersistentVariablesTestCase(TestBase):
         # Test that $200 wasn't created by the previous expression.
         self.expect("expr $200", error=True,
             substrs=["use of undeclared identifier '$200'"])
+
+        # Try redeclaring the persistent variable with the same type.
+        # This should be rejected as we treat them as if they are globals.
+        self.expect("expr int $i = 123", error=True,
+                    substrs=["error: redefinition of persistent variable '$i'"])
+        self.expect_expr("$i", result_type="int", result_value="5")
+
+        # Try redeclaring the persistent variable with another type. Should
+        # also be rejected.
+        self.expect("expr long $i = 123", error=True,
+                    substrs=["error: redefinition of persistent variable '$i'"])
+        self.expect_expr("$i", result_type="int", result_value="5")
+
+        # Try assigning the persistent variable a new value.
+        self.expect("expr $i = 55")
+        self.expect_expr("$i", result_type="int", result_value="55")

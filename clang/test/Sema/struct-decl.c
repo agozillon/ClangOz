@@ -5,8 +5,8 @@ struct bar {
 };
 
 struct foo {
-  char name[(int)&((struct bar *)0)->n];
-  char name2[(int)&((struct bar *)0)->n - 1]; //expected-error{{'name2' declared as an array with a negative size}}
+  char name[(int)&((struct bar *)0)->n]; // expected-warning {{folded to constant}}
+  char name2[(int)&((struct bar *)0)->n - 1]; // expected-error {{array size is negative}}
 };
 
 // PR3430
@@ -18,7 +18,7 @@ struct s {
 
 struct st;
 
-int foo() {
+int foo(void) {
   struct st *f;
   return f->v + f[0].v;
 }
@@ -60,8 +60,8 @@ inline struct test3 { // expected-error {{'inline' can only appear on functions}
 
 struct hiding_1 {};
 struct hiding_2 {};
-void test_hiding() {
-  struct hiding_1 *hiding_1();
+void test_hiding(void) {
+  struct hiding_1 *hiding_1(void);
   extern struct hiding_2 *hiding_2;
   struct hiding_1 *p = hiding_1();
   struct hiding_2 *q = hiding_2;

@@ -4,7 +4,7 @@
 ; ModuleID = '1489.c'
 target datalayout = "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:32:64-f32:32:32-f64:32:64-v64:64:64-v128:128:128-a0:0:64"
 target triple = "i686-apple-darwin8"
-@.str = internal constant [13 x i8] c"%d %d %d %d\0A\00"		; <[13 x i8]*> [#uses=1]
+@.str = internal constant [13 x i8] c"%d %d %d %d\0A\00"		; <ptr> [#uses=1]
 
 define i32 @quux() nounwind {
 ; CHECK-LABEL: quux:
@@ -110,28 +110,25 @@ define i32 @main() nounwind {
 ; CHECK-NEXT:    movl %esp, %ebp
 ; CHECK-NEXT:    pushl %edi
 ; CHECK-NEXT:    pushl %esi
-; CHECK-NEXT:    subl $48, %esp
+; CHECK-NEXT:    subl $32, %esp
 ; CHECK-NEXT:    calll _baz
-; CHECK-NEXT:    movl %eax, {{[-0-9]+}}(%e{{[sb]}}p) ## 4-byte Spill
+; CHECK-NEXT:    movl %eax, %edi
 ; CHECK-NEXT:    calll _bar
-; CHECK-NEXT:    movl %eax, {{[-0-9]+}}(%e{{[sb]}}p) ## 4-byte Spill
+; CHECK-NEXT:    movl %eax, %esi
 ; CHECK-NEXT:    calll _foo
 ; CHECK-NEXT:    movl %eax, {{[-0-9]+}}(%e{{[sb]}}p) ## 4-byte Spill
 ; CHECK-NEXT:    calll _quux
-; CHECK-NEXT:    movl %esp, %ecx
 ; CHECK-NEXT:    movl {{[-0-9]+}}(%e{{[sb]}}p), %edx ## 4-byte Reload
-; CHECK-NEXT:    movl %edx, 16(%ecx)
-; CHECK-NEXT:    movl {{[-0-9]+}}(%e{{[sb]}}p), %esi ## 4-byte Reload
-; CHECK-NEXT:    movl %esi, 12(%ecx)
-; CHECK-NEXT:    movl {{[-0-9]+}}(%e{{[sb]}}p), %edi ## 4-byte Reload
-; CHECK-NEXT:    movl %edi, 8(%ecx)
-; CHECK-NEXT:    movl %eax, 4(%ecx)
-; CHECK-NEXT:    movl $_.str, (%ecx)
+; CHECK-NEXT:    movl %eax, %ecx
+; CHECK-NEXT:    movl %esp, %eax
+; CHECK-NEXT:    movl %edi, 16(%eax)
+; CHECK-NEXT:    movl %esi, 12(%eax)
+; CHECK-NEXT:    movl %edx, 8(%eax)
+; CHECK-NEXT:    movl %ecx, 4(%eax)
+; CHECK-NEXT:    movl $_.str, (%eax)
 ; CHECK-NEXT:    calll _printf
-; CHECK-NEXT:    ## implicit-def: $ecx
-; CHECK-NEXT:    movl %eax, {{[-0-9]+}}(%e{{[sb]}}p) ## 4-byte Spill
-; CHECK-NEXT:    movl %ecx, %eax
-; CHECK-NEXT:    addl $48, %esp
+; CHECK-NEXT:    ## implicit-def: $eax
+; CHECK-NEXT:    addl $32, %esp
 ; CHECK-NEXT:    popl %esi
 ; CHECK-NEXT:    popl %edi
 ; CHECK-NEXT:    popl %ebp
@@ -141,8 +138,8 @@ entry:
 	%tmp1 = tail call i32 @bar( )		; <i32> [#uses=1]
 	%tmp2 = tail call i32 @foo( )		; <i32> [#uses=1]
 	%tmp3 = tail call i32 @quux( )		; <i32> [#uses=1]
-	%tmp5 = tail call i32 (i8*, ...) @printf( i8* getelementptr ([13 x i8], [13 x i8]* @.str, i32 0, i32 0), i32 %tmp3, i32 %tmp2, i32 %tmp1, i32 %tmp )		; <i32> [#uses=0]
+	%tmp5 = tail call i32 (ptr, ...) @printf( ptr @.str, i32 %tmp3, i32 %tmp2, i32 %tmp1, i32 %tmp )		; <i32> [#uses=0]
 	ret i32 undef
 }
 
-declare i32 @printf(i8*, ...)
+declare i32 @printf(ptr, ...)

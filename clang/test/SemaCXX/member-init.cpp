@@ -21,20 +21,20 @@ struct Recurse { // expected-error {{initializer for 'n' needed}}
 };
 
 struct UnknownBound {
-  int as[] = { 1, 2, 3 }; // expected-error {{array bound cannot be deduced from an in-class initializer}}
+  int as[] = { 1, 2, 3 }; // expected-error {{array bound cannot be deduced from a default member initializer}}
   int bs[4] = { 4, 5, 6, 7 };
-  int cs[] = { 8, 9, 10 }; // expected-error {{array bound cannot be deduced from an in-class initializer}}
+  int cs[] = { 8, 9, 10 }; // expected-error {{array bound cannot be deduced from a default member initializer}}
 };
 
 template<int n> struct T { static const int B; };
 template<> struct T<2> { template<int C, int D> using B = int; };
 const int C = 0, D = 0;
 struct S {
-  int as[] = { decltype(x)::B<C, D>(0) }; // expected-error {{array bound cannot be deduced from an in-class initializer}}
+  int as[] = { decltype(x)::B<C, D>(0) }; // expected-error {{array bound cannot be deduced from a default member initializer}}
   T<sizeof(as) / sizeof(int)> x;
   // test that we handle invalid array bound deductions without crashing when the declarator name is itself invalid
   operator int[](){}; // expected-error {{'operator int' cannot be the name of a variable or data member}} \
-                      // expected-error {{array bound cannot be deduced from an in-class initializer}}
+                      // expected-error {{array bound cannot be deduced from a default member initializer}}
 };
 
 struct ThrowCtor { ThrowCtor(int) noexcept(false); };
@@ -87,7 +87,7 @@ namespace PR14838 {
   struct thing {};
   struct another {
     another() : r(thing()) {} // expected-error {{binds to a temporary object}}
-    // expected-error@-1 {{temporary of type 'PR14838::function' has private destructor}}
+    // expected-error@-1 {{temporary of type 'function' has private destructor}}
     const function &r; // expected-note {{reference member declared here}}
   } af;
 }
@@ -98,7 +98,7 @@ namespace rdar14084171 {
     double y;
   };
   struct Sprite {
-    Point location = Point(0,0); // expected-error {{no matching constructor for initialization of 'rdar14084171::Point'}}
+    Point location = Point(0,0); // expected-error {{no matching constructor for initialization of 'Point'}}
   };
   void f(Sprite& x) { x = x; } // expected-warning {{explicitly assigning value of variable}}
 }

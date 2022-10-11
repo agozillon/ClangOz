@@ -87,13 +87,26 @@ Error BinaryHolder::ArchiveEntry::load(IntrusiveRefCntPtr<vfs::FileSystem> VFS,
 }
 
 Error BinaryHolder::ObjectEntry::load(IntrusiveRefCntPtr<vfs::FileSystem> VFS,
-                                      StringRef Filename, bool Verbose) {
+                                      StringRef Filename, TimestampTy Timestamp,
+                                      bool Verbose) {
   // Try to load regular binary and force it to be memory mapped.
   auto ErrOrBuff = (Filename == "-")
                        ? MemoryBuffer::getSTDIN()
                        : VFS->getBufferForFile(Filename, -1, false);
   if (auto Err = ErrOrBuff.getError())
     return errorCodeToError(Err);
+
+  if (Filename != "-" && Timestamp != sys::TimePoint<>()) {
+    llvm::ErrorOr<vfs::Status> Stat = VFS->status(Filename);
+    if (!Stat)
+      return errorCodeToError(Stat.getError());
+    if (Timestamp != std::chrono::time_point_cast<std::chrono::seconds>(
+                         Stat->getLastModificationTime()))
+      WithColor::warning() << Filename
+                           << ": timestamp mismatch between object file ("
+                           << Stat->getLastModificationTime()
+                           << ") and debug map (" << Timestamp << ")\n";
+  }
 
   MemBuffer = std::move(*ErrOrBuff);
 
@@ -155,20 +168,17 @@ BinaryHolder::ArchiveEntry::getObjectEntry(StringRef Filename,
   StringRef ArchiveFilename;
   StringRef ObjectFilename;
   std::tie(ArchiveFilename, ObjectFilename) = getArchiveAndObjectName(Filename);
-
-  // Try the cache first.
   KeyTy Key = {ObjectFilename, Timestamp};
 
-  {
-    std::lock_guard<std::mutex> Lock(MemberCacheMutex);
-    if (MemberCache.count(Key))
-      return MemberCache[Key];
-  }
+  // Try the cache first.
+  std::lock_guard<std::mutex> Lock(MemberCacheMutex);
+  if (MemberCache.count(Key))
+    return *MemberCache[Key].get();
 
   // Create a new ObjectEntry, but don't add it to the cache yet. Loading of
   // the archive members might fail and we don't want to lock the whole archive
   // during this operation.
-  ObjectEntry OE;
+  auto OE = std::make_unique<ObjectEntry>();
 
   for (const auto &Archive : Archives) {
     Error Err = Error::success();
@@ -180,9 +190,14 @@ BinaryHolder::ArchiveEntry::getObjectEntry(StringRef Filename,
             return ModTimeOrErr.takeError();
 
           if (Timestamp != sys::TimePoint<>() &&
-              Timestamp != ModTimeOrErr.get()) {
+              Timestamp != std::chrono::time_point_cast<std::chrono::seconds>(
+                               ModTimeOrErr.get())) {
             if (Verbose)
-              WithColor::warning() << "member has timestamp mismatch.\n";
+              WithColor::warning()
+                  << *NameOrErr
+                  << ": timestamp mismatch between archive member ("
+                  << ModTimeOrErr.get() << ") and debug map (" << Timestamp
+                  << ")\n";
             continue;
           }
 
@@ -198,7 +213,7 @@ BinaryHolder::ArchiveEntry::getObjectEntry(StringRef Filename,
           if (!ErrOrObjectFile)
             return ErrOrObjectFile.takeError();
 
-          OE.Objects.push_back(std::move(*ErrOrObjectFile));
+          OE->Objects.push_back(std::move(*ErrOrObjectFile));
         }
       }
     }
@@ -206,12 +221,11 @@ BinaryHolder::ArchiveEntry::getObjectEntry(StringRef Filename,
       return std::move(Err);
   }
 
-  if (OE.Objects.empty())
+  if (OE->Objects.empty())
     return errorCodeToError(errc::no_such_file_or_directory);
 
-  std::lock_guard<std::mutex> Lock(MemberCacheMutex);
-  MemberCache.try_emplace(Key, std::move(OE));
-  return MemberCache[Key];
+  MemberCache[Key] = std::move(OE);
+  return *MemberCache[Key];
 }
 
 Expected<const BinaryHolder::ObjectEntry &>
@@ -225,18 +239,18 @@ BinaryHolder::getObjectEntry(StringRef Filename, TimestampTy Timestamp) {
     StringRef ArchiveFilename = getArchiveAndObjectName(Filename).first;
     std::lock_guard<std::mutex> Lock(ArchiveCacheMutex);
     if (ArchiveCache.count(ArchiveFilename)) {
-      return ArchiveCache[ArchiveFilename].getObjectEntry(Filename, Timestamp,
-                                                          Verbose);
+      return ArchiveCache[ArchiveFilename]->getObjectEntry(Filename, Timestamp,
+                                                           Verbose);
     } else {
-      ArchiveEntry &AE = ArchiveCache[ArchiveFilename];
-      auto Err = AE.load(VFS, Filename, Timestamp, Verbose);
+      auto AE = std::make_unique<ArchiveEntry>();
+      auto Err = AE->load(VFS, Filename, Timestamp, Verbose);
       if (Err) {
-        ArchiveCache.erase(ArchiveFilename);
         // Don't return the error here: maybe the file wasn't an archive.
         llvm::consumeError(std::move(Err));
       } else {
-        return ArchiveCache[ArchiveFilename].getObjectEntry(Filename, Timestamp,
-                                                            Verbose);
+        ArchiveCache[ArchiveFilename] = std::move(AE);
+        return ArchiveCache[ArchiveFilename]->getObjectEntry(
+            Filename, Timestamp, Verbose);
       }
     }
   }
@@ -245,15 +259,14 @@ BinaryHolder::getObjectEntry(StringRef Filename, TimestampTy Timestamp) {
   // it from the file system and cache it now.
   std::lock_guard<std::mutex> Lock(ObjectCacheMutex);
   if (!ObjectCache.count(Filename)) {
-    ObjectEntry &OE = ObjectCache[Filename];
-    auto Err = OE.load(VFS, Filename, Verbose);
-    if (Err) {
-      ObjectCache.erase(Filename);
+    auto OE = std::make_unique<ObjectEntry>();
+    auto Err = OE->load(VFS, Filename, Timestamp, Verbose);
+    if (Err)
       return std::move(Err);
-    }
+    ObjectCache[Filename] = std::move(OE);
   }
 
-  return ObjectCache[Filename];
+  return *ObjectCache[Filename];
 }
 
 void BinaryHolder::clear() {

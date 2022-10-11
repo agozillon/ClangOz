@@ -6,11 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <stdio.h>
+#include <cstdio>
 
 #include "lldb/Core/Module.h"
 #include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/DataExtractor.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/Scalar.h"
 #include "lldb/Utility/StreamString.h"
@@ -145,7 +146,7 @@ Type::Type(lldb::user_id_t uid, SymbolFile *symbol_file, ConstString name,
            const Declaration &decl, const CompilerType &compiler_type,
            ResolveState compiler_type_resolve_state, uint32_t opaque_payload)
     : std::enable_shared_from_this<Type>(), UserID(uid), m_name(name),
-      m_symbol_file(symbol_file), m_context(context), m_encoding_type(nullptr),
+      m_symbol_file(symbol_file), m_context(context),
       m_encoding_uid(encoding_uid), m_encoding_uid_type(encoding_uid_type),
       m_decl(decl), m_compiler_type(compiler_type),
       m_compiler_type_resolve_state(compiler_type ? compiler_type_resolve_state
@@ -162,9 +163,7 @@ Type::Type(lldb::user_id_t uid, SymbolFile *symbol_file, ConstString name,
 
 Type::Type()
     : std::enable_shared_from_this<Type>(), UserID(0), m_name("<INVALID TYPE>"),
-      m_symbol_file(nullptr), m_context(nullptr), m_encoding_type(nullptr),
-      m_encoding_uid(LLDB_INVALID_UID), m_encoding_uid_type(eEncodingInvalid),
-      m_compiler_type_resolve_state(ResolveState::Unresolved) {
+      m_payload(0) {
   m_byte_size = 0;
   m_byte_size_has_value = false;
 }
@@ -185,7 +184,7 @@ void Type::GetDescription(Stream *s, lldb::DescriptionLevel level,
     }
   }
 
-  // Call the get byte size accesor so we resolve our byte size
+  // Call the get byte size accessor so we resolve our byte size
   if (GetByteSize(exe_scope))
     s->Printf(", byte-size = %" PRIu64, m_byte_size);
   bool show_fullpaths = (level == lldb::eDescriptionLevelVerbose);
@@ -325,7 +324,7 @@ void Type::DumpValue(ExecutionContext *exe_ctx, Stream *s,
         exe_ctx, s, format == lldb::eFormatDefault ? GetFormat() : format, data,
         data_byte_offset,
         GetByteSize(exe_ctx ? exe_ctx->GetBestExecutionContextScope() : nullptr)
-            .getValueOr(0),
+            .value_or(0),
         0, // Bitfield bit size
         0, // Bitfield bit offset
         show_types, show_summary, verbose, 0);
@@ -375,6 +374,7 @@ llvm::Optional<uint64_t> Type::GetByteSize(ExecutionContextScope *exe_scope) {
       if (ArchSpec arch = m_symbol_file->GetObjectFile()->GetArchitecture()) {
         m_byte_size = arch.GetAddressByteSize();
         m_byte_size_has_value = true;
+        return m_byte_size;
       }
     } break;
   }
@@ -434,7 +434,7 @@ bool Type::ReadFromMemory(ExecutionContext *exe_ctx, lldb::addr_t addr,
 
   const uint64_t byte_size =
       GetByteSize(exe_ctx ? exe_ctx->GetBestExecutionContextScope() : nullptr)
-          .getValueOr(0);
+          .value_or(0);
   if (data.GetByteSize() < byte_size) {
     lldb::DataBufferSP data_sp(new DataBufferHeap(byte_size, '\0'));
     data.SetData(data_sp);
@@ -536,10 +536,8 @@ bool Type::ResolveCompilerType(ResolveState compiler_type_resolve_state) {
       auto type_system_or_err =
           m_symbol_file->GetTypeSystemForLanguage(eLanguageTypeC);
       if (auto err = type_system_or_err.takeError()) {
-        LLDB_LOG_ERROR(
-            lldb_private::GetLogIfAnyCategoriesSet(LIBLLDB_LOG_SYMBOLS),
-            std::move(err),
-            "Unable to construct void type from TypeSystemClang");
+        LLDB_LOG_ERROR(GetLog(LLDBLog::Symbols), std::move(err),
+                       "Unable to construct void type from TypeSystemClang");
       } else {
         CompilerType void_compiler_type =
             type_system_or_err->GetBasicTypeFromAST(eBasicTypeVoid);
@@ -663,7 +661,7 @@ ConstString Type::GetQualifiedName() {
   return GetForwardCompilerType().GetTypeName();
 }
 
-bool Type::GetTypeScopeAndBasename(const llvm::StringRef& name,
+bool Type::GetTypeScopeAndBasename(llvm::StringRef name,
                                    llvm::StringRef &scope,
                                    llvm::StringRef &basename,
                                    TypeClass &type_class) {
@@ -723,6 +721,15 @@ bool Type::GetTypeScopeAndBasename(const llvm::StringRef& name,
 ModuleSP Type::GetModule() {
   if (m_symbol_file)
     return m_symbol_file->GetObjectFile()->GetModule();
+  return ModuleSP();
+}
+
+ModuleSP Type::GetExeModule() {
+  if (m_compiler_type) {
+    SymbolFile *symbol_file = m_compiler_type.GetTypeSystem()->GetSymbolFile();
+    if (symbol_file)
+      return symbol_file->GetObjectFile()->GetModule();
+  }
   return ModuleSP();
 }
 
@@ -820,6 +827,7 @@ TypeImpl::TypeImpl(const CompilerType &static_type,
 void TypeImpl::SetType(const lldb::TypeSP &type_sp) {
   if (type_sp) {
     m_static_type = type_sp->GetForwardCompilerType();
+    m_exe_module_wp = type_sp->GetExeModule();
     m_module_wp = type_sp->GetModule();
   } else {
     m_static_type.Clear();
@@ -846,6 +854,15 @@ void TypeImpl::SetType(const CompilerType &compiler_type,
 }
 
 bool TypeImpl::CheckModule(lldb::ModuleSP &module_sp) const {
+  return CheckModuleCommon(m_module_wp, module_sp);
+}
+
+bool TypeImpl::CheckExeModule(lldb::ModuleSP &module_sp) const {
+  return CheckModuleCommon(m_exe_module_wp, module_sp);
+}
+
+bool TypeImpl::CheckModuleCommon(const lldb::ModuleWP &input_module_wp,
+                                 lldb::ModuleSP &module_sp) const {
   // Check if we have a module for this type. If we do and the shared pointer
   // is can be successfully initialized with m_module_wp, return true. Else
   // return false if we didn't have a module, or if we had a module and it has
@@ -854,7 +871,7 @@ bool TypeImpl::CheckModule(lldb::ModuleSP &module_sp) const {
   // this function returns true. If we have a module, the "module_sp" will be
   // filled in with a strong reference to the module so that the module will at
   // least stay around long enough for the type query to succeed.
-  module_sp = m_module_wp.lock();
+  module_sp = input_module_wp.lock();
   if (!module_sp) {
     lldb::ModuleWP empty_module_wp;
     // If either call to "std::weak_ptr::owner_before(...) value returns true,
@@ -862,9 +879,9 @@ bool TypeImpl::CheckModule(lldb::ModuleSP &module_sp) const {
     // reference to a valid shared pointer. This helps us know if we had a
     // valid reference to a section which is now invalid because the module it
     // was in was deleted
-    if (empty_module_wp.owner_before(m_module_wp) ||
-        m_module_wp.owner_before(empty_module_wp)) {
-      // m_module_wp had a valid reference to a module, but all strong
+    if (empty_module_wp.owner_before(input_module_wp) ||
+        input_module_wp.owner_before(empty_module_wp)) {
+      // input_module_wp had a valid reference to a module, but all strong
       // references have been released and the module has been deleted
       return false;
     }
@@ -896,6 +913,13 @@ void TypeImpl::Clear() {
   m_module_wp = lldb::ModuleWP();
   m_static_type.Clear();
   m_dynamic_type.Clear();
+}
+
+ModuleSP TypeImpl::GetModule() const {
+  lldb::ModuleSP module_sp;
+  if (CheckExeModule(module_sp))
+    return module_sp;
+  return nullptr;
 }
 
 ConstString TypeImpl::GetName() const {

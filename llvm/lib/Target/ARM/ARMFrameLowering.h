@@ -10,6 +10,7 @@
 #define LLVM_LIB_TARGET_ARM_ARMFRAMELOWERING_H
 
 #include "llvm/CodeGen/TargetFrameLowering.h"
+#include "llvm/Support/TypeSize.h"
 
 namespace llvm {
 
@@ -45,10 +46,11 @@ public:
   bool enableCalleeSaveSkip(const MachineFunction &MF) const override;
 
   bool hasFP(const MachineFunction &MF) const override;
+  bool isFPReserved(const MachineFunction &MF) const;
   bool hasReservedCallFrame(const MachineFunction &MF) const override;
   bool canSimplifyCallFramePseudos(const MachineFunction &MF) const override;
-  int getFrameIndexReference(const MachineFunction &MF, int FI,
-                             Register &FrameReg) const override;
+  StackOffset getFrameIndexReference(const MachineFunction &MF, int FI,
+                                     Register &FrameReg) const override;
   int ResolveFrameIndexReference(const MachineFunction &MF, int FI,
                                  Register &FrameReg, int SPAdj) const;
 

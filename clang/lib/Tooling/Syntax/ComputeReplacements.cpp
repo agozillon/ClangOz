@@ -7,7 +7,9 @@
 //===----------------------------------------------------------------------===//
 #include "clang/Tooling/Core/Replacement.h"
 #include "clang/Tooling/Syntax/Mutations.h"
+#include "clang/Tooling/Syntax/TokenBufferTokenManager.h"
 #include "clang/Tooling/Syntax/Tokens.h"
+#include "clang/Tooling/Syntax/Tree.h"
 #include "llvm/Support/Error.h"
 
 using namespace clang;
@@ -16,10 +18,13 @@ namespace {
 using ProcessTokensFn = llvm::function_ref<void(llvm::ArrayRef<syntax::Token>,
                                                 bool /*IsOriginal*/)>;
 /// Enumerates spans of tokens from the tree consecutively laid out in memory.
-void enumerateTokenSpans(const syntax::Tree *Root, ProcessTokensFn Callback) {
+void enumerateTokenSpans(const syntax::Tree *Root,
+                         const syntax::TokenBufferTokenManager &STM,
+                         ProcessTokensFn Callback) {
   struct Enumerator {
-    Enumerator(ProcessTokensFn Callback)
-        : SpanBegin(nullptr), SpanEnd(nullptr), SpanIsOriginal(false),
+    Enumerator(const syntax::TokenBufferTokenManager &STM,
+               ProcessTokensFn Callback)
+        : STM(STM), SpanBegin(nullptr), SpanEnd(nullptr), SpanIsOriginal(false),
           Callback(Callback) {}
 
     void run(const syntax::Tree *Root) {
@@ -32,13 +37,15 @@ void enumerateTokenSpans(const syntax::Tree *Root, ProcessTokensFn Callback) {
   private:
     void process(const syntax::Node *N) {
       if (auto *T = dyn_cast<syntax::Tree>(N)) {
-        for (auto *C = T->firstChild(); C != nullptr; C = C->nextSibling())
+        for (const auto *C = T->getFirstChild(); C != nullptr;
+             C = C->getNextSibling())
           process(C);
         return;
       }
 
       auto *L = cast<syntax::Leaf>(N);
-      if (SpanEnd == L->token() && SpanIsOriginal == L->isOriginal()) {
+      if (SpanEnd == STM.getToken(L->getTokenKey()) &&
+          SpanIsOriginal == L->isOriginal()) {
         // Extend the current span.
         ++SpanEnd;
         return;
@@ -47,24 +54,25 @@ void enumerateTokenSpans(const syntax::Tree *Root, ProcessTokensFn Callback) {
       if (SpanBegin)
         Callback(llvm::makeArrayRef(SpanBegin, SpanEnd), SpanIsOriginal);
       // Start recording a new span.
-      SpanBegin = L->token();
+      SpanBegin = STM.getToken(L->getTokenKey());
       SpanEnd = SpanBegin + 1;
       SpanIsOriginal = L->isOriginal();
     }
 
+    const syntax::TokenBufferTokenManager &STM;
     const syntax::Token *SpanBegin;
     const syntax::Token *SpanEnd;
     bool SpanIsOriginal;
     ProcessTokensFn Callback;
   };
 
-  return Enumerator(Callback).run(Root);
+  return Enumerator(STM, Callback).run(Root);
 }
 
-syntax::FileRange rangeOfExpanded(const syntax::Arena &A,
+syntax::FileRange rangeOfExpanded(const syntax::TokenBufferTokenManager &STM,
                                   llvm::ArrayRef<syntax::Token> Expanded) {
-  auto &Buffer = A.tokenBuffer();
-  auto &SM = A.sourceManager();
+  const auto &Buffer = STM.tokenBuffer();
+  const auto &SM = STM.sourceManager();
 
   // Check that \p Expanded actually points into expanded tokens.
   assert(Buffer.expandedTokens().begin() <= Expanded.begin());
@@ -82,10 +90,10 @@ syntax::FileRange rangeOfExpanded(const syntax::Arena &A,
 } // namespace
 
 tooling::Replacements
-syntax::computeReplacements(const syntax::Arena &A,
+syntax::computeReplacements(const TokenBufferTokenManager &TBTM,
                             const syntax::TranslationUnit &TU) {
-  auto &Buffer = A.tokenBuffer();
-  auto &SM = A.sourceManager();
+  const auto &Buffer = TBTM.tokenBuffer();
+  const auto &SM = TBTM.sourceManager();
 
   tooling::Replacements Replacements;
   // Text inserted by the replacement we are building now.
@@ -94,13 +102,13 @@ syntax::computeReplacements(const syntax::Arena &A,
     if (ReplacedRange.empty() && Replacement.empty())
       return;
     llvm::cantFail(Replacements.add(tooling::Replacement(
-        SM, rangeOfExpanded(A, ReplacedRange).toCharRange(SM), Replacement)));
+        SM, rangeOfExpanded(TBTM, ReplacedRange).toCharRange(SM),
+        Replacement)));
     Replacement = "";
   };
-
   const syntax::Token *NextOriginal = Buffer.expandedTokens().begin();
   enumerateTokenSpans(
-      &TU, [&](llvm::ArrayRef<syntax::Token> Tokens, bool IsOriginal) {
+      &TU, TBTM, [&](llvm::ArrayRef<syntax::Token> Tokens, bool IsOriginal) {
         if (!IsOriginal) {
           Replacement +=
               syntax::Token::range(SM, Tokens.front(), Tokens.back()).text(SM);

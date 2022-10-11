@@ -1295,6 +1295,11 @@ struct SLDerived2 : public SLTemplateClass<int> {
     // expected-warning{{'unlock_function' attribute without capability arguments refers to 'this', but 'SLDerived2' isn't annotated with 'capability' or 'scoped_lockable' attribute}}
 };
 
+struct SLDerived3 : public SLTemplateDerived<int> {
+  ~SLDerived3() UNLOCK_FUNCTION(); // \
+    // expected-warning{{'unlock_function' attribute without capability arguments refers to 'this', but 'SLDerived3' isn't annotated with 'capability' or 'scoped_lockable' attribute}}
+};
+
 //-----------------------------------------------------
 // Parsing of member variables and function parameters
 //------------------------------------------------------
@@ -1480,7 +1485,7 @@ class Foo {
   int a GUARDED_BY(mu1_);
   int b GUARDED_BY(mu2_);
   int c GUARDED_BY(mu3_);  // \
-    // expected-warning {{'guarded_by' attribute requires arguments whose type is annotated with 'capability' attribute; type here is 'InheritanceTest::Derived3'}}
+    // expected-warning {{'guarded_by' attribute requires arguments whose type is annotated with 'capability' attribute; type here is 'Derived3'}}
 
   void foo() EXCLUSIVE_LOCKS_REQUIRED(mu1_, mu2_) {
     a = 0;

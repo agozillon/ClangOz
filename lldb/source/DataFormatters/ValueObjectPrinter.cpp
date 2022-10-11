@@ -355,22 +355,33 @@ void ValueObjectPrinter::GetValueSummaryError(std::string &value,
   if (err_cstr)
     error.assign(err_cstr);
 
-  if (ShouldPrintValueObject()) {
-    if (IsNil())
-      summary.assign("nil");
-    else if (IsUninitialized())
-      summary.assign("<uninitialized>");
-    else if (m_options.m_omit_summary_depth == 0) {
-      TypeSummaryImpl *entry = GetSummaryFormatter();
-      if (entry)
-        m_valobj->GetSummaryAsCString(entry, summary,
-                                      m_options.m_varformat_language);
-      else {
-        const char *sum_cstr =
-            m_valobj->GetSummaryAsCString(m_options.m_varformat_language);
-        if (sum_cstr)
-          summary.assign(sum_cstr);
-      }
+  if (!ShouldPrintValueObject())
+    return;
+
+  if (IsNil()) {
+    lldb::LanguageType lang_type =
+        (m_options.m_varformat_language == lldb::eLanguageTypeUnknown)
+            ? m_valobj->GetPreferredDisplayLanguage()
+            : m_options.m_varformat_language;
+    if (Language *lang_plugin = Language::FindPlugin(lang_type)) {
+      summary.assign(lang_plugin->GetNilReferenceSummaryString().str());
+    } else {
+      // We treat C as the fallback language rather than as a separate Language
+      // plugin.
+      summary.assign("NULL");
+    }
+  } else if (IsUninitialized()) {
+    summary.assign("<uninitialized>");
+  } else if (m_options.m_omit_summary_depth == 0) {
+    TypeSummaryImpl *entry = GetSummaryFormatter();
+    if (entry) {
+      m_valobj->GetSummaryAsCString(entry, summary,
+                                    m_options.m_varformat_language);
+    } else {
+      const char *sum_cstr =
+          m_valobj->GetSummaryAsCString(m_options.m_varformat_language);
+      if (sum_cstr)
+        summary.assign(sum_cstr);
     }
   }
 }
@@ -403,7 +414,9 @@ bool ValueObjectPrinter::PrintValueAndSummaryIfNeeded(bool &value_printed,
       // this thing is nil (but show the value if the user passes a format
       // explicitly)
       TypeSummaryImpl *entry = GetSummaryFormatter();
-      if (!IsNil() && !IsUninitialized() && !m_value.empty() &&
+      const bool has_nil_or_uninitialized_summary =
+          (IsNil() || IsUninitialized()) && !m_summary.empty();
+      if (!has_nil_or_uninitialized_summary && !m_value.empty() &&
           (entry == nullptr ||
            (entry->DoesPrintValue(m_valobj) ||
             m_options.m_format != eFormatDefault) ||
@@ -487,7 +500,7 @@ bool ValueObjectPrinter::ShouldPrintChildren(
   if (m_options.m_use_objc)
     return false;
 
-  if (is_failed_description || m_curr_depth < m_options.m_max_depth) {
+  if (is_failed_description || !HasReachedMaximumDepth()) {
     // We will show children for all concrete types. We won't show pointer
     // contents unless a pointer depth has been specified. We won't reference
     // contents unless the reference is the root object (depth of zero).
@@ -773,9 +786,22 @@ void ValueObjectPrinter::PrintChildrenIfNeeded(bool value_printed,
       m_stream->EOL();
     } else
       PrintChildren(value_printed, summary_printed, curr_ptr_depth);
-  } else if (m_curr_depth >= m_options.m_max_depth && IsAggregate() &&
+  } else if (HasReachedMaximumDepth() && IsAggregate() &&
              ShouldPrintValueObject()) {
     m_stream->PutCString("{...}\n");
+    // The maximum child depth has been reached. If `m_max_depth` is the default
+    // (i.e. the user has _not_ customized it), then lldb presents a warning to
+    // the user. The warning tells the user that the limit has been reached, but
+    // more importantly tells them how to expand the limit if desired.
+    if (m_options.m_max_depth_is_default)
+      m_valobj->GetTargetSP()
+          ->GetDebugger()
+          .GetCommandInterpreter()
+          .SetReachedMaximumDepth();
   } else
     m_stream->EOL();
+}
+
+bool ValueObjectPrinter::HasReachedMaximumDepth() {
+  return m_curr_depth >= m_options.m_max_depth;
 }

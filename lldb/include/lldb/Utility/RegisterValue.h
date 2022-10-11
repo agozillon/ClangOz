@@ -43,8 +43,7 @@ public:
     eTypeBytes
   };
 
-  RegisterValue()
-      : m_type(eTypeInvalid), m_scalar(static_cast<unsigned long>(0)) {}
+  RegisterValue() : m_scalar(static_cast<unsigned long>(0)) {}
 
   explicit RegisterValue(uint8_t inst) : m_type(eTypeUInt8) { m_scalar = inst; }
 
@@ -74,9 +73,9 @@ public:
     m_scalar = value;
   }
 
-  explicit RegisterValue(uint8_t *bytes, size_t length,
+  explicit RegisterValue(llvm::ArrayRef<uint8_t> bytes,
                          lldb::ByteOrder byte_order) {
-    SetBytes(bytes, length, byte_order);
+    SetBytes(bytes.data(), bytes.size(), byte_order);
   }
 
   RegisterValue::Type GetType() const { return m_type; }
@@ -257,15 +256,15 @@ public:
   void Clear();
 
 protected:
-  RegisterValue::Type m_type;
+  RegisterValue::Type m_type = eTypeInvalid;
   Scalar m_scalar;
 
   struct {
     mutable uint8_t
         bytes[kMaxRegisterByteSize]; // This must be big enough to hold any
                                      // register for any supported target.
-    uint16_t length;
-    lldb::ByteOrder byte_order;
+    uint16_t length = 0;
+    lldb::ByteOrder byte_order = lldb::eByteOrderInvalid;
   } buffer;
 };
 

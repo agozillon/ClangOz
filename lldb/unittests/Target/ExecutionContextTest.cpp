@@ -47,23 +47,23 @@ public:
 
 class DummyProcess : public Process {
 public:
-  using Process::Process;
+  DummyProcess(lldb::TargetSP target_sp, lldb::ListenerSP listener_sp)
+      : Process(target_sp, listener_sp) {}
 
-  virtual bool CanDebug(lldb::TargetSP target, bool plugin_specified_by_name) {
+  bool CanDebug(lldb::TargetSP target, bool plugin_specified_by_name) override {
     return true;
   }
-  virtual Status DoDestroy() { return {}; }
-  virtual void RefreshStateAfterStop() {}
-  virtual size_t DoReadMemory(lldb::addr_t vm_addr, void *buf, size_t size,
-                              Status &error) {
+  Status DoDestroy() override { return {}; }
+  void RefreshStateAfterStop() override {}
+  size_t DoReadMemory(lldb::addr_t vm_addr, void *buf, size_t size,
+                      Status &error) override {
     return 0;
   }
-  virtual bool UpdateThreadList(ThreadList &old_thread_list,
-                                ThreadList &new_thread_list) {
+  bool DoUpdateThreadList(ThreadList &old_thread_list,
+                          ThreadList &new_thread_list) override {
     return false;
   }
-  virtual ConstString GetPluginName() { return ConstString("Dummy"); }
-  virtual uint32_t GetPluginVersion() { return 0; }
+  llvm::StringRef GetPluginName() override { return "Dummy"; }
 };
 } // namespace
 

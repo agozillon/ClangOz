@@ -131,6 +131,10 @@ createLocalLazyCallThroughManager(const Triple &T, ExecutionSession &ES,
   case Triple::mips64el:
     return LocalLazyCallThroughManager::Create<OrcMips64>(ES, ErrorHandlerAddr);
 
+  case Triple::riscv64:
+    return LocalLazyCallThroughManager::Create<OrcRiscv64>(ES,
+                                                           ErrorHandlerAddr);
+
   case Triple::x86_64:
     if (T.getOS() == Triple::OSType::Win32)
       return LocalLazyCallThroughManager::Create<OrcX86_64_Win32>(
@@ -143,9 +147,8 @@ createLocalLazyCallThroughManager(const Triple &T, ExecutionSession &ES,
 
 LazyReexportsMaterializationUnit::LazyReexportsMaterializationUnit(
     LazyCallThroughManager &LCTManager, IndirectStubsManager &ISManager,
-    JITDylib &SourceJD, SymbolAliasMap CallableAliases, ImplSymbolMap *SrcJDLoc,
-    VModuleKey K)
-    : MaterializationUnit(extractFlags(CallableAliases), nullptr, std::move(K)),
+    JITDylib &SourceJD, SymbolAliasMap CallableAliases, ImplSymbolMap *SrcJDLoc)
+    : MaterializationUnit(extractFlags(CallableAliases)),
       LCTManager(LCTManager), ISManager(ISManager), SourceJD(SourceJD),
       CallableAliases(std::move(CallableAliases)), AliaseeTable(SrcJDLoc) {}
 
@@ -154,8 +157,8 @@ StringRef LazyReexportsMaterializationUnit::getName() const {
 }
 
 void LazyReexportsMaterializationUnit::materialize(
-    MaterializationResponsibility R) {
-  auto RequestedSymbols = R.getRequestedSymbols();
+    std::unique_ptr<MaterializationResponsibility> R) {
+  auto RequestedSymbols = R->getRequestedSymbols();
 
   SymbolAliasMap RequestedAliases;
   for (auto &RequestedSymbol : RequestedSymbols) {
@@ -166,8 +169,13 @@ void LazyReexportsMaterializationUnit::materialize(
   }
 
   if (!CallableAliases.empty())
-    R.replace(lazyReexports(LCTManager, ISManager, SourceJD,
-                            std::move(CallableAliases), AliaseeTable));
+    if (auto Err = R->replace(lazyReexports(LCTManager, ISManager, SourceJD,
+                                            std::move(CallableAliases),
+                                            AliaseeTable))) {
+      R->getExecutionSession().reportError(std::move(Err));
+      R->failMaterialization();
+      return;
+    }
 
   IndirectStubsManager::StubInitsMap StubInits;
   for (auto &Alias : RequestedAliases) {
@@ -182,7 +190,7 @@ void LazyReexportsMaterializationUnit::materialize(
     if (!CallThroughTrampoline) {
       SourceJD.getExecutionSession().reportError(
           CallThroughTrampoline.takeError());
-      R.failMaterialization();
+      R->failMaterialization();
       return;
     }
 
@@ -195,7 +203,7 @@ void LazyReexportsMaterializationUnit::materialize(
 
   if (auto Err = ISManager.createStubs(StubInits)) {
     SourceJD.getExecutionSession().reportError(std::move(Err));
-    R.failMaterialization();
+    R->failMaterialization();
     return;
   }
 
@@ -204,8 +212,8 @@ void LazyReexportsMaterializationUnit::materialize(
     Stubs[Alias.first] = ISManager.findStub(*Alias.first, false);
 
   // No registered dependencies, so these calls cannot fail.
-  cantFail(R.notifyResolved(Stubs));
-  cantFail(R.notifyEmitted());
+  cantFail(R->notifyResolved(Stubs));
+  cantFail(R->notifyEmitted());
 }
 
 void LazyReexportsMaterializationUnit::discard(const JITDylib &JD,
@@ -215,7 +223,7 @@ void LazyReexportsMaterializationUnit::discard(const JITDylib &JD,
   CallableAliases.erase(Name);
 }
 
-SymbolFlagsMap
+MaterializationUnit::Interface
 LazyReexportsMaterializationUnit::extractFlags(const SymbolAliasMap &Aliases) {
   SymbolFlagsMap SymbolFlags;
   for (auto &KV : Aliases) {
@@ -223,7 +231,7 @@ LazyReexportsMaterializationUnit::extractFlags(const SymbolAliasMap &Aliases) {
            "Lazy re-exports must be callable symbols");
     SymbolFlags[KV.first] = KV.second.AliasFlags;
   }
-  return SymbolFlags;
+  return MaterializationUnit::Interface(std::move(SymbolFlags), nullptr);
 }
 
 } // End namespace orc.

@@ -10,7 +10,8 @@
 #ifndef _LIBCPP_ALGORITHM_CONSTEXPR_PAR
 #define _LIBCPP_ALGORITHM_CONSTEXPR_PAR
 
-#include <__algorithm_support>
+#include <__algorithm/comp.h>
+#include <__algorithm/comp_ref_type.h>
 #include <__config>
 #include <__cep_execution>
 #include <initializer_list>
@@ -71,7 +72,7 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 
 template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
 _LIBCPP_NODISCARD_EXT 
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               bool>
@@ -90,7 +91,7 @@ all_of(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
 
 template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               bool>
@@ -109,7 +110,7 @@ any_of(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
 
 template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               bool>
@@ -128,7 +129,7 @@ none_of(_ExecutionPolicy&& __exec, _InputIterator __first,
 // for_each
 
 template <class _ExecutionPolicy, class _ForwardIterator, class _Function>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               void>
@@ -148,7 +149,7 @@ for_each(_ExecutionPolicy&& __exec, _ForwardIterator __first,
 
 template <class _ExecutionPolicy, class _InputIterator, class _Size, 
           class _Function>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _InputIterator>
@@ -174,7 +175,7 @@ for_each_n(_ExecutionPolicy&& __exec, _InputIterator __first, _Size __orig_n,
 
 template <class _ExecutionPolicy, class _InputIterator, class _Tp>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _InputIterator>
@@ -193,7 +194,7 @@ find(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
 
 template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _InputIterator>
@@ -212,7 +213,7 @@ find_if(_ExecutionPolicy&& __exec, _InputIterator __first,
 
 template<class _ExecutionPolicy, class _InputIterator, class _Predicate>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _InputIterator>
@@ -231,7 +232,7 @@ find_if_not(_ExecutionPolicy&& __exec, _InputIterator __first,
 
 template <class _ExecutionPolicy, class _ForwardIterator1, 
           class _ForwardIterator2, class _BinaryPredicate>
-_LIBCPP_CONSTEXPR_AFTER_CXX11
+ constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _ForwardIterator1>
@@ -254,7 +255,7 @@ __find_first_of_ce(_ExecutionPolicy&& __exec, _ForwardIterator1 __first1,
 template <class _ExecutionPolicy, class _ForwardIterator1, 
           class _ForwardIterator2, class _BinaryPredicate>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _ForwardIterator1>
@@ -269,7 +270,7 @@ find_first_of(_ExecutionPolicy&& __exec, _ForwardIterator1 __first1,
 template <class _ExecutionPolicy, class _ForwardIterator1, 
           class _ForwardIterator2>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _ForwardIterator1>
@@ -287,7 +288,7 @@ find_first_of(_ExecutionPolicy&& __exec, _ForwardIterator1 __first1,
 
 template <class _ExecutionPolicy, class _InputIterator, class _Tp>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                       _ExecutionPolicy, 
                       typename iterator_traits<_InputIterator>::difference_type>
@@ -309,7 +310,7 @@ count(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
 
 template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                       _ExecutionPolicy, 
                       typename iterator_traits<_InputIterator>::difference_type>
@@ -333,7 +334,7 @@ count_if(_ExecutionPolicy&& __exec, _InputIterator __first,
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2, 
           class _BinaryPredicate>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                          _ExecutionPolicy, 
                                          pair<_InputIterator1, _InputIterator2>>
@@ -353,7 +354,7 @@ mismatch(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                          _ExecutionPolicy, 
                                          pair<_InputIterator1, _InputIterator2>>
@@ -367,7 +368,7 @@ mismatch(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 }
 
 template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _OutputIterator>
@@ -385,7 +386,7 @@ __copy_constexpr(_ExecutionPolicy&& __exec, _InputIterator __first,
 }
 
 template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17_WITH_IS_CONSTANT_EVALUATED
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _OutputIterator>
@@ -403,7 +404,7 @@ copy(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
 
 template <class _ExecutionPolicy, class _BidirectionalIterator, 
           class _OutputIterator>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy,
                                                               _OutputIterator>
@@ -425,7 +426,7 @@ __copy_backward_constexpr(_ExecutionPolicy&& __exec,
 
 template <class _ExecutionPolicy, class _BidirectionalIterator, 
           class _OutputIterator>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17_WITH_IS_CONSTANT_EVALUATED
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy,
                                                               _OutputIterator>
@@ -438,7 +439,7 @@ __copy_backward(_ExecutionPolicy&& __exec, _BidirectionalIterator __first,
 
 template <class _ExecutionPolicy, class _BidirectionalIterator1, 
           class _BidirectionalIterator2>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17_WITH_IS_CONSTANT_EVALUATED
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                         _ExecutionPolicy, 
                                                         _BidirectionalIterator2>
@@ -454,7 +455,7 @@ copy_backward(_ExecutionPolicy&& __exec, _BidirectionalIterator1 __first,
 
 template<class _ExecutionPolicy, class _InputIterator, class _OutputIterator, 
          class _Predicate>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _OutputIterator>
@@ -481,7 +482,7 @@ copy_if(_ExecutionPolicy&& __exec, _InputIterator __first,
 template<class _ExecutionPolicy, class _InputIterator, class _Size, 
          class _OutputIterator>
 inline _LIBCPP_INLINE_VISIBILITY 
-_LIBCPP_CONSTEXPR_AFTER_CXX17_WITH_IS_CONSTANT_EVALUATED
+ constexpr 
 typename enable_if
 <
    __is_cpp17_input_iterator<_InputIterator>::value &&
@@ -521,7 +522,7 @@ copy_n(_ExecutionPolicy&& __exec, _InputIterator __first, _Size __orig_n,
 template<class _ExecutionPolicy, class _InputIterator, class _Size, 
          class _OutputIterator>
 inline _LIBCPP_INLINE_VISIBILITY 
-_LIBCPP_CONSTEXPR_AFTER_CXX17_WITH_IS_CONSTANT_EVALUATED
+ constexpr 
 typename enable_if
 <
     __is_cpp17_random_access_iterator<_InputIterator>::value &&
@@ -540,7 +541,7 @@ copy_n(_ExecutionPolicy&& __exec, _InputIterator __first, _Size __orig_n,
 // move
 
 template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17 
+inline _LIBCPP_INLINE_VISIBILITY  constexpr  
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _OutputIterator>
@@ -562,7 +563,7 @@ __move(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
 //
 // It also appears that memmove does not have a constexpr counterpart..?
 /*template <class _ExecutionPolicy, class _Tp, class _Up>*/
-/*inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17*/
+/*inline _LIBCPP_INLINE_VISIBILITY  constexpr */
 /*typename enable_if*/
 /*<*/
 /*    is_same<typename remove_const<_Tp>::type, _Up>::value &&*/
@@ -580,7 +581,7 @@ __move(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
 /*}*/
 
 template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _OutputIterator>
@@ -594,7 +595,7 @@ move(_ExecutionPolicy&& __exec, _InputIterator __first, _InputIterator __last,
 // move_backward
 
 template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _OutputIterator>
@@ -613,7 +614,7 @@ __move_backward(_ExecutionPolicy&& __exec, _InputIterator __first,
 
 // Same reasons as the other trivially copyable __move function
 /*template <class _ExecutionPolicy, class _Tp, class _Up>*/
-/*inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17*/
+/*inline _LIBCPP_INLINE_VISIBILITY  constexpr */
 /*typename enable_if*/
 /*<*/
 /*    is_same<typename remove_const<_Tp>::type, _Up>::value &&*/
@@ -636,7 +637,7 @@ __move_backward(_ExecutionPolicy&& __exec, _InputIterator __first,
 
 template <class _ExecutionPolicy, class _BidirectionalIterator1, 
           class _BidirectionalIterator2>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                        _ExecutionPolicy, 
                                                        _BidirectionalIterator2>
@@ -652,7 +653,7 @@ move_backward(_ExecutionPolicy&& __exec, _BidirectionalIterator1 __first,
 
 template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator, 
           class _UnaryOperation>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _OutputIterator>
@@ -672,7 +673,7 @@ transform(_ExecutionPolicy&& __exec, _InputIterator __first,
 
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2, 
           class _OutputIterator, class _BinaryOperation>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy, 
                                                               _OutputIterator>
@@ -699,7 +700,7 @@ transform(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 // replace
 
 template <class _ExecutionPolicy, class _ForwardIterator, class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy,
                                                               void>
@@ -719,7 +720,7 @@ replace(_ExecutionPolicy&& __exec, _ForwardIterator __first,
 
 template <class _ExecutionPolicy, class _ForwardIterator, class _Predicate, 
           class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy,
                                                               void>
@@ -739,7 +740,7 @@ replace_if(_ExecutionPolicy&& __exec, _ForwardIterator __first,
 
 template <class _ExecutionPolicy, class _InputIterator, 
           class _OutputIterator, class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy,
                                                               _OutputIterator>
@@ -764,7 +765,7 @@ replace_copy(_ExecutionPolicy&& __exec, _InputIterator __first,
 
 template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator, 
           class _Predicate, class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                               _ExecutionPolicy,
                                                               _OutputIterator>
@@ -788,7 +789,7 @@ replace_copy_if(_ExecutionPolicy&& __exec, _InputIterator __first,
 // reverse
 
 /*template <class _ExecutionPolicy, class _BidirectionalIterator>*/
-/*inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17*/
+/*inline _LIBCPP_INLINE_VISIBILITY  constexpr */
 /*__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<*/
 /*                                                              _ExecutionPolicy,*/
 /*                                                              void>*/
@@ -805,7 +806,7 @@ replace_copy_if(_ExecutionPolicy&& __exec, _InputIterator __first,
 /*}*/
 
 /*template <class _ExecutionPolicy, class _RandomAccessIterator>*/
-/*inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17*/
+/*inline _LIBCPP_INLINE_VISIBILITY  constexpr */
 /*__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<*/
 /*                                                              _ExecutionPolicy,*/
 /*                                                              void>*/
@@ -821,7 +822,7 @@ replace_copy_if(_ExecutionPolicy&& __exec, _InputIterator __first,
 /*}*/
 
 /*template <class _ExecutionPolicy, class _BidirectionalIterator>*/
-/*inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17*/
+/*inline _LIBCPP_INLINE_VISIBILITY  constexpr */
 /*__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<*/
 /*                                                              _ExecutionPolicy,*/
 /*                                                              void>*/
@@ -836,7 +837,7 @@ replace_copy_if(_ExecutionPolicy&& __exec, _InputIterator __first,
 
 /*template <class _ExecutionPolicy, class _BidirectionalIterator, */
 /*          class _OutputIterator>*/
-/*inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17*/
+/*inline _LIBCPP_INLINE_VISIBILITY  constexpr */
 /*__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<*/
 /*                                                              _ExecutionPolicy,*/
 /*                                                              _OutputIterator>*/
@@ -932,7 +933,7 @@ constexpr void quick_sort(RAIt first, RAIt last, Compare cmp = Compare{})
 
 template <class _Compare, class _InputIterator1, class _InputIterator2, 
           class _OutputIterator, class _ExecutionPolicy>
-_LIBCPP_CONSTEXPR_AFTER_CXX17 
+ constexpr  
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _OutputIterator>
@@ -970,7 +971,7 @@ __set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2, 
           class _OutputIterator, class _Compare>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _OutputIterator>
@@ -986,7 +987,7 @@ set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2, 
          class _OutputIterator>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _OutputIterator>
@@ -1003,7 +1004,7 @@ set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 // fill_n
 
 template <class _ExecutionPolicy, class _OutputIterator, class _Size, class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _OutputIterator>
@@ -1038,7 +1039,7 @@ __fill_n(_ExecutionPolicy&& __exec, _OutputIterator __first, _Size __n,
 }
 
 template <class _ExecutionPolicy, class _OutputIterator, class _Size, class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _OutputIterator>
@@ -1051,7 +1052,7 @@ fill_n(_ExecutionPolicy&& __exec, _OutputIterator __first, _Size __n,
 // fill
 
 template <class _ExecutionPolicy, class _ForwardIterator, class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              void>
@@ -1065,7 +1066,7 @@ __fill(_ExecutionPolicy&& __exec, _ForwardIterator __first,
 }
 
 template <class _ExecutionPolicy, class _RandomAccessIterator, class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              void>
@@ -1077,7 +1078,7 @@ __fill(_ExecutionPolicy&& __exec, _RandomAccessIterator __first,
 }
 
 template <class _ExecutionPolicy, class _ForwardIterator, class _Tp>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              void>
@@ -1099,7 +1100,7 @@ fill(_ExecutionPolicy&& __exec, _ForwardIterator __first,
 // it will perhaps require a copy of the array per thread and then to merge
 // them again cohesively.
 template <class _ExecutionPolicy, class _ForwardIterator, class _Tp>
-_LIBCPP_NODISCARD_EXT _LIBCPP_CONSTEXPR_AFTER_CXX17 
+_LIBCPP_NODISCARD_EXT  constexpr  
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _ForwardIterator>
@@ -1133,7 +1134,7 @@ remove(_ExecutionPolicy&& __exec, _ForwardIterator __first,
 // this.
 template <class _ExecutionPolicy, class _ForwardIterator1, 
           class _ForwardIterator2>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _ForwardIterator2>
@@ -1152,7 +1153,7 @@ typename enable_if
      __cep::experimental::execution::is_constexpr_par_execution_policy<
        typename std::decay<_ExecutionPolicy>::type>::value
 >::type
-_LIBCPP_CONSTEXPR_AFTER_CXX17
+ constexpr 
 swap(_ExecutionPolicy&& __exec, _Tp& __x, _Tp& __y) 
     _NOEXCEPT_(is_nothrow_move_constructible<_Tp>::value &&
                is_nothrow_move_assignable<_Tp>::value)
@@ -1163,7 +1164,7 @@ swap(_ExecutionPolicy&& __exec, _Tp& __x, _Tp& __y)
 }
 
 template<class _ExecutionPolicy, class _Tp, size_t _Np>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 typename enable_if<
     __is_swappable<_Tp>::value &&
     __cep::experimental::execution::is_constexpr_par_execution_policy<
@@ -1177,7 +1178,7 @@ swap(_ExecutionPolicy&& __exec, _Tp (&__a)[_Np],
 
 template <class _ExecutionPolicy, class _ForwardIterator1, 
           class _ForwardIterator2>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              _ForwardIterator2>
@@ -1205,7 +1206,7 @@ swap_ranges(_ExecutionPolicy&& __exec, _ForwardIterator1 __first1,
 // of nested objects.
 template <class _ExecutionPolicy, class _ForwardIterator1, 
           class _ForwardIterator2>
-inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+inline _LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy, 
                                                              void>
@@ -1221,7 +1222,7 @@ iter_swap(_ExecutionPolicy&& __exec, _ForwardIterator1 __a,
 
 /*template <class _ExecutionPolicy, class _BinaryPredicate, class _InputIterator,*/
 /*          class _OutputIterator>*/
-/*_LIBCPP_CONSTEXPR_AFTER_CXX17 */
+/* constexpr  */
 /*__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<*/
 /*                                                             _ExecutionPolicy,*/
 /*                                                             _OutputIterator>*/
@@ -1249,7 +1250,7 @@ iter_swap(_ExecutionPolicy&& __exec, _ForwardIterator1 __a,
 
 /*template <class _ExecutionPolicy, class _BinaryPredicate, */
 /*          class _ForwardIterator, class _OutputIterator>*/
-/*_LIBCPP_CONSTEXPR_AFTER_CXX17 */
+/* constexpr  */
 /*__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<*/
 /*                                                             _ExecutionPolicy,*/
 /*                                                             _OutputIterator>*/
@@ -1278,7 +1279,7 @@ iter_swap(_ExecutionPolicy&& __exec, _ForwardIterator1 __a,
 
 /*template <class _ExecutionPolicy, class _BinaryPredicate, class _InputIterator, */
 /*          class _ForwardIterator>*/
-/*_LIBCPP_CONSTEXPR_AFTER_CXX17 */
+/* constexpr  */
 /*__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<*/
 /*                                                             _ExecutionPolicy,*/
 /*                                                             _ForwardIterator>*/
@@ -1299,7 +1300,7 @@ iter_swap(_ExecutionPolicy&& __exec, _ForwardIterator1 __a,
 
 /*template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator, */
 /*          class _BinaryPredicate>*/
-/*inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17*/
+/*inline _LIBCPP_INLINE_VISIBILITY  constexpr */
 /*__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<*/
 /*                                                             _ExecutionPolicy,*/
 /*                                                             _OutputIterator>*/
@@ -1313,7 +1314,7 @@ iter_swap(_ExecutionPolicy&& __exec, _ForwardIterator1 __a,
 /*}*/
 
 /*template <class _ExecutionPolicy, class _InputIterator, class _OutputIterator>*/
-/*inline _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17*/
+/*inline _LIBCPP_INLINE_VISIBILITY  constexpr */
 /*__cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<*/
 /*                                                             _ExecutionPolicy,*/
 /*                                                             _OutputIterator>*/
@@ -1328,7 +1329,7 @@ iter_swap(_ExecutionPolicy&& __exec, _ForwardIterator1 __a,
 // is_sorted_until
 
 template <class _ExecutionPolicy, class _ForwardIterator, class _Compare>
-_LIBCPP_NODISCARD_EXT _LIBCPP_CONSTEXPR_AFTER_CXX17 
+_LIBCPP_NODISCARD_EXT  constexpr  
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              _ForwardIterator>
@@ -1354,7 +1355,7 @@ is_sorted_until(_ExecutionPolicy&& __exec,  _ForwardIterator __first,
 
 template<class _ExecutionPolicy, class _ForwardIterator>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              _ForwardIterator>
@@ -1369,7 +1370,7 @@ is_sorted_until(_ExecutionPolicy&& __exec,  _ForwardIterator __first,
 
 template <class _ExecutionPolicy, class _ForwardIterator, class _Compare>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              bool>
@@ -1381,7 +1382,7 @@ is_sorted(_ExecutionPolicy&& __exec, _ForwardIterator __first,
 
 template<class _ExecutionPolicy, class _ForwardIterator>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              bool>
@@ -1393,7 +1394,7 @@ is_sorted(_ExecutionPolicy&& __exec, _ForwardIterator __first,
 }
 
 template <class _ExecutionPolicy, class _InputIterator, class _Predicate>
-_LIBCPP_NODISCARD_EXT _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_NODISCARD_EXT  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              bool>
@@ -1424,7 +1425,7 @@ is_partitioned(_ExecutionPolicy&& __exec, _InputIterator __first,
 
 template <class _Compare, class _ExecutionPolicy, class _InputIterator1, 
           class _InputIterator2>
-_LIBCPP_CONSTEXPR_AFTER_CXX17
+ constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              bool>
@@ -1471,7 +1472,7 @@ __lexicographical_compare(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2, 
           class _Compare>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              bool>
@@ -1485,7 +1486,7 @@ lexicographical_compare(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              bool>
@@ -1503,7 +1504,7 @@ lexicographical_compare(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 
 template <class _Compare, class _ExecutionPolicy, class _InputIterator1, 
           class _InputIterator2>
-_LIBCPP_CONSTEXPR_AFTER_CXX17
+ constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              bool>
@@ -1526,7 +1527,7 @@ __includes(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2, 
           class _Compare>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              bool>
@@ -1541,7 +1542,7 @@ includes(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
 
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2>
 _LIBCPP_NODISCARD_EXT inline
-_LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX17
+_LIBCPP_INLINE_VISIBILITY  constexpr 
 __cep::experimental::__internal::__enable_if_constexpr_par_execution_policy<
                                                              _ExecutionPolicy,
                                                              bool>

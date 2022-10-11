@@ -58,7 +58,11 @@ class LLVM_LIBRARY_VISIBILITY PPCTargetInfo : public TargetInfo {
 
   // Target cpu features.
   bool HasAltivec = false;
+  bool HasMMA = false;
+  bool HasROPProtect = false;
+  bool HasPrivileged = false;
   bool HasVSX = false;
+  bool UseCRBits = false;
   bool HasP8Vector = false;
   bool HasP8Crypto = false;
   bool HasDirectMove = false;
@@ -70,6 +74,12 @@ class LLVM_LIBRARY_VISIBILITY PPCTargetInfo : public TargetInfo {
   bool PairedVectorMemops = false;
   bool HasP10Vector = false;
   bool HasPCRelativeMemops = false;
+  bool HasPrefixInstrs = false;
+  bool IsISA2_06 = false;
+  bool IsISA2_07 = false;
+  bool IsISA3_0 = false;
+  bool IsISA3_1 = false;
+  bool HasQuadwordAtomics = false;
 
 protected:
   std::string ABI;
@@ -81,10 +91,12 @@ public:
     SimdDefaultAlign = 128;
     LongDoubleWidth = LongDoubleAlign = 128;
     LongDoubleFormat = &llvm::APFloat::PPCDoubleDouble();
+    HasStrictFP = true;
+    HasIbm128 = true;
   }
 
   // Set the language option for altivec based on our value.
-  void adjust(LangOptions &Opts) override;
+  void adjust(DiagnosticsEngine &Diags, LangOptions &Opts) override;
 
   // Note: GCC recognizes the following additional cpus:
   //  401, 403, 405, 405fp, 440fp, 464, 464fp, 476, 476fp, 505, 740, 801,
@@ -204,7 +216,7 @@ public:
       // Don't use floating point registers on soft float ABI.
       if (FloatABI == SoftFloat)
         return false;
-      LLVM_FALLTHROUGH;
+      [[fallthrough]];
     case 'b': // Base register
       Info.setAllowsRegister();
       break;
@@ -283,7 +295,7 @@ public:
     case 'Q': // Memory operand that is an offset from a register (it is
               // usually better to use `m' or `es' in asm statements)
       Info.setAllowsRegister();
-      LLVM_FALLTHROUGH;
+      [[fallthrough]];
     case 'Z': // Memory operand that is an indexed or indirect from a
               // register (it is usually better to use `m' or `es' in
               // asm statements)
@@ -339,8 +351,9 @@ public:
                : "u9__ieee128";
   }
   const char *getFloat128Mangling() const override { return "u9__ieee128"; }
+  const char *getIbm128Mangling() const override { return "g"; }
 
-  bool hasExtIntType() const override { return true; }
+  bool hasBitIntType() const override { return true; }
 
   bool isSPRegName(StringRef RegName) const override {
     return RegName.equals("r1") || RegName.equals("x1");
@@ -353,6 +366,8 @@ public:
       : PPCTargetInfo(Triple, Opts) {
     if (Triple.isOSAIX())
       resetDataLayout("E-m:a-p:32:32-i64:64-n32");
+    else if (Triple.getArch() == llvm::Triple::ppcle)
+      resetDataLayout("e-m:e-p:32:32-i64:64-n32");
     else
       resetDataLayout("E-m:e-p:32:32-i64:64-n32");
 
@@ -368,7 +383,6 @@ public:
       SizeType = UnsignedLong;
       PtrDiffType = SignedLong;
       IntPtrType = SignedLong;
-      SuitableAlign = 64;
       LongDoubleWidth = 64;
       LongDoubleAlign = DoubleAlign = 32;
       LongDoubleFormat = &llvm::APFloat::IEEEdouble();
@@ -402,19 +416,19 @@ public:
     LongWidth = LongAlign = PointerWidth = PointerAlign = 64;
     IntMaxType = SignedLong;
     Int64Type = SignedLong;
+    std::string DataLayout;
 
     if (Triple.isOSAIX()) {
       // TODO: Set appropriate ABI for AIX platform.
-      resetDataLayout("E-m:a-i64:64-n32:64");
-      SuitableAlign = 64;
+      DataLayout = "E-m:a-i64:64-n32:64";
       LongDoubleWidth = 64;
       LongDoubleAlign = DoubleAlign = 32;
       LongDoubleFormat = &llvm::APFloat::IEEEdouble();
     } else if ((Triple.getArch() == llvm::Triple::ppc64le)) {
-      resetDataLayout("e-m:e-i64:64-n32:64");
+      DataLayout = "e-m:e-i64:64-n32:64";
       ABI = "elfv2";
     } else {
-      resetDataLayout("E-m:e-i64:64-n32:64");
+      DataLayout = "E-m:e-i64:64-n32:64";
       ABI = "elfv1";
     }
 
@@ -423,8 +437,22 @@ public:
       LongDoubleFormat = &llvm::APFloat::IEEEdouble();
     }
 
-    // PPC64 supports atomics up to 8 bytes.
-    MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
+    if (Triple.isOSAIX() || Triple.isOSLinux())
+      DataLayout += "-S128-v256:256:256-v512:512:512";
+    resetDataLayout(DataLayout);
+
+    // Newer PPC64 instruction sets support atomics up to 16 bytes.
+    MaxAtomicPromoteWidth = 128;
+    // Baseline PPC64 supports inlining atomics up to 8 bytes.
+    MaxAtomicInlineWidth = 64;
+  }
+
+  void setMaxAtomicWidth() override {
+    // For power8 and up, backend is able to inline 16-byte atomic lock free
+    // code.
+    // TODO: We should allow AIX to inline quadword atomics in the future.
+    if (!getTriple().isOSAIX() && hasFeature("quadword-atomics"))
+      MaxAtomicInlineWidth = 128;
   }
 
   BuiltinVaListKind getBuiltinVaListKind() const override {
@@ -433,7 +461,7 @@ public:
 
   // PPC64 Linux-specific ABI options.
   bool setABI(const std::string &Name) override {
-    if (Name == "elfv1" || Name == "elfv1-qpx" || Name == "elfv2") {
+    if (Name == "elfv1" || Name == "elfv2") {
       ABI = Name;
       return true;
     }
@@ -444,6 +472,8 @@ public:
     switch (CC) {
     case CC_Swift:
       return CCCR_OK;
+    case CC_SwiftAsync:
+      return CCCR_Error;
     default:
       return CCCR_Warning;
     }
@@ -459,7 +489,7 @@ public:
     BoolWidth = BoolAlign = 32; // XXX support -mone-byte-bool?
     PtrDiffType = SignedInt; // for http://llvm.org/bugs/show_bug.cgi?id=15726
     LongLongAlign = 32;
-    resetDataLayout("E-m:o-p:32:32-f64:32:64-n32");
+    resetDataLayout("E-m:o-p:32:32-f64:32:64-n32", "_");
   }
 
   BuiltinVaListKind getBuiltinVaListKind() const override {
@@ -473,7 +503,7 @@ public:
   DarwinPPC64TargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
       : DarwinTargetInfo<PPC64TargetInfo>(Triple, Opts) {
     HasAlignMac68kSupport = true;
-    resetDataLayout("E-m:o-i64:64-n32:64");
+    resetDataLayout("E-m:o-i64:64-n32:64", "_");
   }
 };
 

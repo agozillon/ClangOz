@@ -1,10 +1,10 @@
-! RUN: %S/test_errors.sh %s %t %f18
+! RUN: %python %S/test_errors.py %s %flang_fc1
 module m
   public i
   integer, private :: j
   !ERROR: The accessibility of 'i' has already been specified as PUBLIC
   private i
-  !The accessibility of 'j' has already been specified as PRIVATE
+  !WARNING: The accessibility of 'j' has already been specified as PRIVATE
   private j
 end
 
@@ -13,13 +13,13 @@ module m2
     module procedure ifoo
   end interface
   public :: operator(.foo.)
-  !ERROR: The accessibility of operator '.foo.' has already been specified as PUBLIC
+  !ERROR: The accessibility of 'OPERATOR(.foo.)' has already been specified as PUBLIC
   private :: operator(.foo.)
   interface operator(+)
     module procedure ifoo
   end interface
   public :: operator(+)
-  !ERROR: The accessibility of 'operator(+)' has already been specified as PUBLIC
+  !ERROR: The accessibility of 'OPERATOR(+)' has already been specified as PUBLIC
   private :: operator(+) , ifoo
 contains
   integer function ifoo(x, y)
@@ -37,7 +37,7 @@ module m3
       type(t), intent(in) :: x, y
     end function
   end interface
-  !ERROR: The accessibility of 'operator(<)' has already been specified as PRIVATE
+  !ERROR: The accessibility of 'OPERATOR(<)' has already been specified as PRIVATE
   public :: operator(<)
   interface operator(.gt.)
     logical function gt(x, y)
@@ -46,6 +46,6 @@ module m3
     end function
   end interface
   public :: operator(>)
-  !ERROR: The accessibility of 'operator(.gt.)' has already been specified as PUBLIC
+  !ERROR: The accessibility of 'OPERATOR(.GT.)' has already been specified as PUBLIC
   private :: operator(.gt.)
 end

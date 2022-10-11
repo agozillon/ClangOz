@@ -46,8 +46,8 @@ FILE *fopen(const char *path, const char *mode);
 FILE *tmpfile(void);
 FILE *freopen(const char *pathname, const char *mode, FILE *stream);
 int fclose(FILE *fp);
-size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
-size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
+size_t fread(void *restrict, size_t, size_t, FILE *restrict);
+size_t fwrite(const void *restrict, size_t, size_t, FILE *restrict);
 int fputc(int ch, FILE *stream);
 int fseek(FILE *__stream, long int __off, int __whence);
 long int ftell(FILE *__stream);
@@ -58,9 +58,6 @@ void clearerr(FILE *stream);
 int feof(FILE *stream);
 int ferror(FILE *stream);
 int fileno(FILE *stream);
-
-// Note, on some platforms errno macro gets replaced with a function call.
-extern int errno;
 
 size_t strlen(const char *);
 

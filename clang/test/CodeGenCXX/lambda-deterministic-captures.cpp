@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -emit-llvm --std=c++17 %s -o - | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-unknown-linux-gnu -emit-llvm --std=c++17 %s -o - | FileCheck %s
 
 struct stream {
   friend const stream &operator<<(const stream &, const float &);
@@ -15,7 +15,7 @@ void foo() {
   }();
 }
 
-// CHECK: define void @_Z3foov
+// CHECK: define{{.*}} void @_Z3foov
 // CHECK: getelementptr inbounds %{{.+}}, %{{.+}}* %{{.+}}, i32 0, i32 0
 // CHECK-NEXT: getelementptr inbounds %{{.+}}, %{{.+}}* %{{.+}}, i32 0, i32 1
 // CHECK-NEXT: store float 0.000

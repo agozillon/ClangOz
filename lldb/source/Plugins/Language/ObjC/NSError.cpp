@@ -87,7 +87,7 @@ bool lldb_private::formatters::NSError_SummaryProvider(
   ValueObjectSP domain_str_sp = ValueObject::CreateValueObjectFromData(
       "domain_str", isw.GetAsData(process_sp->GetByteOrder()),
       valobj.GetExecutionContextRef(),
-      TypeSystemClang::GetScratch(process_sp->GetTarget())
+      ScratchTypeSystemClang::GetForTarget(process_sp->GetTarget())
           ->GetBasicType(lldb::eBasicTypeVoid)
           .GetPointerType());
 
@@ -156,7 +156,7 @@ public:
     m_child_sp = CreateValueObjectFromData(
         "_userInfo", isw.GetAsData(process_sp->GetByteOrder()),
         m_backend.GetExecutionContextRef(),
-        TypeSystemClang::GetScratch(process_sp->GetTarget())
+        ScratchTypeSystemClang::GetForTarget(process_sp->GetTarget())
             ->GetBasicType(lldb::eBasicTypeObjCID));
     return false;
   }
@@ -164,8 +164,8 @@ public:
   bool MightHaveChildren() override { return true; }
 
   size_t GetIndexOfChildWithName(ConstString name) override {
-    static ConstString g___userInfo("_userInfo");
-    if (name == g___userInfo)
+    static ConstString g_userInfo("_userInfo");
+    if (name == g_userInfo)
       return 0;
     return UINT32_MAX;
   }
@@ -177,7 +177,7 @@ private:
   // values to leak if the latter, then I need to store a SharedPointer to it -
   // so that it only goes away when everyone else in the cluster goes away oh
   // joy!
-  ValueObject *m_child_ptr;
+  ValueObject *m_child_ptr = nullptr;
   ValueObjectSP m_child_sp;
 };
 

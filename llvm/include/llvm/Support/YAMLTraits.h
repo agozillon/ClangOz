@@ -9,6 +9,7 @@
 #ifndef LLVM_SUPPORT_YAMLTRAITS_H
 #define LLVM_SUPPORT_YAMLTRAITS_H
 
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
@@ -18,15 +19,11 @@
 #include "llvm/Support/AlignOf.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Endian.h"
-#include "llvm/Support/Regex.h"
+#include "llvm/Support/SMLoc.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/YAMLParser.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
-#include <cctype>
-#include <cstddef>
-#include <cstdint>
-#include <iterator>
 #include <map>
 #include <memory>
 #include <new>
@@ -36,6 +33,9 @@
 #include <vector>
 
 namespace llvm {
+
+class VersionTuple;
+
 namespace yaml {
 
 enum class NodeKind : uint8_t {
@@ -61,7 +61,8 @@ struct MappingTraits {
   // Must provide:
   // static void mapping(IO &io, T &fields);
   // Optionally may provide:
-  // static StringRef validate(IO &io, T &fields);
+  // static std::string validate(IO &io, T &fields);
+  // static void enumInput(IO &io, T &value);
   //
   // The optional flow flag will cause generated YAML to use a flow mapping
   // (e.g. { a: 0, b: 1 }):
@@ -83,7 +84,7 @@ template <class T, class Context> struct MappingContextTraits {
   // Must provide:
   // static void mapping(IO &io, T &fields, Context &Ctx);
   // Optionally may provide:
-  // static StringRef validate(IO &io, T &fields, Context &Ctx);
+  // static std::string validate(IO &io, T &fields, Context &Ctx);
   //
   // The optional flow flag will cause generated YAML to use a flow mapping
   // (e.g. { a: 0, b: 1 }):
@@ -421,7 +422,7 @@ template <class T> struct has_MappingTraits<T, EmptyContext> {
 
 // Test if MappingContextTraits<T>::validate() is defined on type T.
 template <class T, class Context> struct has_MappingValidateTraits {
-  using Signature_validate = StringRef (*)(class IO &, T &, Context &);
+  using Signature_validate = std::string (*)(class IO &, T &, Context &);
 
   template <typename U>
   static char test(SameType<Signature_validate, &U::validate>*);
@@ -435,10 +436,35 @@ template <class T, class Context> struct has_MappingValidateTraits {
 
 // Test if MappingTraits<T>::validate() is defined on type T.
 template <class T> struct has_MappingValidateTraits<T, EmptyContext> {
-  using Signature_validate = StringRef (*)(class IO &, T &);
+  using Signature_validate = std::string (*)(class IO &, T &);
 
   template <typename U>
   static char test(SameType<Signature_validate, &U::validate> *);
+
+  template <typename U> static double test(...);
+
+  static bool const value = (sizeof(test<MappingTraits<T>>(nullptr)) == 1);
+};
+
+// Test if MappingContextTraits<T>::enumInput() is defined on type T.
+template <class T, class Context> struct has_MappingEnumInputTraits {
+  using Signature_validate = void (*)(class IO &, T &);
+
+  template <typename U>
+  static char test(SameType<Signature_validate, &U::enumInput> *);
+
+  template <typename U> static double test(...);
+
+  static bool const value =
+      (sizeof(test<MappingContextTraits<T, Context>>(nullptr)) == 1);
+};
+
+// Test if MappingTraits<T>::enumInput() is defined on type T.
+template <class T> struct has_MappingEnumInputTraits<T, EmptyContext> {
+  using Signature_validate = void (*)(class IO &, T &);
+
+  template <typename U>
+  static char test(SameType<Signature_validate, &U::enumInput> *);
 
   template <typename U> static double test(...);
 
@@ -536,9 +562,8 @@ template <class T> struct has_PolymorphicTraits {
 };
 
 inline bool isNumeric(StringRef S) {
-  const static auto skipDigits = [](StringRef Input) {
-    return Input.drop_front(
-        std::min(Input.find_first_not_of("0123456789"), Input.size()));
+  const auto skipDigits = [](StringRef Input) {
+    return Input.ltrim("0123456789");
   };
 
   // Make S.front() and S.drop_front().front() (if S.front() is [+-]) calls
@@ -637,6 +662,7 @@ inline bool isNull(StringRef S) {
 }
 
 inline bool isBool(StringRef S) {
+  // FIXME: using parseBool is causing multiple tests to fail.
   return S.equals("true") || S.equals("True") || S.equals("TRUE") ||
          S.equals("false") || S.equals("False") || S.equals("FALSE");
 }
@@ -664,8 +690,7 @@ inline QuotingType needsQuotes(StringRef S) {
   // 7.3.3 Plain Style
   // Plain scalars must not begin with most indicators, as this would cause
   // ambiguity with other YAML constructs.
-  static constexpr char Indicators[] = R"(-?:\,[]{}#&*!|>'"%@`)";
-  if (S.find_first_of(Indicators) == 0)
+  if (std::strchr(R"(-?:\,[]{}#&*!|>'"%@`)", S[0]) != nullptr)
     MaxQuotingNeeded = QuotingType::Single;
 
   for (unsigned char C : S) {
@@ -789,6 +814,7 @@ public:
   virtual NodeKind getNodeKind() = 0;
 
   virtual void setError(const Twine &) = 0;
+  virtual void setAllowUnknownKeys(bool Allow);
 
   template <typename T>
   void enumCase(T &Val, const char* Str, const T ConstVal) {
@@ -1040,7 +1066,7 @@ yamlize(IO &io, T &Val, bool, Context &Ctx) {
   else
     io.beginMapping();
   if (io.outputting()) {
-    StringRef Err = MappingTraits<T>::validate(io, Val);
+    std::string Err = MappingTraits<T>::validate(io, Val);
     if (!Err.empty()) {
       errs() << Err << "\n";
       assert(Err.empty() && "invalid struct trying to be written as yaml");
@@ -1048,7 +1074,7 @@ yamlize(IO &io, T &Val, bool, Context &Ctx) {
   }
   detail::doMapping(io, Val, Ctx);
   if (!io.outputting()) {
-    StringRef Err = MappingTraits<T>::validate(io, Val);
+    std::string Err = MappingTraits<T>::validate(io, Val);
     if (!Err.empty())
       io.setError(Err);
   }
@@ -1059,8 +1085,29 @@ yamlize(IO &io, T &Val, bool, Context &Ctx) {
 }
 
 template <typename T, typename Context>
+std::enable_if_t<!has_MappingEnumInputTraits<T, Context>::value, bool>
+yamlizeMappingEnumInput(IO &io, T &Val) {
+  return false;
+}
+
+template <typename T, typename Context>
+std::enable_if_t<has_MappingEnumInputTraits<T, Context>::value, bool>
+yamlizeMappingEnumInput(IO &io, T &Val) {
+  if (io.outputting())
+    return false;
+
+  io.beginEnumScalar();
+  MappingTraits<T>::enumInput(io, Val);
+  bool Matched = !io.matchEnumFallback();
+  io.endEnumScalar();
+  return Matched;
+}
+
+template <typename T, typename Context>
 std::enable_if_t<unvalidatedMappingTraits<T, Context>::value, void>
 yamlize(IO &io, T &Val, bool, Context &Ctx) {
+  if (yamlizeMappingEnumInput<T, Context>(io, Val))
+    return;
   if (has_FlowTraits<MappingTraits<T>>::value) {
     io.beginFlowMapping();
     detail::doMapping(io, Val, Ctx);
@@ -1470,9 +1517,10 @@ private:
 
     static bool classof(const MapHNode *) { return true; }
 
-    using NameToNode = StringMap<std::unique_ptr<HNode>>;
+    using NameToNodeAndLoc =
+        StringMap<std::pair<std::unique_ptr<HNode>, SMRange>>;
 
-    NameToNode Mapping;
+    NameToNodeAndLoc Mapping;
     SmallVector<std::string, 6> ValidKeys;
   };
 
@@ -1494,6 +1542,11 @@ private:
   std::unique_ptr<Input::HNode> createHNodes(Node *node);
   void setError(HNode *hnode, const Twine &message);
   void setError(Node *node, const Twine &message);
+  void setError(const SMRange &Range, const Twine &message);
+
+  void reportWarning(HNode *hnode, const Twine &message);
+  void reportWarning(Node *hnode, const Twine &message);
+  void reportWarning(const SMRange &Range, const Twine &message);
 
 public:
   // These are only used by operator>>. They could be private
@@ -1504,6 +1557,8 @@ public:
   /// Returns the current node that's being parsed by the YAML Parser.
   const Node *getCurrentNode() const;
 
+  void setAllowUnknownKeys(bool Allow) override;
+
 private:
   SourceMgr                           SrcMgr; // must be before Strm
   std::unique_ptr<llvm::yaml::Stream> Strm;
@@ -1511,9 +1566,10 @@ private:
   std::error_code                     EC;
   BumpPtrAllocator                    StringAllocator;
   document_iterator                   DocIterator;
-  std::vector<bool>                   BitValuesUsed;
+  llvm::BitVector                     BitValuesUsed;
   HNode *CurrentNode = nullptr;
   bool                                ScalarMatchFound = false;
+  bool AllowUnknownKeys = false;
 };
 
 ///
@@ -1573,7 +1629,7 @@ public:
 private:
   void output(StringRef s);
   void outputUpToEndOfLine(StringRef s);
-  void newLineCheck();
+  void newLineCheck(bool EmptySequence = false);
   void outputNewLine();
   void paddedKey(StringRef key);
   void flowKey(StringRef Key);
@@ -1612,14 +1668,13 @@ template <typename T, typename Context>
 void IO::processKeyWithDefault(const char *Key, Optional<T> &Val,
                                const Optional<T> &DefaultValue, bool Required,
                                Context &Ctx) {
-  assert(DefaultValue.hasValue() == false &&
-         "Optional<T> shouldn't have a value!");
+  assert(!DefaultValue && "Optional<T> shouldn't have a value!");
   void *SaveInfo;
   bool UseDefault = true;
-  const bool sameAsDefault = outputting() && !Val.hasValue();
-  if (!outputting() && !Val.hasValue())
+  const bool sameAsDefault = outputting() && !Val;
+  if (!outputting() && !Val)
     Val = T();
-  if (Val.hasValue() &&
+  if (Val &&
       this->preflightKey(Key, Required, sameAsDefault, UseDefault, SaveInfo)) {
 
     // When reading an Optional<X> key from a YAML description, we allow the
@@ -1628,7 +1683,7 @@ void IO::processKeyWithDefault(const char *Key, Optional<T> &Val,
     // usually None.
     bool IsNone = false;
     if (!outputting())
-      if (auto *Node = dyn_cast<ScalarNode>(((Input *)this)->getCurrentNode()))
+      if (const auto *Node = dyn_cast<ScalarNode>(((Input *)this)->getCurrentNode()))
         // We use rtrim to ignore possible white spaces that might exist when a
         // comment is present on the same line.
         IsNone = Node->getRawValue().rtrim(' ') == "<none>";
@@ -1636,7 +1691,7 @@ void IO::processKeyWithDefault(const char *Key, Optional<T> &Val,
     if (IsNone)
       Val = DefaultValue;
     else
-      yamlize(*this, Val.getValue(), Required, Ctx);
+      yamlize(*this, *Val, Required, Ctx);
     this->postflightKey(SaveInfo);
   } else {
     if (UseDefault)
@@ -1701,6 +1756,12 @@ template<>
 struct ScalarTraits<Hex64> {
   static void output(const Hex64 &, void *, raw_ostream &);
   static StringRef input(StringRef, void *, Hex64 &);
+  static QuotingType mustQuote(StringRef) { return QuotingType::None; }
+};
+
+template <> struct ScalarTraits<VersionTuple> {
+  static void output(const VersionTuple &Value, void *, llvm::raw_ostream &Out);
+  static StringRef input(StringRef, void *, VersionTuple &);
   static QuotingType mustQuote(StringRef) { return QuotingType::None; }
 };
 

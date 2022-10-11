@@ -52,12 +52,14 @@
 // CHECK-NEXT: Loaded summary for: int isxdigit(int)
 // CHECK-NEXT: Loaded summary for: int getc(FILE *)
 // CHECK-NEXT: Loaded summary for: int fgetc(FILE *)
-// CHECK-NEXT: Loaded summary for: int getchar()
+// CHECK-NEXT: Loaded summary for: int getchar(void)
 // CHECK-NEXT: Loaded summary for: unsigned int fread(void *restrict, size_t, size_t, FILE *restrict)
 // CHECK-NEXT: Loaded summary for: unsigned int fwrite(const void *restrict, size_t, size_t, FILE *restrict)
 // CHECK-NEXT: Loaded summary for: ssize_t read(int, void *, size_t)
 // CHECK-NEXT: Loaded summary for: ssize_t write(int, const void *, size_t)
-// CHECK-NEXT: Loaded summary for: ssize_t getline(char **, size_t *, FILE *)
+// CHECK-NEXT: Loaded summary for: ssize_t getline(char **restrict, size_t *restrict, FILE *restrict)
+// CHECK-NEXT: Loaded summary for: ssize_t getdelim(char **restrict, size_t *restrict, int, FILE *restrict)
+
 
 void clang_analyzer_eval(int);
 
@@ -126,7 +128,8 @@ void test_fread_uninitialized(void) {
   (void)fread(ptr, sz, nmem, fp); // expected-warning {{1st function call argument is an uninitialized value}}
 }
 
-ssize_t getline(char **, size_t *, FILE *);
+ssize_t getline(char **restrict, size_t *restrict, FILE *restrict);
+ssize_t getdelim(char **restrict, size_t *restrict, int, FILE *restrict);
 void test_getline(FILE *fp) {
   char *line = 0;
   size_t n = 0;
@@ -163,7 +166,7 @@ void test_islower(int x) {
 }
 
 int getchar(void);
-void test_getchar() {
+void test_getchar(void) {
   int x = getchar();
   if (x == EOF)
     return;
@@ -172,20 +175,20 @@ void test_getchar() {
 }
 
 int isalpha(int);
-void test_isalpha() {
+void test_isalpha(void) {
   clang_analyzer_eval(isalpha(']')); // expected-warning{{FALSE}}
   clang_analyzer_eval(isalpha('Q')); // expected-warning{{TRUE}}
   clang_analyzer_eval(isalpha(128)); // expected-warning{{UNKNOWN}}
 }
 
 int isalnum(int);
-void test_alnum() {
+void test_alnum(void) {
   clang_analyzer_eval(isalnum('1')); // expected-warning{{TRUE}}
   clang_analyzer_eval(isalnum(')')); // expected-warning{{FALSE}}
 }
 
 int isblank(int);
-void test_isblank() {
+void test_isblank(void) {
   clang_analyzer_eval(isblank('\t')); // expected-warning{{TRUE}}
   clang_analyzer_eval(isblank(' ')); // expected-warning{{TRUE}}
   clang_analyzer_eval(isblank('\n')); // expected-warning{{FALSE}}
@@ -244,10 +247,18 @@ void test_isxdigit(int x) {
   }
 }
 
-void test_call_by_pointer() {
+void test_call_by_pointer(void) {
   typedef int (*func)(int);
   func f = isascii;
   clang_analyzer_eval(f('A')); // expected-warning{{TRUE}}
   f = ispunct;
   clang_analyzer_eval(f('A')); // expected-warning{{FALSE}}
+}
+
+char *getenv(const char *name);
+void test_getenv(void) {
+  // getenv() bifurcates here.
+  clang_analyzer_eval(getenv("FOO") == 0);
+  // expected-warning@-1 {{TRUE}}
+  // expected-warning@-2 {{FALSE}}
 }

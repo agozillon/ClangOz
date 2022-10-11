@@ -82,8 +82,6 @@ private:
 
 public:
   /// Same as Context::empty(), please use Context::empty() instead.
-  /// Constructor is defined to workaround a bug in MSVC's version of STL.
-  /// (arguments of std::future<> must be default-constructible in MSVC).
   Context() = default;
 
   /// Copy operations for this class are deleted, use an explicit clone() method
@@ -186,7 +184,7 @@ private:
 /// WithContext replaces Context::current() with a provided scope.
 /// When the WithContext is destroyed, the original scope is restored.
 /// For extending the current context with new value, prefer WithContextValue.
-class LLVM_NODISCARD WithContext {
+class [[nodiscard]] WithContext {
 public:
   WithContext(Context C) : Restore(Context::swapCurrent(std::move(C))) {}
   ~WithContext() { Context::swapCurrent(std::move(Restore)); }
@@ -201,7 +199,7 @@ private:
 
 /// WithContextValue extends Context::current() with a single value.
 /// When the WithContextValue is destroyed, the original scope is restored.
-class LLVM_NODISCARD WithContextValue {
+class [[nodiscard]] WithContextValue {
 public:
   template <typename T>
   WithContextValue(const Key<T> &K, typename std::decay<T>::type V)

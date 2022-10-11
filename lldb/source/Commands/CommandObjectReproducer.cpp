@@ -11,6 +11,7 @@
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Host/OptionParser.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
+#include "lldb/Interpreter/CommandOptionArgumentTable.h"
 #include "lldb/Interpreter/CommandReturnObject.h"
 #include "lldb/Interpreter/OptionArgParser.h"
 #include "lldb/Utility/GDBRemote.h"
@@ -24,84 +25,13 @@ using namespace llvm;
 using namespace lldb_private;
 using namespace lldb_private::repro;
 
-enum ReproducerProvider {
-  eReproducerProviderCommands,
-  eReproducerProviderFiles,
-  eReproducerProviderGDB,
-  eReproducerProviderProcessInfo,
-  eReproducerProviderVersion,
-  eReproducerProviderWorkingDirectory,
-  eReproducerProviderNone
-};
-
-static constexpr OptionEnumValueElement g_reproducer_provider_type[] = {
-    {
-        eReproducerProviderCommands,
-        "commands",
-        "Command Interpreter Commands",
-    },
-    {
-        eReproducerProviderFiles,
-        "files",
-        "Files",
-    },
-    {
-        eReproducerProviderGDB,
-        "gdb",
-        "GDB Remote Packets",
-    },
-    {
-        eReproducerProviderProcessInfo,
-        "processes",
-        "Process Info",
-    },
-    {
-        eReproducerProviderVersion,
-        "version",
-        "Version",
-    },
-    {
-        eReproducerProviderWorkingDirectory,
-        "cwd",
-        "Working Directory",
-    },
-    {
-        eReproducerProviderNone,
-        "none",
-        "None",
-    },
-};
-
-static constexpr OptionEnumValues ReproducerProviderType() {
-  return OptionEnumValues(g_reproducer_provider_type);
-}
-
 #define LLDB_OPTIONS_reproducer_dump
 #include "CommandOptions.inc"
 
-enum ReproducerCrashSignal {
-  eReproducerCrashSigill,
-  eReproducerCrashSigsegv,
-};
-
-static constexpr OptionEnumValueElement g_reproducer_signaltype[] = {
-    {
-        eReproducerCrashSigill,
-        "SIGILL",
-        "Illegal instruction",
-    },
-    {
-        eReproducerCrashSigsegv,
-        "SIGSEGV",
-        "Segmentation fault",
-    },
-};
-
-static constexpr OptionEnumValues ReproducerSignalType() {
-  return OptionEnumValues(g_reproducer_signaltype);
-}
-
 #define LLDB_OPTIONS_reproducer_xcrash
+#include "CommandOptions.inc"
+
+#define LLDB_OPTIONS_reproducer_verify
 #include "CommandOptions.inc"
 
 template <typename T>
@@ -122,6 +52,37 @@ llvm::Expected<T> static ReadFromYAML(StringRef filename) {
   return t;
 }
 
+static void SetError(CommandReturnObject &result, Error err) {
+  result.AppendError(toString(std::move(err)));
+}
+
+/// Create a loader from the given path if specified. Otherwise use the current
+/// loader used for replay.
+static Loader *
+GetLoaderFromPathOrCurrent(llvm::Optional<Loader> &loader_storage,
+                           CommandReturnObject &result,
+                           FileSpec reproducer_path) {
+  if (reproducer_path) {
+    loader_storage.emplace(reproducer_path);
+    Loader *loader = &(*loader_storage);
+    if (Error err = loader->LoadIndex()) {
+      // This is a hard error and will set the result to eReturnStatusFailed.
+      SetError(result, std::move(err));
+      return nullptr;
+    }
+    return loader;
+  }
+
+  if (Loader *loader = Reproducer::Instance().GetLoader())
+    return loader;
+
+  // This is a soft error because this is expected to fail during capture.
+  result.AppendError(
+      "Not specifying a reproducer is only support during replay.");
+  result.SetStatus(eReturnStatusSuccessFinishNoResult);
+  return nullptr;
+}
+
 class CommandObjectReproducerGenerate : public CommandObjectParsed {
 public:
   CommandObjectReproducerGenerate(CommandInterpreter &interpreter)
@@ -136,22 +97,11 @@ public:
 
 protected:
   bool DoExecute(Args &command, CommandReturnObject &result) override {
-    if (!command.empty()) {
-      result.AppendErrorWithFormat("'%s' takes no arguments",
-                                   m_cmd_name.c_str());
-      return false;
-    }
-
     auto &r = Reproducer::Instance();
     if (auto generator = r.GetGenerator()) {
       generator->Keep();
-    } else if (r.IsReplaying()) {
-      // Make this operation a NO-OP in replay mode.
-      result.SetStatus(eReturnStatusSuccessFinishNoResult);
-      return result.Succeeded();
     } else {
       result.AppendErrorWithFormat("Unable to get the reproducer generator");
-      result.SetStatus(eReturnStatusFailed);
       return false;
     }
 
@@ -182,7 +132,7 @@ public:
 
   class CommandOptions : public Options {
   public:
-    CommandOptions() : Options() {}
+    CommandOptions() = default;
 
     ~CommandOptions() override = default;
 
@@ -219,16 +169,10 @@ public:
 
 protected:
   bool DoExecute(Args &command, CommandReturnObject &result) override {
-    if (!command.empty()) {
-      result.AppendErrorWithFormat("'%s' takes no arguments",
-                                   m_cmd_name.c_str());
-      return false;
-    }
-
     auto &r = Reproducer::Instance();
 
-    if (!r.IsCapturing() && !r.IsReplaying()) {
-      result.SetError(
+    if (!r.IsCapturing()) {
+      result.AppendError(
           "forcing a crash is only supported when capturing a reproducer.");
       result.SetStatus(eReturnStatusSuccessFinishNoResult);
       return false;
@@ -268,24 +212,13 @@ public:
 
 protected:
   bool DoExecute(Args &command, CommandReturnObject &result) override {
-    if (!command.empty()) {
-      result.AppendErrorWithFormat("'%s' takes no arguments",
-                                   m_cmd_name.c_str());
-      return false;
-    }
-
     auto &r = Reproducer::Instance();
     if (r.IsCapturing()) {
       result.GetOutputStream() << "Reproducer is in capture mode.\n";
-    } else if (r.IsReplaying()) {
-      result.GetOutputStream() << "Reproducer is in replay mode.\n";
-    } else {
-      result.GetOutputStream() << "Reproducer is off.\n";
-    }
-
-    if (r.IsCapturing() || r.IsReplaying()) {
       result.GetOutputStream()
           << "Path: " << r.GetReproducerPath().GetPath() << '\n';
+    } else {
+      result.GetOutputStream() << "Reproducer is off.\n";
     }
 
     // Auto generate is hidden unless enabled because this is mostly for
@@ -299,12 +232,6 @@ protected:
     return result.Succeeded();
   }
 };
-
-static void SetError(CommandReturnObject &result, Error err) {
-  result.GetErrorStream().Printf("error: %s\n",
-                                 toString(std::move(err)).c_str());
-  result.SetStatus(eReturnStatusFailed);
-}
 
 class CommandObjectReproducerDump : public CommandObjectParsed {
 public:
@@ -321,7 +248,7 @@ public:
 
   class CommandOptions : public Options {
   public:
-    CommandOptions() : Options(), file() {}
+    CommandOptions() = default;
 
     ~CommandOptions() override = default;
 
@@ -364,35 +291,11 @@ public:
 
 protected:
   bool DoExecute(Args &command, CommandReturnObject &result) override {
-    if (!command.empty()) {
-      result.AppendErrorWithFormat("'%s' takes no arguments",
-                                   m_cmd_name.c_str());
-      return false;
-    }
-
-    // If no reproducer path is specified, use the loader currently used for
-    // replay. Otherwise create a new loader just for dumping.
     llvm::Optional<Loader> loader_storage;
-    Loader *loader = nullptr;
-    if (!m_options.file) {
-      loader = Reproducer::Instance().GetLoader();
-      if (loader == nullptr) {
-        result.SetError(
-            "Not specifying a reproducer is only support during replay.");
-        result.SetStatus(eReturnStatusSuccessFinishNoResult);
-        return false;
-      }
-    } else {
-      loader_storage.emplace(m_options.file);
-      loader = &(*loader_storage);
-      if (Error err = loader->LoadIndex()) {
-        SetError(result, std::move(err));
-        return false;
-      }
-    }
-
-    // If we get here we should have a valid loader.
-    assert(loader);
+    Loader *loader =
+        GetLoaderFromPathOrCurrent(loader_storage, result, m_options.file);
+    if (!loader)
+      return false;
 
     switch (m_options.provider) {
     case eReproducerProviderFiles: {
@@ -413,11 +316,34 @@ protected:
       // Dump the VFS to a buffer.
       std::string str;
       raw_string_ostream os(str);
-      static_cast<vfs::RedirectingFileSystem &>(*vfs).dump(os);
+      static_cast<vfs::RedirectingFileSystem &>(*vfs).print(os);
       os.flush();
 
       // Return the string.
       result.AppendMessage(str);
+      result.SetStatus(eReturnStatusSuccessFinishResult);
+      return true;
+    }
+    case eReproducerProviderSymbolFiles: {
+      Expected<std::string> symbol_files =
+          loader->LoadBuffer<SymbolFileProvider>();
+      if (!symbol_files) {
+        SetError(result, symbol_files.takeError());
+        return false;
+      }
+
+      std::vector<SymbolFileProvider::Entry> entries;
+      llvm::yaml::Input yin(*symbol_files);
+      yin >> entries;
+
+      for (const auto &entry : entries) {
+        result.AppendMessageWithFormat("- uuid:        %s\n",
+                                       entry.uuid.c_str());
+        result.AppendMessageWithFormat("  module path: %s\n",
+                                       entry.module_path.c_str());
+        result.AppendMessageWithFormat("  symbol path: %s\n",
+                                       entry.symbol_path.c_str());
+      }
       result.SetStatus(eReturnStatusSuccessFinishResult);
       return true;
     }
@@ -433,12 +359,23 @@ protected:
     }
     case eReproducerProviderWorkingDirectory: {
       Expected<std::string> cwd =
-          loader->LoadBuffer<WorkingDirectoryProvider>();
+          repro::GetDirectoryFrom<WorkingDirectoryProvider>(loader);
       if (!cwd) {
         SetError(result, cwd.takeError());
         return false;
       }
       result.AppendMessage(*cwd);
+      result.SetStatus(eReturnStatusSuccessFinishResult);
+      return true;
+    }
+    case eReproducerProviderHomeDirectory: {
+      Expected<std::string> home =
+          repro::GetDirectoryFrom<HomeDirectoryProvider>(loader);
+      if (!home) {
+        SetError(result, home.takeError());
+        return false;
+      }
+      result.AppendMessage(*home);
       result.SetStatus(eReturnStatusSuccessFinishResult);
       return true;
     }
@@ -525,7 +462,7 @@ protected:
       return true;
     }
     case eReproducerProviderNone:
-      result.SetError("No valid provider specified.");
+      result.AppendError("No valid provider specified.");
       return false;
     }
 

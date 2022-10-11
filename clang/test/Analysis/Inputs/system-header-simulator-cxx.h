@@ -46,7 +46,7 @@ template <typename T, typename Ptr, typename Ref> struct __vector_iterator {
 
   __vector_iterator(const Ptr p = 0) : ptr(p) {}
   __vector_iterator(const iterator &rhs): ptr(rhs.base()) {}
-  __vector_iterator<T, Ptr, Ref> operator++() { ++ ptr; return *this; }
+  __vector_iterator<T, Ptr, Ref>& operator++() { ++ ptr; return *this; }
   __vector_iterator<T, Ptr, Ref> operator++(int) {
     auto tmp = *this;
     ++ ptr;
@@ -109,7 +109,7 @@ template <typename T, typename Ptr, typename Ref> struct __deque_iterator {
 
   __deque_iterator(const Ptr p = 0) : ptr(p) {}
   __deque_iterator(const iterator &rhs): ptr(rhs.base()) {}
-  __deque_iterator<T, Ptr, Ref> operator++() { ++ ptr; return *this; }
+  __deque_iterator<T, Ptr, Ref>& operator++() { ++ ptr; return *this; }
   __deque_iterator<T, Ptr, Ref> operator++(int) {
     auto tmp = *this;
     ++ ptr;
@@ -169,7 +169,7 @@ template <typename T, typename Ptr, typename Ref> struct __list_iterator {
 
   __list_iterator(T* it = 0) : item(it) {}
   __list_iterator(const iterator &rhs): item(rhs.item) {}
-  __list_iterator<T, Ptr, Ref> operator++() { item = item->next; return *this; }
+  __list_iterator<T, Ptr, Ref>& operator++() { item = item->next; return *this; }
   __list_iterator<T, Ptr, Ref> operator++(int) {
     auto tmp = *this;
     item = item->next;
@@ -212,7 +212,7 @@ template <typename T, typename Ptr, typename Ref> struct __fwdl_iterator {
 
   __fwdl_iterator(T* it = 0) : item(it) {}
   __fwdl_iterator(const iterator &rhs): item(rhs.item) {}
-  __fwdl_iterator<T, Ptr, Ref> operator++() { item = item->next; return *this; }
+  __fwdl_iterator<T, Ptr, Ref>& operator++() { item = item->next; return *this; }
   __fwdl_iterator<T, Ptr, Ref> operator++(int) {
     auto tmp = *this;
     item = item->next;
@@ -564,9 +564,38 @@ namespace std {
 
   template <typename CharT>
   class basic_string {
+    class Allocator {};
+
   public:
-    basic_string();
-    basic_string(const CharT *s);
+    basic_string() : basic_string(Allocator()) {}
+    explicit basic_string(const Allocator &alloc);
+    basic_string(size_type count, CharT ch,
+                 const Allocator &alloc = Allocator());
+    basic_string(const basic_string &other,
+                 size_type pos,
+                 const Allocator &alloc = Allocator());
+    basic_string(const basic_string &other,
+                 size_type pos, size_type count,
+                 const Allocator &alloc = Allocator());
+    basic_string(const CharT *s, size_type count,
+                 const Allocator &alloc = Allocator());
+    basic_string(const CharT *s,
+                 const Allocator &alloc = Allocator());
+    template <class InputIt>
+    basic_string(InputIt first, InputIt last,
+                 const Allocator &alloc = Allocator());
+    basic_string(const basic_string &other);
+    basic_string(const basic_string &other,
+                 const Allocator &alloc);
+    basic_string(basic_string &&other);
+    basic_string(basic_string &&other,
+                 const Allocator &alloc);
+    basic_string(std::initializer_list<CharT> ilist,
+                 const Allocator &alloc = Allocator());
+    template <class T>
+    basic_string(const T &t, size_type pos, size_type n,
+                 const Allocator &alloc = Allocator());
+    // basic_string(std::nullptr_t) = delete;
 
     ~basic_string();
     void clear();
@@ -577,6 +606,9 @@ namespace std {
     const CharT *c_str() const;
     const CharT *data() const;
     CharT *data();
+
+    const char *begin() const;
+    const char *end() const;
 
     basic_string &append(size_type count, CharT ch);
     basic_string &assign(size_type count, CharT ch);
@@ -970,6 +1002,7 @@ public:
   T *operator->() const noexcept;
   operator bool() const noexcept;
   unique_ptr<T> &operator=(unique_ptr<T> &&p) noexcept;
+  unique_ptr<T> &operator=(nullptr_t) noexcept;
 };
 
 // TODO :: Once the deleter parameter is added update with additional template parameter.
@@ -977,8 +1010,89 @@ template <typename T>
 void swap(unique_ptr<T> &x, unique_ptr<T> &y) noexcept {
   x.swap(y);
 }
+
+template <typename T1, typename T2>
+bool operator==(const unique_ptr<T1> &x, const unique_ptr<T2> &y);
+
+template <typename T1, typename T2>
+bool operator!=(const unique_ptr<T1> &x, const unique_ptr<T2> &y);
+
+template <typename T1, typename T2>
+bool operator<(const unique_ptr<T1> &x, const unique_ptr<T2> &y);
+
+template <typename T1, typename T2>
+bool operator>(const unique_ptr<T1> &x, const unique_ptr<T2> &y);
+
+template <typename T1, typename T2>
+bool operator<=(const unique_ptr<T1> &x, const unique_ptr<T2> &y);
+
+template <typename T1, typename T2>
+bool operator>=(const unique_ptr<T1> &x, const unique_ptr<T2> &y);
+
+template <typename T>
+bool operator==(const unique_ptr<T> &x, nullptr_t y);
+
+template <typename T>
+bool operator!=(const unique_ptr<T> &x, nullptr_t y);
+
+template <typename T>
+bool operator<(const unique_ptr<T> &x, nullptr_t y);
+
+template <typename T>
+bool operator>(const unique_ptr<T> &x, nullptr_t y);
+
+template <typename T>
+bool operator<=(const unique_ptr<T> &x, nullptr_t y);
+
+template <typename T>
+bool operator>=(const unique_ptr<T> &x, nullptr_t y);
+
+template <typename T>
+bool operator==(nullptr_t x, const unique_ptr<T> &y);
+
+template <typename T>
+bool operator!=(nullptr_t x, const unique_ptr<T> &y);
+
+template <typename T>
+bool operator>(nullptr_t x, const unique_ptr<T> &y);
+
+template <typename T>
+bool operator<(nullptr_t x, const unique_ptr<T> &y);
+
+template <typename T>
+bool operator>=(nullptr_t x, const unique_ptr<T> &y);
+
+template <typename T>
+bool operator<=(nullptr_t x, const unique_ptr<T> &y);
+
+template <class T, class... Args>
+unique_ptr<T> make_unique(Args &&...args);
+
+#if __cplusplus >= 202002L
+
+template <class T>
+unique_ptr<T> make_unique_for_overwrite();
+
+#endif
+
 } // namespace std
 #endif
+
+namespace std {
+template <class CharT>
+class basic_ostream;
+
+using ostream = basic_ostream<char>;
+
+extern std::ostream cout;
+
+ostream &operator<<(ostream &, const string &);
+
+#if __cplusplus >= 202002L
+template <class T>
+ostream &operator<<(ostream &, const std::unique_ptr<T> &);
+#endif
+} // namespace std
 
 #ifdef TEST_INLINABLE_ALLOCATORS
 namespace std {
@@ -1078,7 +1192,7 @@ template<
     class iterator {
     public:
       iterator(Key *key): ptr(key) {}
-      iterator operator++() { ++ptr; return *this; }
+      iterator& operator++() { ++ptr; return *this; }
       bool operator!=(const iterator &other) const { return ptr != other.ptr; }
       const Key &operator*() const { return *ptr; }
     private:
@@ -1103,7 +1217,7 @@ template<
     class iterator {
     public:
       iterator(Key *key): ptr(key) {}
-      iterator operator++() { ++ptr; return *this; }
+      iterator& operator++() { ++ptr; return *this; }
       bool operator!=(const iterator &other) const { return ptr != other.ptr; }
       const Key &operator*() const { return *ptr; }
     private:

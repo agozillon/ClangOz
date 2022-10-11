@@ -79,7 +79,7 @@ namespace dr5 { // dr5: yes
 namespace dr7 { // dr7: yes
   class A { public: ~A(); };
   class B : virtual private A {}; // expected-note 2 {{declared private here}}
-  class C : public B {} c; // expected-error 2 {{inherited virtual base class 'dr7::A' has private destructor}} \
+  class C : public B {} c; // expected-error 2 {{inherited virtual base class 'A' has private destructor}} \
                            // expected-note {{implicit default constructor for 'dr7::C' first required here}} \
                            // expected-note {{implicit destructor for 'dr7::C' first required here}}
   class VeryDerivedC : public B, virtual public A {} vdc;
@@ -118,10 +118,10 @@ namespace dr9 { // dr9: yes
     int m; // expected-note {{here}}
     friend int R1();
   };
-  struct N : protected B { // expected-note 2{{protected}}
+  struct N : protected B { // expected-note {{protected}}
     friend int R2();
   } n;
-  int R1() { return n.m; } // expected-error {{protected base class}} expected-error {{protected member}}
+  int R1() { return n.m; } // expected-error {{protected member}}
   int R2() { return n.m; }
 }
 
@@ -204,10 +204,10 @@ namespace dr16 { // dr16: yes
     void f(); // expected-note {{here}}
     friend class C;
   };
-  class B : A {}; // expected-note 4{{here}}
+  class B : A {}; // expected-note 3{{here}}
   class C : B {
     void g() {
-      f(); // expected-error {{private member}} expected-error {{private base}}
+      f(); // expected-error {{private member}}
       A::f(); // expected-error {{private member}} expected-error {{private base}}
     }
   };
@@ -482,7 +482,7 @@ namespace dr39 { // dr39: no
       using V::z;
       float &z(float);
     };
-    struct C : A, B, virtual V {} c; // expected-warning {{direct base 'dr39::example2::A' is inaccessible due to ambiguity:\n    struct dr39::example2::C -> struct dr39::example2::A\n    struct dr39::example2::C -> struct dr39::example2::B -> struct dr39::example2::A}}
+    struct C : A, B, virtual V {} c; // expected-warning {{direct base 'A' is inaccessible due to ambiguity:\n    struct dr39::example2::C -> A\n    struct dr39::example2::C -> B -> A}}
     int &x = c.x(0); // expected-error {{found in multiple base classes}}
     // FIXME: This is valid, because we find the same static data member either way.
     int &y = c.y(0); // expected-error {{found in multiple base classes}}
@@ -915,7 +915,7 @@ namespace dr75 { // dr75: yes
 
 namespace dr76 { // dr76: yes
   const volatile int n = 1;
-  int arr[n]; // expected-error +{{variable length array}}
+  int arr[n]; // expected-error +{{variable length array}} expected-note {{read of volatile}}
 }
 
 namespace dr77 { // dr77: yes
@@ -965,7 +965,7 @@ namespace dr84 { // dr84: yes
   struct C {};
   struct B {
     B(B&); // expected-note 0-1{{candidate}}
-    B(C); // expected-note 0-1{{no known conversion from 'dr84::B' to 'dr84::C'}}
+    B(C); // expected-note 0-1{{no known conversion from 'B' to 'C'}}
     operator C() const;
   };
   A a;

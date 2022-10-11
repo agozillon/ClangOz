@@ -14,6 +14,7 @@ add_llvm_component_library(LLVMTransformUtils
   CloneFunction.cpp
   CloneModule.cpp
   CodeExtractor.cpp
+  CodeLayout.cpp
   CodeMoverUtils.cpp
   CtorUtils.cpp
   Debugify.cpp
@@ -27,8 +28,8 @@ add_llvm_component_library(LLVMTransformUtils
   FunctionImportUtils.cpp
   GlobalStatus.cpp
   GuardUtils.cpp
+  HelloWorld.cpp
   InlineFunction.cpp
-  ImportedFunctionsInliningStatistics.cpp
   InjectTLIMappings.cpp
   InstructionNamer.cpp
   IntegerDivision.cpp
@@ -43,10 +44,14 @@ add_llvm_component_library(LLVMTransformUtils
   LoopUnrollRuntime.cpp
   LoopUtils.cpp
   LoopVersioning.cpp
+  LowerAtomic.cpp
+  LowerGlobalDtors.cpp
   LowerInvoke.cpp
   LowerMemIntrinsics.cpp
   LowerSwitch.cpp
   MatrixUtils.cpp
+  MemoryOpRemark.cpp
+  MemoryTaggingSupport.cpp
   Mem2Reg.cpp
   MetaRenamer.cpp
   MisExpect.cpp
@@ -54,10 +59,14 @@ add_llvm_component_library(LLVMTransformUtils
   NameAnonGlobals.cpp
   PredicateInfo.cpp
   PromoteMemoryToRegister.cpp
+  RelLookupTableConverter.cpp
   ScalarEvolutionExpander.cpp
+  SCCPSolver.cpp
   StripGCRelocates.cpp
   SSAUpdater.cpp
   SSAUpdaterBulk.cpp
+  SampleProfileInference.cpp
+  SampleProfileLoaderBaseUtil.cpp
   SanitizerStats.cpp
   SimplifyCFG.cpp
   SimplifyIndVar.cpp
@@ -68,7 +77,6 @@ add_llvm_component_library(LLVMTransformUtils
   SymbolRewriter.cpp
   UnifyFunctionExitNodes.cpp
   UnifyLoopExits.cpp
-  UniqueInternalLinkageNames.cpp
   Utils.cpp
   ValueMapper.cpp
   VNCoercion.cpp
@@ -79,4 +87,9 @@ add_llvm_component_library(LLVMTransformUtils
 
   DEPENDS
   intrinsics_gen
+
+  LINK_COMPONENTS
+  Analysis
+  Core
+  Support
   )

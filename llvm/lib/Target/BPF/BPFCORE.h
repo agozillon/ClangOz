@@ -13,6 +13,10 @@
 
 namespace llvm {
 
+class BasicBlock;
+class Instruction;
+class Module;
+
 class BPFCoreSharedInfo {
 public:
   enum PatchableRelocKind : uint32_t {
@@ -28,6 +32,7 @@ public:
     TYPE_SIZE,
     ENUM_VALUE_EXISTENCE,
     ENUM_VALUE,
+    TYPE_MATCH,
 
     MAX_FIELD_RELOC_KIND,
   };
@@ -42,6 +47,7 @@ public:
   enum PreserveTypeInfo : uint32_t {
     PRESERVE_TYPE_INFO_EXISTENCE = 0,
     PRESERVE_TYPE_INFO_SIZE,
+    PRESERVE_TYPE_INFO_MATCH,
 
     MAX_PRESERVE_TYPE_INFO_FLAG,
   };
@@ -57,6 +63,14 @@ public:
   static constexpr StringRef AmaAttr = "btf_ama";
   /// The attribute attached to globals representing a type id
   static constexpr StringRef TypeIdAttr = "btf_type_id";
+
+  /// llvm.bpf.passthrough builtin seq number
+  static uint32_t SeqNum;
+
+  /// Insert a bpf passthrough builtin function.
+  static Instruction *insertPassThrough(Module *M, BasicBlock *BB,
+                                        Instruction *Input,
+                                        Instruction *Before);
 };
 
 } // namespace llvm

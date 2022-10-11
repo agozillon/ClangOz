@@ -10,28 +10,30 @@
 
 #include <cstdio>
 
-extern "C" {
-void __ubsan_get_current_report_data(const char **OutIssueKind,
-                                     const char **OutMessage,
-                                     const char **OutFilename,
-                                     unsigned *OutLine, unsigned *OutCol,
-                                     char **OutMemoryAddr);
-
-// Override the definition of __ubsan_on_report from the runtime, just for
-// testing purposes.
-void __ubsan_on_report(void) {
+// Override __ubsan_on_report() from the runtime, just for testing purposes.
+// Required for dyld macOS 12.0+
+#if (__APPLE__)
+__attribute__((weak))
+#endif
+extern "C" void
+__ubsan_on_report(void) {
+  void __ubsan_get_current_report_data(
+      const char **OutIssueKind, const char **OutMessage,
+      const char **OutFilename, unsigned *OutLine, unsigned *OutCol,
+      char **OutMemoryAddr);
   const char *IssueKind, *Message, *Filename;
   unsigned Line, Col;
   char *Addr;
+
   __ubsan_get_current_report_data(&IssueKind, &Message, &Filename, &Line, &Col,
                                   &Addr);
 
   printf("Issue: %s\n", IssueKind);
   printf("Location: %s:%u:%u\n", Filename, Line, Col);
   printf("Message: %s\n", Message);
+  fflush(stdout);
 
   (void)Addr;
-}
 }
 
 int main() {

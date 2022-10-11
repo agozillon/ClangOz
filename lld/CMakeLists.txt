@@ -1,94 +1,51 @@
-# Check if lld is built as a standalone project.
+cmake_minimum_required(VERSION 3.13.4)
+
+# If we are not building as a part of LLVM, build LLD as an
+# standalone project, using LLVM as an external library:
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(lld)
-  cmake_minimum_required(VERSION 3.13.4)
+  set(LLD_BUILT_STANDALONE TRUE)
+endif()
+
+# Must go below project(..)
+include(GNUInstallDirs)
+
+if(LLD_BUILT_STANDALONE)
+  set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
+  set(CMAKE_CXX_STANDARD_REQUIRED YES)
+  set(CMAKE_CXX_EXTENSIONS NO)
 
   set(CMAKE_INCLUDE_CURRENT_DIR ON)
-  set(LLD_BUILT_STANDALONE TRUE)
 
-  find_program(LLVM_CONFIG_PATH "llvm-config" DOC "Path to llvm-config binary")
-  if(NOT LLVM_CONFIG_PATH)
-    message(FATAL_ERROR "llvm-config not found: specify LLVM_CONFIG_PATH")
-  endif()
+  find_package(LLVM REQUIRED HINTS "${LLVM_CMAKE_DIR}")
+  list(APPEND CMAKE_MODULE_PATH "${LLVM_DIR}")
 
-  execute_process(COMMAND "${LLVM_CONFIG_PATH}"
-                          "--obj-root"
-                          "--includedir"
-                          "--cmakedir"
-                          "--src-root"
-                  RESULT_VARIABLE HAD_ERROR
-                  OUTPUT_VARIABLE LLVM_CONFIG_OUTPUT
-                  OUTPUT_STRIP_TRAILING_WHITESPACE)
-  if(HAD_ERROR)
-    message(FATAL_ERROR "llvm-config failed with status ${HAD_ERROR}")
-  endif()
+  # Turn into CACHE PATHs for overwritting
+  set(LLVM_INCLUDE_DIRS ${LLVM_INCLUDE_DIRS} CACHE PATH "Path to llvm/include and any other header dirs needed")
+  set(LLVM_BINARY_DIR "${LLVM_BINARY_DIR}" CACHE PATH "Path to LLVM build tree")
+  set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../llvm" CACHE PATH "Path to LLVM source tree")
 
-  string(REGEX REPLACE "[ \t]*[\r\n]+[ \t]*" ";" LLVM_CONFIG_OUTPUT "${LLVM_CONFIG_OUTPUT}")
+  find_program(LLVM_TABLEGEN_EXE "llvm-tblgen" ${LLVM_TOOLS_BINARY_DIR}
+    NO_DEFAULT_PATH)
 
-  list(GET LLVM_CONFIG_OUTPUT 0 OBJ_ROOT)
-  list(GET LLVM_CONFIG_OUTPUT 1 MAIN_INCLUDE_DIR)
-  list(GET LLVM_CONFIG_OUTPUT 2 LLVM_CMAKE_PATH)
-  list(GET LLVM_CONFIG_OUTPUT 3 MAIN_SRC_DIR)
-
-  set(LLVM_OBJ_ROOT ${OBJ_ROOT} CACHE PATH "path to LLVM build tree")
-  set(LLVM_MAIN_INCLUDE_DIR ${MAIN_INCLUDE_DIR} CACHE PATH "path to llvm/include")
-  set(LLVM_MAIN_SRC_DIR ${MAIN_SRC_DIR} CACHE PATH "Path to LLVM source tree")
-
-  file(TO_CMAKE_PATH ${LLVM_OBJ_ROOT} LLVM_BINARY_DIR)
-
-  if(NOT EXISTS "${LLVM_CMAKE_PATH}/LLVMConfig.cmake")
-    message(FATAL_ERROR "LLVMConfig.cmake not found")
-  endif()
-  include("${LLVM_CMAKE_PATH}/LLVMConfig.cmake")
-
-  list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_PATH}")
-
-  set(PACKAGE_VERSION "${LLVM_PACKAGE_VERSION}")
-  include_directories("${LLVM_BINARY_DIR}/include" ${LLVM_INCLUDE_DIRS})
-  link_directories(${LLVM_LIBRARY_DIRS})
-
-  set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib${LLVM_LIBDIR_SUFFIX})
+  # They are used as destination of target generators.
   set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/bin)
-  find_program(LLVM_TABLEGEN_EXE "llvm-tblgen" ${LLVM_TOOLS_BINARY_DIR} NO_DEFAULT_PATH)
+  set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib${LLVM_LIBDIR_SUFFIX})
 
   include(AddLLVM)
   include(TableGen)
   include(HandleLLVMOptions)
+  include(GetErrcMessages)
+  include(CheckAtomic)
+
+  set(PACKAGE_VERSION "${LLVM_PACKAGE_VERSION}")
+
+  include_directories(${LLVM_INCLUDE_DIRS})
+  link_directories(${LLVM_LIBRARY_DIRS})
 
   if(LLVM_INCLUDE_TESTS)
-    if(CMAKE_VERSION VERSION_LESS 3.12)
-      include(FindPythonInterp)
-      if(NOT PYTHONINTERP_FOUND)
-        message(FATAL_ERROR
-  "Unable to find Python interpreter, required for testing.
-
-  Please install Python or specify the PYTHON_EXECUTABLE CMake variable.")
-      endif()
-
-      if(${PYTHON_VERSION_STRING} VERSION_LESS 2.7)
-        message(FATAL_ERROR "Python 2.7 or newer is required")
-      endif()
-
-      add_executable(Python3::Interpeter IMPORTED)
-      set_target_properties(Python3::Interpreter PROPERTIES
-        IMPORTED_LOCATION ${PYTHON_EXECUTABLE})
-      set(Python3_EXECUTABLE ${PYTHON_EXECUTABLE})
-    else()
-      find_package(Python3 COMPONENTS Interpreter)
-      if(NOT Python3_Interpreter_FOUND)
-        message(WARNING "Python3 not found, using python2 as a fallback")
-        find_package(Python2 COMPONENTS Interpreter REQUIRED)
-        if(Python2_VERSION VERSION_LESS 2.7)
-          message(SEND_ERROR "Python 2.7 or newer is required")
-        endif()
-
-        # Treat python2 as python3
-        add_executable(Python3::Interpreter IMPORTED)
-        set_target_properties(Python3::Interpreter PROPERTIES
-          IMPORTED_LOCATION ${Python2_EXECUTABLE})
-        set(Python3_EXECUTABLE ${Python2_EXECUTABLE})
-      endif()
-    endif()
+    find_package(Python3 ${LLVM_MINIMUM_PYTHON_VERSION} REQUIRED
+      COMPONENTS Interpreter)
 
     # Check prebuilt llvm/utils.
     if(EXISTS ${LLVM_TOOLS_BINARY_DIR}/FileCheck${CMAKE_EXECUTABLE_SUFFIX}
@@ -128,6 +85,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
       endif()
       set(LLVM_LIT_ARGS "${LIT_ARGS_DEFAULT}" CACHE STRING "Default options for lit")
 
+      get_errc_messages(LLVM_LIT_ERRC_MESSAGES)
+
       # On Win32 hosts, provide an option to specify the path to the GnuWin32 tools.
       if(WIN32 AND NOT CYGWIN)
         set(LLVM_LIT_TOOLS_DIR "" CACHE PATH "Path to GnuWin32 tools")
@@ -136,7 +95,15 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
       set(LLVM_INCLUDE_TESTS OFF)
     endif()
   endif()
-endif()
+
+  if(LLVM_HAVE_LIBXAR)
+    set(XAR_LIB xar)
+  endif()
+endif() # standalone
+
+set(LLD_TOOLS_INSTALL_DIR "${CMAKE_INSTALL_BINDIR}" CACHE PATH
+    "Path for binary subdirectory (defaults to '${CMAKE_INSTALL_BINDIR}')")
+mark_as_advanced(LLD_TOOLS_INSTALL_DIR)
 
 set(LLD_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(LLD_INCLUDE_DIR ${LLD_SOURCE_DIR}/include )
@@ -173,7 +140,15 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
 "`CMakeFiles'. Please delete them.")
 endif()
 
-list (APPEND CMAKE_MODULE_PATH "${LLD_SOURCE_DIR}/cmake/modules")
+if(NOT DEFINED LLVM_COMMON_CMAKE_UTILS)
+  set(LLVM_COMMON_CMAKE_UTILS ${LLD_SOURCE_DIR}/../cmake)
+endif()
+
+# Add path for custom modules.
+list(INSERT CMAKE_MODULE_PATH 0
+  "${LLD_SOURCE_DIR}/cmake/modules"
+  "${LLVM_COMMON_CMAKE_UTILS}/Modules"
+  )
 
 include(AddLLD)
 
@@ -192,6 +167,12 @@ endif()
 option(LLD_BUILD_TOOLS
   "Build the lld tools. If OFF, just generate build targets." ON)
 
+option(LLD_DEFAULT_LD_LLD_IS_MINGW
+    "Use MinGW as the default backend for ld.lld. If OFF, ELF will be used." OFF)
+if (LLD_DEFAULT_LD_LLD_IS_MINGW)
+  add_definitions("-DLLD_DEFAULT_LD_LLD_IS_MINGW=1")
+endif()
+
 if (MSVC)
   add_definitions(-wd4530) # Suppress 'warning C4530: C++ exception handler used, but unwind semantics are not enabled.'
   add_definitions(-wd4062) # Suppress 'warning C4062: enumerator X in switch of enum Y is not handled' from system header.
@@ -204,20 +185,17 @@ include_directories(BEFORE
 
 if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
   install(DIRECTORY include/
-    DESTINATION include
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
     FILES_MATCHING
     PATTERN "*.h"
-    PATTERN ".svn" EXCLUDE
     )
 endif()
 
 add_subdirectory(Common)
-add_subdirectory(lib)
 add_subdirectory(tools/lld)
 
 if (LLVM_INCLUDE_TESTS)
   add_subdirectory(test)
-  add_subdirectory(unittests)
 endif()
 
 add_subdirectory(docs)

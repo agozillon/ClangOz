@@ -53,9 +53,9 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/CFG.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -65,6 +65,7 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Local.h"
 
 #define DEBUG_TYPE "safepoint-placement"
 
@@ -243,7 +244,7 @@ static bool mustBeFiniteCountedLoop(Loop *L, ScalarEvolution *SE,
                                     BasicBlock *Pred) {
   // A conservative bound on the loop as a whole.
   const SCEV *MaxTrips = SE->getConstantMaxBackedgeTakenCount(L);
-  if (MaxTrips != SE->getCouldNotCompute() &&
+  if (!isa<SCEVCouldNotCompute>(MaxTrips) &&
       SE->getUnsignedRange(MaxTrips).getUnsignedMax().isIntN(
           CountedLoopTripWidth))
     return true;
@@ -255,7 +256,7 @@ static bool mustBeFiniteCountedLoop(Loop *L, ScalarEvolution *SE,
     // This returns an exact expression only.  TODO: We really only need an
     // upper bound here, but SE doesn't expose that.
     const SCEV *MaxExec = SE->getExitCount(L, Pred);
-    if (MaxExec != SE->getCouldNotCompute() &&
+    if (!isa<SCEVCouldNotCompute>(MaxExec) &&
         SE->getUnsignedRange(MaxExec).getUnsignedMax().isIntN(
             CountedLoopTripWidth))
         return true;
@@ -435,7 +436,7 @@ static Instruction *findLocationForEntrySafepoint(Function &F,
   return Cursor;
 }
 
-static const char *const GCSafepointPollName = "gc.safepoint_poll";
+const char GCSafepointPollName[] = "gc.safepoint_poll";
 
 static bool isGCSafepointPoll(Function &F) {
   return F.getName().equals(GCSafepointPollName);
@@ -589,8 +590,7 @@ bool PlaceSafepoints::runOnFunction(Function &F) {
   for (Instruction *PollLocation : PollsNeeded) {
     std::vector<CallBase *> RuntimeCalls;
     InsertSafepointPoll(PollLocation, RuntimeCalls, TLI);
-    ParsePointNeeded.insert(ParsePointNeeded.end(), RuntimeCalls.begin(),
-                            RuntimeCalls.end());
+    llvm::append_range(ParsePointNeeded, RuntimeCalls);
   }
 
   return Modified;

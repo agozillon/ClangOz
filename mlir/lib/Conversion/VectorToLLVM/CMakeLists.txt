@@ -1,5 +1,6 @@
 add_mlir_conversion_library(MLIRVectorToLLVM
   ConvertVectorToLLVM.cpp
+  ConvertVectorToLLVMPass.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Conversion/VectorToLLVM
@@ -12,9 +13,19 @@ add_mlir_conversion_library(MLIRVectorToLLVM
   Core
 
   LINK_LIBS PUBLIC
-  MLIRLLVMIR
-  MLIRStandardToLLVM
-  MLIRTargetLLVMIRModuleTranslation
+  MLIRArithmeticDialect
+  MLIRArmNeonDialect
+  MLIRArmSVEDialect
+  MLIRArmSVETransforms
+  MLIRAMXDialect
+  MLIRAMXTransforms
+  MLIRLLVMCommonConversion
+  MLIRLLVMDialect
+  MLIRMemRefDialect
+  MLIRTargetLLVMIRExport
   MLIRTransforms
-  MLIRVector
+  MLIRVectorDialect
+  MLIRVectorTransforms
+  MLIRX86VectorDialect
+  MLIRX86VectorTransforms
   )

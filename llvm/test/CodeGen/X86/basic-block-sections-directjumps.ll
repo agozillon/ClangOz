@@ -4,8 +4,8 @@
 define void @_Z3bazb(i1 zeroext) {
   %2 = alloca i8, align 1
   %3 = zext i1 %0 to i8
-  store i8 %3, i8* %2, align 1
-  %4 = load i8, i8* %2, align 1
+  store i8 %3, ptr %2, align 1
+  %4 = load i8, ptr %2, align 1
   %5 = trunc i8 %4 to i1
   br i1 %5, label %6, label %9
 
@@ -29,10 +29,10 @@ declare i32 @_Z3foov() #1
 
 ; LINUX-SECTIONS: .section        .text._Z3bazb,"ax",@progbits
 ; LINUX-SECTIONS: _Z3bazb:
-; LINUX-SECTIONS: jmp _Z3bazb.1
-; LINUX-SECTIONS: .section        .text._Z3bazb._Z3bazb.1,"ax",@progbits
-; LINUX-SECTIONS: _Z3bazb.1:
-; LINUX-SECTIONS: jmp _Z3bazb.2
-; LINUX-SECTIONS: .section        .text._Z3bazb._Z3bazb.2,"ax",@progbits
-; LINUX-SECTIONS: _Z3bazb.2:
-; LINUX-SECTIONS: jmp _Z3bazb.3
+; LINUX-SECTIONS: jmp _Z3bazb.__part.1
+; LINUX-SECTIONS: .section        .text._Z3bazb._Z3bazb.__part.1,"ax",@progbits
+; LINUX-SECTIONS: _Z3bazb.__part.1:
+; LINUX-SECTIONS: jmp _Z3bazb.__part.2
+; LINUX-SECTIONS: .section        .text._Z3bazb._Z3bazb.__part.2,"ax",@progbits
+; LINUX-SECTIONS: _Z3bazb.__part.2:
+; LINUX-SECTIONS: jmp _Z3bazb.__part.3

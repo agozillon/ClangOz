@@ -2,7 +2,6 @@
 
 
 
-import unittest2
 import lldb
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
@@ -10,8 +9,6 @@ import lldbsuite.test.lldbutil as lldbutil
 
 
 class SharedLibTestCase(TestBase):
-
-    mydir = TestBase.compute_mydir(__file__)
 
     def common_test_expr(self, preload_symbols):
         if "clang" in self.getCompiler() and "3.4" in self.getCompilerVersion():
@@ -34,12 +31,10 @@ class SharedLibTestCase(TestBase):
             "expression GetMeASubFoo(my_foo_ptr)",
             startstr="(sub_foo *) $")
 
-    @expectedFailureNetBSD
     def test_expr(self):
         """Test that types work when defined in a shared library and forward-declared in the main executable"""
         self.common_test_expr(True)
 
-    @expectedFailureNetBSD
     def test_expr_no_preload(self):
         """Test that types work when defined in a shared library and forward-declared in the main executable, but with preloading disabled"""
         self.common_test_expr(False)
@@ -97,5 +92,4 @@ class SharedLibTestCase(TestBase):
                              'stop reason = breakpoint'])
 
         # The breakpoint should have a hit count of 1.
-        self.expect("breakpoint list -f", BREAKPOINT_HIT_ONCE,
-                    substrs=[' resolved, hit count = 1'])
+        lldbutil.check_breakpoint(self, bpno = 1, expected_hit_count = 1)

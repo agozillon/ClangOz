@@ -1,6 +1,6 @@
 // Test to make sure basic initialization order errors are caught.
 
-// RUN: %clangxx_asan %macos_min_target_10_11 -O0 %s %p/Helpers/initialization-bug-extra2.cpp -o %t-INIT-ORDER-EXE
+// RUN: %clangxx_asan %min_macos_deployment_target=10.11 -O0 %s %p/Helpers/initialization-bug-extra2.cpp -o %t-INIT-ORDER-EXE
 // RUN: %env_asan_opts=check_initialization_order=true not %run %t-INIT-ORDER-EXE 2>&1 | FileCheck %s
 
 // Do not test with optimization -- the error may be optimized away.
@@ -8,17 +8,13 @@
 // FIXME: https://code.google.com/p/address-sanitizer/issues/detail?id=186
 // XFAIL: windows-msvc
 
-// The test is expected to fail on OS X Yosemite and older
-// UNSUPPORTED: osx-no-ld64-live_support
-// UNSUPPORTED: ios
-
 #include <cstdio>
 
 // The structure of the test is:
 // "x", "y", "z" are dynamically initialized globals.
 // Value of "x" depends on "y", value of "y" depends on "z".
 // "x" and "z" are defined in this TU, "y" is defined in another one.
-// Thus we shoud stably report initialization order fiasco independently of
+// Thus we should stably report initialization order fiasco independently of
 // the translation unit order.
 
 int initZ() {

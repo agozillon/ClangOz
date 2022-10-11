@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <string.h>
+#include <cstring>
 
 #include <memory>
 
@@ -37,9 +37,6 @@ static ConstString g_this = ConstString("this");
 
 char CPPLanguageRuntime::ID = 0;
 
-// Destructor
-CPPLanguageRuntime::~CPPLanguageRuntime() {}
-
 CPPLanguageRuntime::CPPLanguageRuntime(Process *process)
     : LanguageRuntime(process) {}
 
@@ -66,7 +63,7 @@ bool contains_lambda_identifier(llvm::StringRef &str_ref) {
 CPPLanguageRuntime::LibCppStdFunctionCallableInfo
 line_entry_helper(Target &target, const SymbolContext &sc, Symbol *symbol,
                   llvm::StringRef first_template_param_sref,
-                  bool has___invoke) {
+                  bool has_invoke) {
 
   CPPLanguageRuntime::LibCppStdFunctionCallableInfo optional_info;
 
@@ -81,7 +78,7 @@ line_entry_helper(Target &target, const SymbolContext &sc, Symbol *symbol,
     LineEntry line_entry;
     addr.CalculateSymbolContextLineEntry(line_entry);
 
-    if (contains_lambda_identifier(first_template_param_sref) || has___invoke) {
+    if (contains_lambda_identifier(first_template_param_sref) || has_invoke) {
       // Case 1 and 2
       optional_info.callable_case = lldb_private::CPPLanguageRuntime::
           LibCppStdFunctionCallableCase::Lambda;
@@ -102,9 +99,7 @@ line_entry_helper(Target &target, const SymbolContext &sc, Symbol *symbol,
 CPPLanguageRuntime::LibCppStdFunctionCallableInfo
 CPPLanguageRuntime::FindLibCppStdFunctionCallableInfo(
     lldb::ValueObjectSP &valobj_sp) {
-  static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
-  Timer scoped_timer(func_cat,
-                     "CPPLanguageRuntime::FindLibCppStdFunctionCallableInfo");
+  LLDB_SCOPED_TIMER();
 
   LibCppStdFunctionCallableInfo optional_info;
 
@@ -143,22 +138,25 @@ CPPLanguageRuntime::FindLibCppStdFunctionCallableInfo(
   //    we will obtain the name from this pointer.
   // 5) a free function. A pointer to the function will stored after the vtable
   //    we will obtain the name from this pointer.
-  ValueObjectSP member__f_(
+  ValueObjectSP member_f_(
       valobj_sp->GetChildMemberWithName(ConstString("__f_"), true));
 
-  if (member__f_) {
-    ValueObjectSP sub_member__f_(
-       member__f_->GetChildMemberWithName(ConstString("__f_"), true));
+  if (member_f_) {
+    ValueObjectSP sub_member_f_(
+       member_f_->GetChildMemberWithName(ConstString("__f_"), true));
 
-    if (sub_member__f_)
-        member__f_ = sub_member__f_;
+    if (sub_member_f_)
+        member_f_ = sub_member_f_;
   }
 
-  lldb::addr_t member__f_pointer_value = member__f_->GetValueAsUnsigned(0);
+  if (!member_f_)
+    return optional_info;
 
-  optional_info.member__f_pointer_value = member__f_pointer_value;
+  lldb::addr_t member_f_pointer_value = member_f_->GetValueAsUnsigned(0);
 
-  if (!member__f_pointer_value)
+  optional_info.member_f_pointer_value = member_f_pointer_value;
+
+  if (!member_f_pointer_value)
     return optional_info;
 
   ExecutionContext exe_ctx(valobj_sp->GetExecutionContextRef());
@@ -173,7 +171,7 @@ CPPLanguageRuntime::FindLibCppStdFunctionCallableInfo(
   // First item pointed to by __f_ should be the pointer to the vtable for
   // a __base object.
   lldb::addr_t vtable_address =
-      process->ReadPointerFromMemory(member__f_pointer_value, status);
+      process->ReadPointerFromMemory(member_f_pointer_value, status);
 
   if (status.Fail())
     return optional_info;
@@ -184,7 +182,7 @@ CPPLanguageRuntime::FindLibCppStdFunctionCallableInfo(
   if (status.Fail())
     return optional_info;
 
-  lldb::addr_t address_after_vtable = member__f_pointer_value + address_size;
+  lldb::addr_t address_after_vtable = member_f_pointer_value + address_size;
   // As commented above we may not have a function pointer but if we do we will
   // need it.
   lldb::addr_t possible_function_address =
@@ -259,7 +257,7 @@ CPPLanguageRuntime::FindLibCppStdFunctionCallableInfo(
   }
 
   // These conditions are used several times to simplify statements later on.
-  bool has___invoke =
+  bool has_invoke =
       (symbol ? symbol->GetName().GetStringRef().contains("__invoke") : false);
   auto calculate_symbol_context_helper = [](auto &t,
                                             SymbolContextList &sc_list) {
@@ -269,17 +267,17 @@ CPPLanguageRuntime::FindLibCppStdFunctionCallableInfo(
   };
 
   // Case 2
-  if (has___invoke) {
+  if (has_invoke) {
     SymbolContextList scl;
     calculate_symbol_context_helper(symbol, scl);
 
     return line_entry_helper(target, scl[0], symbol, first_template_parameter,
-                             has___invoke);
+                             has_invoke);
   }
 
   // Case 4 or 5
   if (symbol && !symbol->GetName().GetStringRef().startswith("vtable for") &&
-      !contains_lambda_identifier(first_template_parameter) && !has___invoke) {
+      !contains_lambda_identifier(first_template_parameter) && !has_invoke) {
     optional_info.callable_case =
         LibCppStdFunctionCallableCase::FreeOrMemberFunction;
     optional_info.callable_address = function_address_resolved;
@@ -309,7 +307,7 @@ CPPLanguageRuntime::FindLibCppStdFunctionCallableInfo(
   if (!contains_lambda_identifier(name_to_use))
     return optional_info;
 
-  if (vtable_cu && !has___invoke) {
+  if (vtable_cu && !has_invoke) {
     lldb::FunctionSP func_sp =
         vtable_cu->FindFunction([name_to_use](const FunctionSP &f) {
           auto name = f->GetName().GetStringRef();
@@ -324,10 +322,13 @@ CPPLanguageRuntime::FindLibCppStdFunctionCallableInfo(
     }
   }
 
+  if (symbol == nullptr)
+    return optional_info;
+
   // Case 1 or 3
   if (scl.GetSize() >= 1) {
     optional_info = line_entry_helper(target, scl[0], symbol,
-                                      first_template_parameter, has___invoke);
+                                      first_template_parameter, has_invoke);
   }
 
   CallableLookupCache[func_to_match] = optional_info;
@@ -399,8 +400,8 @@ CPPLanguageRuntime::GetStepThroughTrampolinePlan(Thread &thread,
       // We create a ThreadPlan to keep stepping through using the address range
       // of the current function.
       ret_plan_sp = std::make_shared<ThreadPlanStepInRange>(
-          thread, range_of_curr_func, sc, eOnlyThisThread, eLazyBoolYes,
-          eLazyBoolYes);
+          thread, range_of_curr_func, sc, nullptr, eOnlyThisThread,
+          eLazyBoolYes, eLazyBoolYes);
       return ret_plan_sp;
     }
   }

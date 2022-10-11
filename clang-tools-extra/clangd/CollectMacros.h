@@ -6,14 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_COLLECTEDMACROS_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANGD_COLLECTEDMACROS_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_COLLECTMACROS_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANGD_COLLECTMACROS_H
 
-#include "AST.h"
 #include "Protocol.h"
 #include "SourceCode.h"
 #include "index/SymbolID.h"
-#include "clang/Basic/IdentifierTable.h"
 #include "clang/Lex/PPCallbacks.h"
 #include "llvm/ADT/DenseMap.h"
 #include <string>
@@ -21,15 +19,20 @@
 namespace clang {
 namespace clangd {
 
-struct MainFileMacros {
-  llvm::StringSet<> Names;
+struct MacroOccurrence {
   // Instead of storing SourceLocation, we have to store the token range because
   // SourceManager from preamble is not available when we build the AST.
-  llvm::DenseMap<SymbolID, std::vector<Range>> MacroRefs;
+  Range Rng;
+  bool IsDefinition;
+};
+
+struct MainFileMacros {
+  llvm::StringSet<> Names;
+  llvm::DenseMap<SymbolID, std::vector<MacroOccurrence>> MacroRefs;
   // Somtimes it is not possible to compute the SymbolID for the Macro, e.g. a
   // reference to an undefined macro. Store them separately, e.g. for semantic
   // highlighting.
-  std::vector<Range> UnknownMacros;
+  std::vector<MacroOccurrence> UnknownMacros;
   // Ranges skipped by the preprocessor due to being inactive.
   std::vector<Range> SkippedRanges;
 };
@@ -49,7 +52,7 @@ public:
   }
 
   void MacroDefined(const Token &MacroName, const MacroDirective *MD) override {
-    add(MacroName, MD->getMacroInfo());
+    add(MacroName, MD->getMacroInfo(), /*IsDefinition=*/true);
   }
 
   void MacroExpands(const Token &MacroName, const MacroDefinition &MD,
@@ -87,13 +90,26 @@ public:
   }
 
 private:
-  void add(const Token &MacroNameTok, const MacroInfo *MI);
+  void add(const Token &MacroNameTok, const MacroInfo *MI,
+           bool IsDefinition = false);
   const SourceManager &SM;
   bool InMainFile = true;
   MainFileMacros &Out;
 };
 
+/// Represents a `#pragma mark` in the main file.
+///
+/// There can be at most one pragma mark per line.
+struct PragmaMark {
+  Range Rng;
+  std::string Trivia;
+};
+
+/// Collect all pragma marks from the main file.
+std::unique_ptr<PPCallbacks>
+collectPragmaMarksCallback(const SourceManager &, std::vector<PragmaMark> &Out);
+
 } // namespace clangd
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANGD_COLLECTEDMACROS_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANGD_COLLECTMACROS_H

@@ -1,4 +1,5 @@
-; RUN: opt -S -loop-sink < %s | FileCheck %s
+; RUN: opt -S -verify-memoryssa -loop-sink < %s | FileCheck %s
+; RUN: opt -S -verify-memoryssa -aa-pipeline=basic-aa -passes=loop-sink < %s | FileCheck %s
 
 ; The load instruction should not be sunk into following loop.
 ; CHECK:      @foo

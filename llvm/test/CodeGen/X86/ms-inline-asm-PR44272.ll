@@ -1,14 +1,14 @@
 ; RUN: llc < %s -mtriple=i686-- | FileCheck %s
 ; RUN: llc < %s -mtriple=x86_64-- | FileCheck %s
 
-define void @func() {
+define dso_local void @func() {
 entry:
   ret void
 }
 
-define void @main() {
+define dso_local void @main() {
 entry:
-  call void asm sideeffect inteldialect "call ${0:P}", "*m,~{dirflag},~{fpsr},~{flags}"(void ()* @func)
+  call void asm sideeffect inteldialect "call ${0:P}", "*m,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(void ()) @func)
   ret void
 ; CHECK-LABEL: main:
 ; CHECK: {{## InlineAsm Start|#APP}}

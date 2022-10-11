@@ -211,7 +211,7 @@ define i64 @zext_i1_to_i64(i1 %a) nounwind {
 ; RV32I-LABEL: zext_i1_to_i64:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    andi a0, a0, 1
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
 ;
 ; RV64I-LABEL: zext_i1_to_i64:
@@ -254,7 +254,7 @@ define i64 @zext_i8_to_i64(i8 %a) nounwind {
 ; RV32I-LABEL: zext_i8_to_i64:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    andi a0, a0, 255
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
 ;
 ; RV64I-LABEL: zext_i8_to_i64:
@@ -268,16 +268,14 @@ define i64 @zext_i8_to_i64(i8 %a) nounwind {
 define i32 @zext_i16_to_i32(i16 %a) nounwind {
 ; RV32I-LABEL: zext_i16_to_i32:
 ; RV32I:       # %bb.0:
-; RV32I-NEXT:    lui a1, 16
-; RV32I-NEXT:    addi a1, a1, -1
-; RV32I-NEXT:    and a0, a0, a1
+; RV32I-NEXT:    slli a0, a0, 16
+; RV32I-NEXT:    srli a0, a0, 16
 ; RV32I-NEXT:    ret
 ;
 ; RV64I-LABEL: zext_i16_to_i32:
 ; RV64I:       # %bb.0:
-; RV64I-NEXT:    lui a1, 16
-; RV64I-NEXT:    addiw a1, a1, -1
-; RV64I-NEXT:    and a0, a0, a1
+; RV64I-NEXT:    slli a0, a0, 48
+; RV64I-NEXT:    srli a0, a0, 48
 ; RV64I-NEXT:    ret
   %1 = zext i16 %a to i32
   ret i32 %1
@@ -286,17 +284,15 @@ define i32 @zext_i16_to_i32(i16 %a) nounwind {
 define i64 @zext_i16_to_i64(i16 %a) nounwind {
 ; RV32I-LABEL: zext_i16_to_i64:
 ; RV32I:       # %bb.0:
-; RV32I-NEXT:    lui a1, 16
-; RV32I-NEXT:    addi a1, a1, -1
-; RV32I-NEXT:    and a0, a0, a1
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    slli a0, a0, 16
+; RV32I-NEXT:    srli a0, a0, 16
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
 ;
 ; RV64I-LABEL: zext_i16_to_i64:
 ; RV64I:       # %bb.0:
-; RV64I-NEXT:    lui a1, 16
-; RV64I-NEXT:    addiw a1, a1, -1
-; RV64I-NEXT:    and a0, a0, a1
+; RV64I-NEXT:    slli a0, a0, 48
+; RV64I-NEXT:    srli a0, a0, 48
 ; RV64I-NEXT:    ret
   %1 = zext i16 %a to i64
   ret i64 %1
@@ -305,7 +301,7 @@ define i64 @zext_i16_to_i64(i16 %a) nounwind {
 define i64 @zext_i32_to_i64(i32 %a) nounwind {
 ; RV32I-LABEL: zext_i32_to_i64:
 ; RV32I:       # %bb.0:
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
 ;
 ; RV64I-LABEL: zext_i32_to_i64:
@@ -435,4 +431,130 @@ define i32 @trunc_i64_to_i32(i64 %a) nounwind {
 ; RV64I-NEXT:    ret
   %1 = trunc i64 %a to i32
   ret i32 %1
+}
+
+;; fold (sext (not x)) -> (add (zext x) -1)
+define i32 @sext_of_not_i32(i1 %x) {
+; RV32I-LABEL: sext_of_not_i32:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    andi a0, a0, 1
+; RV32I-NEXT:    addi a0, a0, -1
+; RV32I-NEXT:    ret
+;
+; RV64I-LABEL: sext_of_not_i32:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    andi a0, a0, 1
+; RV64I-NEXT:    addi a0, a0, -1
+; RV64I-NEXT:    ret
+  %xor = xor i1 %x, 1
+  %sext = sext i1 %xor to i32
+  ret i32 %sext
+}
+
+define i64 @sext_of_not_i64(i1 %x) {
+; RV32I-LABEL: sext_of_not_i64:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    andi a1, a0, 1
+; RV32I-NEXT:    addi a0, a1, -1
+; RV32I-NEXT:    sltu a1, a0, a1
+; RV32I-NEXT:    addi a1, a1, -1
+; RV32I-NEXT:    ret
+;
+; RV64I-LABEL: sext_of_not_i64:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    andi a0, a0, 1
+; RV64I-NEXT:    addi a0, a0, -1
+; RV64I-NEXT:    ret
+  %xor = xor i1 %x, 1
+  %sext = sext i1 %xor to i64
+  ret i64 %sext
+}
+
+;; fold (sext (not (setcc a, b, cc))) -> (sext (setcc a, b, !cc))
+define i32 @sext_of_not_cmp_i32(i32 %x) {
+; RV32I-LABEL: sext_of_not_cmp_i32:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    addi a0, a0, -7
+; RV32I-NEXT:    seqz a0, a0
+; RV32I-NEXT:    addi a0, a0, -1
+; RV32I-NEXT:    ret
+;
+; RV64I-LABEL: sext_of_not_cmp_i32:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    sext.w a0, a0
+; RV64I-NEXT:    addi a0, a0, -7
+; RV64I-NEXT:    seqz a0, a0
+; RV64I-NEXT:    addi a0, a0, -1
+; RV64I-NEXT:    ret
+  %cmp = icmp eq i32 %x, 7
+  %xor = xor i1 %cmp, 1
+  %sext = sext i1 %xor to i32
+  ret i32 %sext
+}
+
+define i64 @sext_of_not_cmp_i64(i64 %x) {
+; RV32I-LABEL: sext_of_not_cmp_i64:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    xori a0, a0, 7
+; RV32I-NEXT:    or a0, a0, a1
+; RV32I-NEXT:    seqz a0, a0
+; RV32I-NEXT:    addi a0, a0, -1
+; RV32I-NEXT:    mv a1, a0
+; RV32I-NEXT:    ret
+;
+; RV64I-LABEL: sext_of_not_cmp_i64:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    addi a0, a0, -7
+; RV64I-NEXT:    seqz a0, a0
+; RV64I-NEXT:    addi a0, a0, -1
+; RV64I-NEXT:    ret
+  %cmp = icmp eq i64 %x, 7
+  %xor = xor i1 %cmp, 1
+  %sext = sext i1 %xor to i64
+  ret i64 %sext
+}
+
+;; TODO: fold (add (zext (setcc a, b, cc)), -1) -> (sext (setcc a, b, !cc))
+define i32 @dec_of_zexted_cmp_i32(i32 %x) {
+; RV32I-LABEL: dec_of_zexted_cmp_i32:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    addi a0, a0, -7
+; RV32I-NEXT:    seqz a0, a0
+; RV32I-NEXT:    addi a0, a0, -1
+; RV32I-NEXT:    ret
+;
+; RV64I-LABEL: dec_of_zexted_cmp_i32:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    sext.w a0, a0
+; RV64I-NEXT:    addi a0, a0, -7
+; RV64I-NEXT:    seqz a0, a0
+; RV64I-NEXT:    addi a0, a0, -1
+; RV64I-NEXT:    ret
+  %cmp = icmp eq i32 %x, 7
+  %zext = zext i1 %cmp to i32
+  %dec = sub i32 %zext, 1
+  ret i32 %dec
+}
+
+define i64 @dec_of_zexted_cmp_i64(i64 %x) {
+; RV32I-LABEL: dec_of_zexted_cmp_i64:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    xori a0, a0, 7
+; RV32I-NEXT:    or a0, a0, a1
+; RV32I-NEXT:    seqz a1, a0
+; RV32I-NEXT:    addi a0, a1, -1
+; RV32I-NEXT:    sltu a1, a0, a1
+; RV32I-NEXT:    addi a1, a1, -1
+; RV32I-NEXT:    ret
+;
+; RV64I-LABEL: dec_of_zexted_cmp_i64:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    addi a0, a0, -7
+; RV64I-NEXT:    seqz a0, a0
+; RV64I-NEXT:    addi a0, a0, -1
+; RV64I-NEXT:    ret
+  %cmp = icmp eq i64 %x, 7
+  %zext = zext i1 %cmp to i64
+  %dec = sub i64 %zext, 1
+  ret i64 %dec
 }

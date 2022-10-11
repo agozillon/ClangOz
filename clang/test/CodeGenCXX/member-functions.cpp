@@ -1,15 +1,15 @@
-// RUN: %clang_cc1 -emit-llvm -triple x86_64-apple-darwin9 -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -emit-llvm -triple x86_64-apple-darwin9 -o - %s | FileCheck %s
 
 struct C {
   void f();
   void g(int, ...);
 };
 
-// CHECK-LABEL: define void @_ZN1C1fEv
+// CHECK-LABEL: define{{.*}} void @_ZN1C1fEv
 void C::f() {
 }
 
-// CHECK-LABEL: define void @_Z5test1v
+// CHECK-LABEL: define{{.*}} void @_Z5test1v
 void test1() {
   C c;
 
@@ -34,7 +34,7 @@ struct S {
   virtual void v() {}
 };
 
-// CHECK-LABEL: define void @_ZN1S1fEv
+// CHECK-LABEL: define{{.*}} void @_ZN1S1fEv
 void S::f() {
 }
 
@@ -66,7 +66,7 @@ struct T {
   T operator+(const T&);
 };
 
-// CHECK-LABEL: define void @_Z5test3v
+// CHECK-LABEL: define{{.*}} void @_Z5test3v
 void test3() {
   T t1, t2;
 

@@ -12,8 +12,8 @@ struct This {
   int this1 : this1; // expected-error {{undeclared}}
   int this2 : this->this1; // expected-error {{invalid}}
   void this3() {
-    int n1[this->this1]; // expected-warning {{variable length array}}
-    int n2[this1]; // expected-warning {{variable length array}}
+    int n1[this->this1]; // expected-warning {{variable length array}} expected-note {{'this'}}
+    int n2[this1]; // expected-warning {{variable length array}} expected-note {{'this'}}
     (void)n1, (void)n2;
   }
 };
@@ -62,11 +62,11 @@ namespace NonConstExprReturn {
   constexpr const int *address_of(const int &a) {
     return &a;
   }
-  constexpr const int *return_param(int n) { // expected-note {{declared here}}
+  constexpr const int *return_param(int n) {
     return address_of(n);
   }
   struct S {
-    int n : *return_param(0); // expected-error {{constant expression}} expected-note {{read of variable whose lifetime has ended}}
+    int n : *return_param(0); // expected-error {{constant expression}} expected-note {{read of object outside its lifetime}}
   };
 }
 
@@ -162,9 +162,9 @@ namespace UndefinedBehavior {
   constexpr int shl_signed_ok = 1 << 30; // ok
   constexpr int shl_signed_into_sign = 1 << 31; // ok (DR1457)
   constexpr int shl_signed_into_sign_2 = 0x7fffffff << 1; // ok (DR1457)
-  constexpr int shl_signed_off_end = 2 << 31; // cxx11-error {{constant expression}} cxx11-note {{signed left shift discards bits}} expected-warning {{signed shift result (0x100000000) requires 34 bits to represent, but 'int' only has 32 bits}}
-  constexpr int shl_signed_off_end_2 = 0x7fffffff << 2; // cxx11-error {{constant expression}} cxx11-note {{signed left shift discards bits}} expected-warning {{signed shift result (0x1FFFFFFFC) requires 34 bits to represent, but 'int' only has 32 bits}}
-  constexpr int shl_signed_overflow = 1024 << 31; // cxx11-error {{constant expression}} cxx11-note {{signed left shift discards bits}} expected-warning {{requires 43 bits to represent}}
+  constexpr int shl_signed_off_end = 2 << 31; // cxx11-error {{constant expression}} cxx11-note {{signed left shift discards bits}} cxx11-warning {{signed shift result (0x100000000) requires 34 bits to represent, but 'int' only has 32 bits}}
+  constexpr int shl_signed_off_end_2 = 0x7fffffff << 2; // cxx11-error {{constant expression}} cxx11-note {{signed left shift discards bits}} cxx11-warning {{signed shift result (0x1FFFFFFFC) requires 34 bits to represent, but 'int' only has 32 bits}}
+  constexpr int shl_signed_overflow = 1024 << 31; // cxx11-error {{constant expression}} cxx11-note {{signed left shift discards bits}} cxx11-warning {{requires 43 bits to represent}}
   constexpr int shl_signed_ok2 = 1024 << 20; // ok
 
   constexpr int shr_m1 = 0 >> -1; // expected-error {{constant expression}} expected-note {{negative shift count -1}}
@@ -280,6 +280,16 @@ namespace UndefinedBehavior {
     constexpr float f10 = f2 - f2; // expected-error {{constant expression}} expected-note {{produces a NaN}}
     constexpr float f11 = f2 + f4; // expected-error {{constant expression}} expected-note {{produces a NaN}}
     constexpr float f12 = f2 / f2; // expected-error {{constant expression}} expected-note {{produces a NaN}}
+#pragma float_control(push)
+#pragma float_control(except, on)
+constexpr float pi = 3.14f;
+constexpr unsigned ubig = 0xFFFFFFFF;
+constexpr float ce = 1.0 / 3.0; // not-expected-error {{constant expression}} not-expected-note {{floating point arithmetic suppressed in strict evaluation modes}}
+constexpr int ci = (int) pi;
+constexpr float fbig = (float) ubig; // not-expected-error {{constant expression}} not-expected-note {{floating point arithmetic suppressed in strict evaluation modes}}
+constexpr float fabspi = __builtin_fabs(pi); // no error expected
+constexpr float negpi = -pi; // expect no error on unary operator
+#pragma float_control(pop)
     static_assert(!isinf(f1), "");
     static_assert(isinf(f2), "");
     static_assert(!isinf(f3), "");
@@ -427,13 +437,12 @@ namespace PseudoDtor {
     int n : (k.~I(), 1); // expected-error {{constant expression}} expected-note {{visible outside that expression}}
   };
 
-  // FIXME: It's unclear whether this should be accepted in C++20 mode. The parameter is destroyed twice here.
-  constexpr int f(int a = 1) { // cxx11-error {{constant expression}}
+  constexpr int f(int a = 1) { // cxx11-error {{constant expression}} expected-note {{destroying object 'a' whose lifetime has already ended}}
     return (
-        a.~I(), // cxx11-note 2{{pseudo-destructor}}
+        a.~I(), // cxx11-note {{pseudo-destructor}}
         0);
   }
-  static_assert(f() == 0, ""); // cxx11-error {{constant expression}} cxx11-note {{in call}}
+  static_assert(f() == 0, ""); // expected-error {{constant expression}}
 
   // This is OK in C++20: the union has no active member after the
   // pseudo-destructor call, so the union destructor has no effect.
@@ -465,7 +474,7 @@ namespace std {
 namespace TypeId {
   struct S { virtual void f(); };
   constexpr S *p = 0;
-  constexpr const std::type_info &ti1 = typeid(*p); // expected-error {{must be initialized by a constant expression}} cxx11-note {{typeid applied to expression of polymorphic type 'TypeId::S'}} cxx20-note {{dereferenced null pointer}}
+  constexpr const std::type_info &ti1 = typeid(*p); // expected-error {{must be initialized by a constant expression}} cxx11-note {{typeid applied to expression of polymorphic type 'S'}} cxx20-note {{dereferenced null pointer}}
 
   struct T {} t;
   constexpr const std::type_info &ti2 = typeid(t);
@@ -506,6 +515,7 @@ namespace UnspecifiedRelations {
 
   constexpr void (*pf)() = &f, (*pg)() = &g;
   constexpr bool u13 = pf < pg; // expected-error {{constant expression}} expected-note {{comparison has unspecified value}}
+                                // expected-warning@-1 {{ordered comparison of function pointers}}
   constexpr bool u14 = pf == pg;
 
   // If two pointers point to non-static data members of the same object with

@@ -7,7 +7,7 @@ add_llvm_component_library(LLVMVectorize
   VectorCombine.cpp
   VPlan.cpp
   VPlanHCFGBuilder.cpp
-  VPlanPredicator.cpp
+  VPlanRecipes.cpp
   VPlanSLP.cpp
   VPlanTransforms.cpp
   VPlanVerifier.cpp
@@ -18,4 +18,10 @@ add_llvm_component_library(LLVMVectorize
 
   DEPENDS
   intrinsics_gen
+
+  LINK_COMPONENTS
+  Analysis
+  Core
+  Support
+  TransformUtils
   )

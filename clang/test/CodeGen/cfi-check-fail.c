@@ -1,13 +1,13 @@
-// RUN: %clang_cc1 -triple x86_64-unknown-linux -O0 -fsanitize-cfi-cross-dso \
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-unknown-linux -O0 -fsanitize-cfi-cross-dso \
 // RUN:     -fsanitize=cfi-icall,cfi-nvcall,cfi-vcall,cfi-unrelated-cast,cfi-derived-cast \
 // RUN:     -fsanitize-trap=cfi-icall,cfi-nvcall -fsanitize-recover=cfi-vcall,cfi-unrelated-cast \
 // RUN:     -emit-llvm -o - %s | FileCheck %s
 
-void caller(void (*f)()) {
+void caller(void (*f)(void)) {
   f();
 }
 
-// CHECK: define weak_odr hidden void @__cfi_check_fail(i8* %0, i8* %1)
+// CHECK: define weak_odr hidden void @__cfi_check_fail(i8* noundef %0, i8* noundef %1)
 // CHECK: store i8* %0, i8** %[[ALLOCA0:.*]], align 8
 // CHECK: store i8* %1, i8** %[[ALLOCA1:.*]], align 8
 // CHECK: %[[DATA:.*]] = load i8*, i8** %[[ALLOCA0]], align 8
@@ -16,7 +16,7 @@ void caller(void (*f)()) {
 // CHECK: br i1 %[[ICMP_NOT_NULL]], label %[[CONT0:.*]], label %[[TRAP:.*]],
 
 // CHECK: [[TRAP]]:
-// CHECK-NEXT:   call void @llvm.trap()
+// CHECK-NEXT:   call void @llvm.ubsantrap(i8 2)
 // CHECK-NEXT:   unreachable
 
 // CHECK: [[CONT0]]:
@@ -39,7 +39,7 @@ void caller(void (*f)()) {
 // CHECK:   br i1 %[[NOT_1]], label %[[CONT2:.*]], label %[[HANDLE1:.*]], !nosanitize
 
 // CHECK: [[HANDLE1]]:
-// CHECK-NEXT:   call void @llvm.trap()
+// CHECK-NEXT:   call void @llvm.ubsantrap(i8 2)
 // CHECK-NEXT:   unreachable
 
 // CHECK: [[CONT2]]:
@@ -67,7 +67,7 @@ void caller(void (*f)()) {
 // CHECK:   br i1 %[[NOT_4]], label %[[CONT5:.*]], label %[[HANDLE4:.*]], !nosanitize
 
 // CHECK: [[HANDLE4]]:
-// CHECK-NEXT:   call void @llvm.trap()
+// CHECK-NEXT:   call void @llvm.ubsantrap(i8 2)
 // CHECK-NEXT:   unreachable
 
 // CHECK: [[CONT5]]:

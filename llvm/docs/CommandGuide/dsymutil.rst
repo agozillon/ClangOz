@@ -21,7 +21,7 @@ OPTIONS
 .. option:: --accelerator=<accelerator type>
 
  Specify the desired type of accelerator table. Valid options are 'Apple',
- 'Dwarf' and 'Default'.
+ 'Dwarf', 'Default' and 'None'.
 
 .. option:: --arch <arch>
 
@@ -35,7 +35,7 @@ OPTIONS
 .. option:: --dump-debug-map
 
  Dump the *executable*'s debug-map (the list of the object files containing the
- debug information) in YAML format and exit. Not DWARF link will take place.
+ debug information) in YAML format and exit. No DWARF link will take place.
 
 .. option:: --flat, -f
 
@@ -44,11 +44,17 @@ OPTIONS
 
 .. option:: --gen-reproducer
 
- Generate a reproducer consisting of the input object files.
+ Generate a reproducer consisting of the input object files. Alias for
+ --reproducer=GenerateOnExit.
 
 .. option:: --help, -h
 
  Print this help output.
+
+.. option:: --keep-function-for-static
+
+ Make a static variable keep the enclosing function even if it would have been
+ omitted otherwise.
 
 .. option:: --minimize, -z
 
@@ -105,13 +111,18 @@ OPTIONS
 
  Specify a directory to prepend the paths of the external remark files.
 
+.. option:: --reproducer <mode>
+
+ Specify the reproducer generation mode. Valid options are 'GenerateOnExit',
+ 'GenerateOnCrash', 'Use', 'Off'.
+
 .. option:: --statistics
 
  Print statistics about the contribution of each object file to the linked
  debug info. This prints a table after linking with the object file name, the
  size of the debug info in the object file (in bytes) and the size contributed
  (in bytes) to the linked dSYM. The table is sorted by the output size listing
- the obj ect files with the largest contribution first.
+ the object files with the largest contribution first.
 
 .. option:: --symbol-map <bcsymbolmap>
 
@@ -137,7 +148,8 @@ OPTIONS
 
 .. option:: --use-reproducer <path>
 
- Use the object files from the given reproducer path.
+ Use the object files from the given reproducer path. Alias for
+ --reproducer=Use.
 
 .. option:: --verbose
 

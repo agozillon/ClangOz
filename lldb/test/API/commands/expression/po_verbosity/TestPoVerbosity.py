@@ -12,8 +12,6 @@ from lldbsuite.test import lldbutil
 
 class PoVerbosityTestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
@@ -21,7 +19,7 @@ class PoVerbosityTestCase(TestBase):
         self.line = line_number('main.m',
                                 '// Stop here')
 
-    @skipUnlessDarwin
+    @add_test_categories(["objc"])
     def test(self):
         """Test that the po command acts correctly."""
         self.build()
@@ -42,6 +40,8 @@ class PoVerbosityTestCase(TestBase):
             self, "main.m", self.line, loc_exact=True)
 
         self.runCmd("run", RUN_SUCCEEDED)
+
+        self.runCmd("settings set target.prefer-dynamic-value no-dynamic-values")
 
         self.expect("expr -O -v -- foo",
                     substrs=['(id) $', ' = 0x', '1 = 2', '2 = 3;'])

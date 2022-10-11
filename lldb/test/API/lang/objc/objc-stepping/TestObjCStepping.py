@@ -1,8 +1,5 @@
 """Test stepping through ObjC method dispatch in various forms."""
 
-from __future__ import print_function
-
-
 import lldb
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
@@ -10,8 +7,6 @@ from lldbsuite.test import lldbutil
 
 
 class TestObjCStepping(TestBase):
-
-    mydir = TestBase.compute_mydir(__file__)
 
     def setUp(self):
         # Call super's setUp().
@@ -29,7 +24,6 @@ class TestObjCStepping(TestBase):
         self.stepped_past_nil_line = line_number(
             self.main_source, '// Step over nil should stop here.')
 
-    @skipUnlessDarwin
     @add_test_categories(['pyapi', 'basic_process'])
     def test_with_python_api(self):
         """Test stepping through ObjC method dispatch in various forms."""
@@ -215,6 +209,6 @@ class TestObjCStepping(TestBase):
 
         thread.StepInto()
         line_number = thread.GetFrameAtIndex(0).GetLineEntry().GetLine()
-        self.assertTrue(
-            line_number == self.stepped_past_nil_line,
+        self.assertEqual(
+            line_number, self.stepped_past_nil_line,
             "Step in over dispatch to nil stepped over.")

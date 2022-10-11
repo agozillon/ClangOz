@@ -7,7 +7,7 @@
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
 
-declare i32 @fn()
+declare dso_local i32 @fn()
 
 ; Function Attrs: uwtable
 define i32 @test1(i32 %v) {
@@ -20,7 +20,7 @@ define i32 @test1(i32 %v) {
 ; CHECK-NEXT:  # %bb.1: # %if.end
 ; CHECK-NEXT:    callq fn
 ; CHECK-NEXT:    #APP
-; CHECK-NEXT:    # jump to .Ltmp0
+; CHECK-NEXT:    # jump to .LBB0_4
 ; CHECK-NEXT:    #NO_APP
 ; CHECK-NEXT:  # %bb.2: # %return
 ; CHECK-NEXT:    movl $4, %eax
@@ -33,8 +33,9 @@ define i32 @test1(i32 %v) {
 ; CHECK-NEXT:    popq %rcx
 ; CHECK-NEXT:    .cfi_def_cfa_offset 8
 ; CHECK-NEXT:    retq
-; CHECK-NEXT:  .Ltmp0: # Block address taken
-; CHECK-NEXT:  .LBB0_4: # %two
+; CHECK-NEXT:  .LBB0_4: # Block address taken
+; CHECK-NEXT:    # %two
+; CHECK-NEXT:    # Label of block must be emitted
 ; CHECK-NEXT:    .cfi_def_cfa_offset 16
 ; CHECK-NEXT:    popq %rax
 ; CHECK-NEXT:    .cfi_def_cfa_offset 8
@@ -48,7 +49,7 @@ ret0:
 
 if.end:
   %call = tail call i32 @fn()
-  callbr void asm sideeffect "# jump to $0", "X,~{dirflag},~{fpsr},~{flags}"(i8* blockaddress(@test1, %two))
+  callbr void asm sideeffect "# jump to $0", "!i,~{dirflag},~{fpsr},~{flags}"()
           to label %return [label %two]
 
 two:

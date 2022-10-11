@@ -9,13 +9,11 @@
 #ifndef LLVM_DEBUGINFO_PDB_NATIVE_NATIVESESSION_H
 #define LLVM_DEBUGINFO_PDB_NATIVE_NATIVESESSION_H
 
-#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/IntervalMap.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/DebugInfo/CodeView/TypeIndex.h"
-#include "llvm/DebugInfo/PDB/IPDBRawSymbol.h"
 #include "llvm/DebugInfo/PDB/IPDBSession.h"
-#include "llvm/DebugInfo/PDB/Native/NativeRawSymbol.h"
 #include "llvm/DebugInfo/PDB/Native/SymbolCache.h"
+#include "llvm/DebugInfo/PDB/PDBTypes.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Error.h"
 
@@ -24,6 +22,12 @@ class MemoryBuffer;
 namespace pdb {
 class PDBFile;
 class NativeExeSymbol;
+class IPDBSourceFile;
+class ModuleDebugStreamRef;
+class PDBSymbol;
+class PDBSymbolCompiland;
+class PDBSymbolExe;
+template <typename ChildType> class IPDBEnumChildren;
 
 class NativeSession : public IPDBSession {
   struct PdbSearchOptions {
@@ -110,9 +114,14 @@ public:
   const SymbolCache &getSymbolCache() const { return Cache; }
   uint32_t getRVAFromSectOffset(uint32_t Section, uint32_t Offset) const;
   uint64_t getVAFromSectOffset(uint32_t Section, uint32_t Offset) const;
+  bool moduleIndexForVA(uint64_t VA, uint16_t &ModuleIndex) const;
+  bool moduleIndexForSectOffset(uint32_t Sect, uint32_t Offset,
+                                uint16_t &ModuleIndex) const;
+  Expected<ModuleDebugStreamRef> getModuleDebugStream(uint32_t Index) const;
 
 private:
   void initializeExeSymbol();
+  void parseSectionContribs();
 
   std::unique_ptr<PDBFile> Pdb;
   std::unique_ptr<BumpPtrAllocator> Allocator;
@@ -120,6 +129,12 @@ private:
   SymbolCache Cache;
   SymIndexId ExeSymbol = 0;
   uint64_t LoadAddress = 0;
+
+  /// Map from virtual address to module index.
+  using IMap =
+      IntervalMap<uint64_t, uint16_t, 8, IntervalMapHalfOpenInfo<uint64_t>>;
+  IMap::Allocator IMapAllocator;
+  IMap AddrToModuleIndex;
 };
 } // namespace pdb
 } // namespace llvm

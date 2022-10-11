@@ -17,72 +17,84 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/LocationSnapshot.h"
 #include "mlir/Transforms/ViewOpGraph.h"
-#include "mlir/Transforms/ViewRegionGraph.h"
+#include "llvm/Support/Debug.h"
 #include <limits>
 
 namespace mlir {
 
-class AffineForOp;
+class GreedyRewriteConfig;
 
 //===----------------------------------------------------------------------===//
 // Passes
 //===----------------------------------------------------------------------===//
 
-/// Creates an instance of the BufferPlacement pass.
-std::unique_ptr<Pass> createBufferPlacementPass();
+#define GEN_PASS_DECL_CANONICALIZER
+#define GEN_PASS_DECL_CONTROLFLOWSINK
+#define GEN_PASS_DECL_CSEPASS
+#define GEN_PASS_DECL_LOOPINVARIANTCODEMOTION
+#define GEN_PASS_DECL_STRIPDEBUGINFO
+#define GEN_PASS_DECL_PRINTOPSTATS
+#define GEN_PASS_DECL_INLINER
+#define GEN_PASS_DECL_SCCP
+#define GEN_PASS_DECL_SYMBOLDCE
+#define GEN_PASS_DECL_SYMBOLPRIVATIZE
+#define GEN_PASS_DECL_TOPOLOGICALSORT
+#include "mlir/Transforms/Passes.h.inc"
 
-/// Creates an instance of the Canonicalizer pass.
+/// Creates an instance of the Canonicalizer pass, configured with default
+/// settings (which can be overridden by pass options on the command line).
 std::unique_ptr<Pass> createCanonicalizerPass();
 
-/// Create a pass that removes unnecessary Copy operations.
-std::unique_ptr<Pass> createCopyRemovalPass();
+/// Creates an instance of the Canonicalizer pass with the specified config.
+/// `disabledPatterns` is a set of labels used to filter out input patterns with
+/// a debug label or debug name in this set. `enabledPatterns` is a set of
+/// labels used to filter out input patterns that do not have one of the labels
+/// in this set. Debug labels must be set explicitly on patterns or when adding
+/// them with `RewritePatternSet::addWithLabel`. Debug names may be empty, but
+/// patterns created with `RewritePattern::create` have their default debug name
+/// set to their type name.
+std::unique_ptr<Pass>
+createCanonicalizerPass(const GreedyRewriteConfig &config,
+                        ArrayRef<std::string> disabledPatterns = llvm::None,
+                        ArrayRef<std::string> enabledPatterns = llvm::None);
+
+/// Creates a pass to perform control-flow sinking.
+std::unique_ptr<Pass> createControlFlowSinkPass();
 
 /// Creates a pass to perform common sub expression elimination.
 std::unique_ptr<Pass> createCSEPass();
 
-/// Creates a loop fusion pass which fuses loops. Buffers of size less than or
-/// equal to `localBufSizeThreshold` are promoted to memory space
-/// `fastMemorySpace'.
-std::unique_ptr<OperationPass<FuncOp>>
-createLoopFusionPass(unsigned fastMemorySpace = 0,
-                     uint64_t localBufSizeThreshold = 0,
-                     bool maximalFusion = false);
-
 /// Creates a loop invariant code motion pass that hoists loop invariant
 /// instructions out of the loop.
 std::unique_ptr<Pass> createLoopInvariantCodeMotionPass();
-
-/// Creates a pass to pipeline explicit movement of data across levels of the
-/// memory hierarchy.
-std::unique_ptr<OperationPass<FuncOp>> createPipelineDataTransferPass();
-
-/// Lowers affine control flow operations (ForStmt, IfStmt and AffineApplyOp)
-/// to equivalent lower-level constructs (flow of basic blocks and arithmetic
-/// primitives).
-std::unique_ptr<Pass> createLowerAffinePass();
-
-/// Creates a pass that transforms perfectly nested loops with independent
-/// bounds into a single loop.
-std::unique_ptr<OperationPass<FuncOp>> createLoopCoalescingPass();
-
-/// Creates a pass that transforms a single ParallelLoop over N induction
-/// variables into another ParallelLoop over less than N induction variables.
-std::unique_ptr<Pass> createParallelLoopCollapsingPass();
-
-/// Creates a pass to perform optimizations relying on memref dataflow such as
-/// store to load forwarding, elimination of dead stores, and dead allocs.
-std::unique_ptr<OperationPass<FuncOp>> createMemRefDataFlowOptPass();
 
 /// Creates a pass to strip debug information from a function.
 std::unique_ptr<Pass> createStripDebugInfoPass();
 
 /// Creates a pass which prints the list of ops and the number of occurrences in
 /// the module.
-std::unique_ptr<OperationPass<ModuleOp>> createPrintOpStatsPass();
+std::unique_ptr<Pass> createPrintOpStatsPass(raw_ostream &os = llvm::errs());
+
+/// Creates a pass which prints the list of ops and the number of occurrences in
+/// the module with the output format option.
+std::unique_ptr<Pass> createPrintOpStatsPass(raw_ostream &os, bool printAsJSON);
 
 /// Creates a pass which inlines calls and callable operations as defined by
 /// the CallGraph.
 std::unique_ptr<Pass> createInlinerPass();
+/// Creates an instance of the inliner pass, and use the provided pass managers
+/// when optimizing callable operations with names matching the key type.
+/// Callable operations with a name not within the provided map will use the
+/// default inliner pipeline during optimization.
+std::unique_ptr<Pass>
+createInlinerPass(llvm::StringMap<OpPassManager> opPipelines);
+/// Creates an instance of the inliner pass, and use the provided pass managers
+/// when optimizing callable operations with names matching the key type.
+/// Callable operations with a name not within the provided map will use the
+/// provided default pipeline builder.
+std::unique_ptr<Pass>
+createInlinerPass(llvm::StringMap<OpPassManager> opPipelines,
+                  std::function<void(OpPassManager &)> defaultPipelineBuilder);
 
 /// Creates a pass which performs sparse conditional constant propagation over
 /// nested operations.
@@ -92,9 +104,15 @@ std::unique_ptr<Pass> createSCCPPass();
 /// pass may *only* be scheduled on an operation that defines a SymbolTable.
 std::unique_ptr<Pass> createSymbolDCEPass();
 
-/// Creates an interprocedural pass to normalize memrefs to have a trivial
-/// (identity) layout map.
-std::unique_ptr<OperationPass<ModuleOp>> createNormalizeMemRefsPass();
+/// Creates a pass which marks top-level symbol operations as `private` unless
+/// listed in `excludeSymbols`.
+std::unique_ptr<Pass>
+createSymbolPrivatizePass(ArrayRef<std::string> excludeSymbols = {});
+
+/// Creates a pass that recursively sorts nested regions without SSA dominance
+/// topologically such that, as much as possible, users of values appear after
+/// their producers.
+std::unique_ptr<Pass> createTopologicalSortPass();
 
 //===----------------------------------------------------------------------===//
 // Registration
@@ -104,6 +122,6 @@ std::unique_ptr<OperationPass<ModuleOp>> createNormalizeMemRefsPass();
 #define GEN_PASS_REGISTRATION
 #include "mlir/Transforms/Passes.h.inc"
 
-} // end namespace mlir
+} // namespace mlir
 
 #endif // MLIR_TRANSFORMS_PASSES_H

@@ -69,13 +69,8 @@ def SDTX86wrpkru : SDTypeProfile<0, 3, [SDTCisVT<0, i32>, SDTCisVT<1, i32>,
 
 def SDTX86cas : SDTypeProfile<0, 3, [SDTCisPtrTy<0>, SDTCisInt<1>,
                                      SDTCisVT<2, i8>]>;
-def SDTX86caspair : SDTypeProfile<0, 1, [SDTCisPtrTy<0>]>;
-def SDTX86caspairSaveEbx8 : SDTypeProfile<1, 3,
-                                          [SDTCisVT<0, i32>, SDTCisPtrTy<1>,
-                                          SDTCisVT<2, i32>, SDTCisVT<3, i32>]>;
-def SDTX86caspairSaveRbx16 : SDTypeProfile<1, 3,
-                                           [SDTCisVT<0, i64>, SDTCisPtrTy<1>,
-                                           SDTCisVT<2, i64>, SDTCisVT<3, i64>]>;
+def SDTX86cas8pair : SDTypeProfile<0, 1, [SDTCisPtrTy<0>]>;
+def SDTX86cas16pair : SDTypeProfile<0, 2, [SDTCisPtrTy<0>, SDTCisVT<1, i64>]>;
 
 def SDTLockBinaryArithWithFlags : SDTypeProfile<1, 2, [SDTCisVT<0, i32>,
                                                        SDTCisPtrTy<1>,
@@ -96,14 +91,13 @@ def SDT_X86Call   : SDTypeProfile<0, -1, [SDTCisVT<0, iPTR>]>;
 def SDT_X86NtBrind : SDTypeProfile<0, -1, [SDTCisVT<0, iPTR>]>;
 
 def SDT_X86VASTART_SAVE_XMM_REGS : SDTypeProfile<0, -1, [SDTCisVT<0, i8>,
-                                                         SDTCisVT<1, iPTR>,
-                                                         SDTCisVT<2, iPTR>]>;
+                                                         SDTCisPtrTy<1>]>;
 
-def SDT_X86VAARG_64 : SDTypeProfile<1, -1, [SDTCisPtrTy<0>,
-                                            SDTCisPtrTy<1>,
-                                            SDTCisVT<2, i32>,
-                                            SDTCisVT<3, i8>,
-                                            SDTCisVT<4, i32>]>;
+def SDT_X86VAARG : SDTypeProfile<1, -1, [SDTCisPtrTy<0>,
+                                         SDTCisPtrTy<1>,
+                                         SDTCisVT<2, i32>,
+                                         SDTCisVT<3, i8>,
+                                         SDTCisVT<4, i32>]>;
 
 def SDTX86RepStr  : SDTypeProfile<0, 1, [SDTCisVT<0, OtherVT>]>;
 
@@ -117,7 +111,7 @@ def SDT_X86TLSBASEADDR : SDTypeProfile<0, 1, [SDTCisInt<0>]>;
 
 def SDT_X86TLSCALL : SDTypeProfile<0, 1, [SDTCisInt<0>]>;
 
-def SDT_X86WIN_ALLOCA : SDTypeProfile<0, 1, [SDTCisVT<0, iPTR>]>;
+def SDT_X86DYN_ALLOCA : SDTypeProfile<0, 1, [SDTCisVT<0, iPTR>]>;
 
 def SDT_X86SEG_ALLOCA : SDTypeProfile<1, 1, [SDTCisVT<0, iPTR>, SDTCisVT<1, iPTR>]>;
 
@@ -131,6 +125,11 @@ def SDT_X86MEMBARRIER : SDTypeProfile<0, 0, []>;
 
 def SDT_X86ENQCMD : SDTypeProfile<1, 2, [SDTCisVT<0, i32>,
                                          SDTCisPtrTy<1>, SDTCisSameAs<1, 2>]>;
+
+def SDT_X86AESENCDECKL : SDTypeProfile<2, 2, [SDTCisVT<0, v2i64>,
+                                              SDTCisVT<1, i32>,
+                                              SDTCisVT<2, v2i64>,
+                                              SDTCisPtrTy<3>]>;
 
 def X86MemBarrier : SDNode<"X86ISD::MEMBARRIER", SDT_X86MEMBARRIER,
                             [SDNPHasChain,SDNPSideEffect]>;
@@ -169,20 +168,12 @@ def X86wrpkru : SDNode<"X86ISD::WRPKRU",    SDTX86wrpkru,
 def X86cas : SDNode<"X86ISD::LCMPXCHG_DAG", SDTX86cas,
                         [SDNPHasChain, SDNPInGlue, SDNPOutGlue, SDNPMayStore,
                          SDNPMayLoad, SDNPMemOperand]>;
-def X86cas8 : SDNode<"X86ISD::LCMPXCHG8_DAG", SDTX86caspair,
+def X86cas8 : SDNode<"X86ISD::LCMPXCHG8_DAG", SDTX86cas8pair,
                         [SDNPHasChain, SDNPInGlue, SDNPOutGlue, SDNPMayStore,
                          SDNPMayLoad, SDNPMemOperand]>;
-def X86cas16 : SDNode<"X86ISD::LCMPXCHG16_DAG", SDTX86caspair,
+def X86cas16 : SDNode<"X86ISD::LCMPXCHG16_DAG", SDTX86cas16pair,
                         [SDNPHasChain, SDNPInGlue, SDNPOutGlue, SDNPMayStore,
                          SDNPMayLoad, SDNPMemOperand]>;
-def X86cas8save_ebx : SDNode<"X86ISD::LCMPXCHG8_SAVE_EBX_DAG",
-                                SDTX86caspairSaveEbx8,
-                                [SDNPHasChain, SDNPInGlue, SDNPOutGlue,
-                                SDNPMayStore, SDNPMayLoad, SDNPMemOperand]>;
-def X86cas16save_rbx : SDNode<"X86ISD::LCMPXCHG16_SAVE_RBX_DAG",
-                                SDTX86caspairSaveRbx16,
-                                [SDNPHasChain, SDNPInGlue, SDNPOutGlue,
-                                SDNPMayStore, SDNPMayLoad, SDNPMemOperand]>;
 
 def X86retflag : SDNode<"X86ISD::RET_FLAG", SDTX86Ret,
                         [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
@@ -192,9 +183,13 @@ def X86iret : SDNode<"X86ISD::IRET", SDTX86Ret,
 def X86vastart_save_xmm_regs :
                  SDNode<"X86ISD::VASTART_SAVE_XMM_REGS",
                         SDT_X86VASTART_SAVE_XMM_REGS,
-                        [SDNPHasChain, SDNPVariadic]>;
+                        [SDNPHasChain, SDNPMayStore, SDNPMemOperand, SDNPVariadic]>;
 def X86vaarg64 :
-                 SDNode<"X86ISD::VAARG_64", SDT_X86VAARG_64,
+                 SDNode<"X86ISD::VAARG_64", SDT_X86VAARG,
+                        [SDNPHasChain, SDNPMayLoad, SDNPMayStore,
+                         SDNPMemOperand]>;
+def X86vaargx32 :
+                 SDNode<"X86ISD::VAARG_X32", SDT_X86VAARG,
                         [SDNPHasChain, SDNPMayLoad, SDNPMayStore,
                          SDNPMemOperand]>;
 def X86callseq_start :
@@ -207,6 +202,11 @@ def X86callseq_end :
 def X86call    : SDNode<"X86ISD::CALL",     SDT_X86Call,
                         [SDNPHasChain, SDNPOutGlue, SDNPOptInGlue,
                          SDNPVariadic]>;
+
+def X86call_rvmarker  : SDNode<"X86ISD::CALL_RVMARKER",     SDT_X86Call,
+                        [SDNPHasChain, SDNPOutGlue, SDNPOptInGlue,
+                         SDNPVariadic]>;
+
 
 def X86NoTrackCall : SDNode<"X86ISD::NT_CALL", SDT_X86Call,
                             [SDNPHasChain, SDNPOutGlue, SDNPOptInGlue,
@@ -284,6 +284,7 @@ def X86lock_and  : SDNode<"X86ISD::LAND",  SDTLockBinaryArithWithFlags,
                            SDNPMemOperand]>;
 
 def X86bextr  : SDNode<"X86ISD::BEXTR",  SDTIntBinOp>;
+def X86bextri : SDNode<"X86ISD::BEXTRI", SDTIntBinOp>;
 
 def X86bzhi   : SDNode<"X86ISD::BZHI",   SDTIntBinOp>;
 
@@ -292,7 +293,7 @@ def X86pext   : SDNode<"X86ISD::PEXT",   SDTIntBinOp>;
 
 def X86mul_imm : SDNode<"X86ISD::MUL_IMM", SDTIntBinOp>;
 
-def X86WinAlloca : SDNode<"X86ISD::WIN_ALLOCA", SDT_X86WIN_ALLOCA,
+def X86DynAlloca : SDNode<"X86ISD::DYN_ALLOCA", SDT_X86DYN_ALLOCA,
                           [SDNPHasChain, SDNPOutGlue]>;
 
 def X86SegAlloca : SDNode<"X86ISD::SEG_ALLOCA", SDT_X86SEG_ALLOCA,
@@ -323,6 +324,22 @@ def X86enqcmd : SDNode<"X86ISD::ENQCMD", SDT_X86ENQCMD,
                        [SDNPHasChain, SDNPSideEffect]>;
 def X86enqcmds : SDNode<"X86ISD::ENQCMDS", SDT_X86ENQCMD,
                        [SDNPHasChain, SDNPSideEffect]>;
+def X86testui : SDNode<"X86ISD::TESTUI",
+                       SDTypeProfile<1, 0, [SDTCisVT<0, i32>]>,
+                       [SDNPHasChain, SDNPSideEffect]>;
+
+def X86aesenc128kl : SDNode<"X86ISD::AESENC128KL", SDT_X86AESENCDECKL,
+                            [SDNPHasChain, SDNPMayLoad, SDNPSideEffect,
+                             SDNPMemOperand]>;
+def X86aesdec128kl : SDNode<"X86ISD::AESDEC128KL", SDT_X86AESENCDECKL,
+                            [SDNPHasChain, SDNPMayLoad, SDNPSideEffect,
+                             SDNPMemOperand]>;
+def X86aesenc256kl : SDNode<"X86ISD::AESENC256KL", SDT_X86AESENCDECKL,
+                            [SDNPHasChain, SDNPMayLoad, SDNPSideEffect,
+                             SDNPMemOperand]>;
+def X86aesdec256kl : SDNode<"X86ISD::AESDEC256KL", SDT_X86AESENCDECKL,
+                            [SDNPHasChain, SDNPMayLoad, SDNPSideEffect,
+                             SDNPMemOperand]>;
 
 //===----------------------------------------------------------------------===//
 // X86 Operand Definitions.
@@ -371,17 +388,19 @@ def X86AbsMemAsmOperand : AsmOperandClass {
 }
 
 class X86MemOperand<string printMethod,
-          AsmOperandClass parserMatchClass = X86MemAsmOperand> : Operand<iPTR> {
+                    AsmOperandClass parserMatchClass = X86MemAsmOperand,
+                    int size = 0> : Operand<iPTR> {
   let PrintMethod = printMethod;
   let MIOperandInfo = (ops ptr_rc, i8imm, ptr_rc_nosp, i32imm, SEGMENT_REG);
   let ParserMatchClass = parserMatchClass;
   let OperandType = "OPERAND_MEMORY";
+  int Size = size;
 }
 
 // Gather mem operands
 class X86VMemOperand<RegisterClass RC, string printMethod,
-                     AsmOperandClass parserMatchClass>
-    : X86MemOperand<printMethod, parserMatchClass> {
+                     AsmOperandClass parserMatchClass, int size = 0>
+    : X86MemOperand<printMethod, parserMatchClass, size> {
   let MIOperandInfo = (ops ptr_rc, i8imm, RC, i32imm, SEGMENT_REG);
 }
 
@@ -396,47 +415,45 @@ def opaquemem : X86MemOperand<"printMemReference">;
 
 def sibmem: X86MemOperand<"printMemReference", X86SibMemOperand>;
 
-def i8mem   : X86MemOperand<"printbytemem",   X86Mem8AsmOperand>;
-def i16mem  : X86MemOperand<"printwordmem",  X86Mem16AsmOperand>;
-def i32mem  : X86MemOperand<"printdwordmem",  X86Mem32AsmOperand>;
-def i64mem  : X86MemOperand<"printqwordmem",  X86Mem64AsmOperand>;
-def i128mem : X86MemOperand<"printxmmwordmem", X86Mem128AsmOperand>;
-def i256mem : X86MemOperand<"printymmwordmem", X86Mem256AsmOperand>;
-def i512mem : X86MemOperand<"printzmmwordmem", X86Mem512AsmOperand>;
-def f32mem  : X86MemOperand<"printdwordmem",  X86Mem32AsmOperand>;
-def f64mem  : X86MemOperand<"printqwordmem",  X86Mem64AsmOperand>;
-def f80mem  : X86MemOperand<"printtbytemem",  X86Mem80AsmOperand>;
-def f128mem : X86MemOperand<"printxmmwordmem", X86Mem128AsmOperand>;
-def f256mem : X86MemOperand<"printymmwordmem", X86Mem256AsmOperand>;
-def f512mem : X86MemOperand<"printzmmwordmem", X86Mem512AsmOperand>;
+def i8mem   : X86MemOperand<"printbytemem",   X86Mem8AsmOperand, 8>;
+def i16mem  : X86MemOperand<"printwordmem",  X86Mem16AsmOperand, 16>;
+def i32mem  : X86MemOperand<"printdwordmem",  X86Mem32AsmOperand, 32>;
+def i64mem  : X86MemOperand<"printqwordmem",  X86Mem64AsmOperand, 64>;
+def i128mem : X86MemOperand<"printxmmwordmem", X86Mem128AsmOperand, 128>;
+def i256mem : X86MemOperand<"printymmwordmem", X86Mem256AsmOperand, 256>;
+def i512mem : X86MemOperand<"printzmmwordmem", X86Mem512AsmOperand, 512>;
+def f16mem  : X86MemOperand<"printwordmem",   X86Mem16AsmOperand, 16>;
+def f32mem  : X86MemOperand<"printdwordmem",  X86Mem32AsmOperand, 32>;
+def f64mem  : X86MemOperand<"printqwordmem",  X86Mem64AsmOperand, 64>;
+def f80mem  : X86MemOperand<"printtbytemem",  X86Mem80AsmOperand, 80>;
+def f128mem : X86MemOperand<"printxmmwordmem", X86Mem128AsmOperand, 128>;
+def f256mem : X86MemOperand<"printymmwordmem", X86Mem256AsmOperand, 256>;
+def f512mem : X86MemOperand<"printzmmwordmem", X86Mem512AsmOperand, 512>;
 
 // Gather mem operands
-def vx64mem  : X86VMemOperand<VR128,  "printqwordmem",  X86Mem64_RC128Operand>;
-def vx128mem : X86VMemOperand<VR128,  "printxmmwordmem", X86Mem128_RC128Operand>;
-def vx256mem : X86VMemOperand<VR128,  "printymmwordmem", X86Mem256_RC128Operand>;
-def vy128mem : X86VMemOperand<VR256,  "printxmmwordmem", X86Mem128_RC256Operand>;
-def vy256mem : X86VMemOperand<VR256,  "printymmwordmem", X86Mem256_RC256Operand>;
+def vx64mem  : X86VMemOperand<VR128,  "printqwordmem",  X86Mem64_RC128Operand, 64>;
+def vx128mem : X86VMemOperand<VR128,  "printxmmwordmem", X86Mem128_RC128Operand, 128>;
+def vx256mem : X86VMemOperand<VR128,  "printymmwordmem", X86Mem256_RC128Operand, 256>;
+def vy128mem : X86VMemOperand<VR256,  "printxmmwordmem", X86Mem128_RC256Operand, 128>;
+def vy256mem : X86VMemOperand<VR256,  "printymmwordmem", X86Mem256_RC256Operand, 256>;
 
-def vx64xmem  : X86VMemOperand<VR128X, "printqwordmem",  X86Mem64_RC128XOperand>;
-def vx128xmem : X86VMemOperand<VR128X, "printxmmwordmem", X86Mem128_RC128XOperand>;
-def vx256xmem : X86VMemOperand<VR128X, "printymmwordmem", X86Mem256_RC128XOperand>;
-def vy128xmem : X86VMemOperand<VR256X, "printxmmwordmem", X86Mem128_RC256XOperand>;
-def vy256xmem : X86VMemOperand<VR256X, "printymmwordmem", X86Mem256_RC256XOperand>;
-def vy512xmem : X86VMemOperand<VR256X, "printzmmwordmem", X86Mem512_RC256XOperand>;
-def vz256mem  : X86VMemOperand<VR512,  "printymmwordmem", X86Mem256_RC512Operand>;
-def vz512mem  : X86VMemOperand<VR512,  "printzmmwordmem", X86Mem512_RC512Operand>;
+def vx64xmem  : X86VMemOperand<VR128X, "printqwordmem",  X86Mem64_RC128XOperand, 64>;
+def vx128xmem : X86VMemOperand<VR128X, "printxmmwordmem", X86Mem128_RC128XOperand, 128>;
+def vx256xmem : X86VMemOperand<VR128X, "printymmwordmem", X86Mem256_RC128XOperand, 256>;
+def vy128xmem : X86VMemOperand<VR256X, "printxmmwordmem", X86Mem128_RC256XOperand, 128>;
+def vy256xmem : X86VMemOperand<VR256X, "printymmwordmem", X86Mem256_RC256XOperand, 256>;
+def vy512xmem : X86VMemOperand<VR256X, "printzmmwordmem", X86Mem512_RC256XOperand, 512>;
+def vz256mem  : X86VMemOperand<VR512,  "printymmwordmem", X86Mem256_RC512Operand, 256>;
+def vz512mem  : X86VMemOperand<VR512,  "printzmmwordmem", X86Mem512_RC512Operand, 512>;
 
 // A version of i8mem for use on x86-64 and x32 that uses a NOREX GPR instead
 // of a plain GPR, so that it doesn't potentially require a REX prefix.
 def ptr_rc_norex : PointerLikeRegClass<2>;
 def ptr_rc_norex_nosp : PointerLikeRegClass<3>;
 
-def i8mem_NOREX : Operand<iPTR> {
-  let PrintMethod = "printbytemem";
+def i8mem_NOREX : X86MemOperand<"printbytemem", X86Mem8AsmOperand, 8> {
   let MIOperandInfo = (ops ptr_rc_norex, i8imm, ptr_rc_norex_nosp, i32imm,
                        SEGMENT_REG);
-  let ParserMatchClass = X86Mem8AsmOperand;
-  let OperandType = "OPERAND_MEMORY";
 }
 
 // GPRs available for tailcall.
@@ -446,23 +463,17 @@ def ptr_rc_tailcall : PointerLikeRegClass<4>;
 // Special i32mem for addresses of load folding tail calls. These are not
 // allowed to use callee-saved registers since they must be scheduled
 // after callee-saved register are popped.
-def i32mem_TC : Operand<i32> {
-  let PrintMethod = "printdwordmem";
+def i32mem_TC : X86MemOperand<"printdwordmem", X86Mem32AsmOperand, 32> {
   let MIOperandInfo = (ops ptr_rc_tailcall, i8imm, ptr_rc_tailcall,
                        i32imm, SEGMENT_REG);
-  let ParserMatchClass = X86Mem32AsmOperand;
-  let OperandType = "OPERAND_MEMORY";
 }
 
 // Special i64mem for addresses of load folding tail calls. These are not
 // allowed to use callee-saved registers since they must be scheduled
 // after callee-saved register are popped.
-def i64mem_TC : Operand<i64> {
-  let PrintMethod = "printqwordmem";
+def i64mem_TC : X86MemOperand<"printqwordmem", X86Mem64AsmOperand, 64> {
   let MIOperandInfo = (ops ptr_rc_tailcall, i8imm,
                        ptr_rc_tailcall, i32imm, SEGMENT_REG);
-  let ParserMatchClass = X86Mem64AsmOperand;
-  let OperandType = "OPERAND_MEMORY";
 }
 
 // Special parser to detect 16-bit mode to select 16-bit displacement.
@@ -822,11 +833,11 @@ def VK16Pair : RegisterOperand<VK16PAIR, "printVKPair"> {
 // Define X86-specific addressing mode.
 def addr      : ComplexPattern<iPTR, 5, "selectAddr", [], [SDNPWantParent]>;
 def lea32addr : ComplexPattern<i32, 5, "selectLEAAddr",
-                               [add, sub, mul, X86mul_imm, shl, or, frameindex],
+                               [add, sub, mul, X86mul_imm, shl, or, xor, frameindex],
                                []>;
 // In 64-bit mode 32-bit LEAs can use RIP-relative addressing.
 def lea64_32addr : ComplexPattern<i32, 5, "selectLEA64_32Addr",
-                                  [add, sub, mul, X86mul_imm, shl, or,
+                                  [add, sub, mul, X86mul_imm, shl, or, xor,
                                    frameindex, X86WrapperRIP],
                                   []>;
 
@@ -837,7 +848,7 @@ def tls32baseaddr : ComplexPattern<i32, 5, "selectTLSADDRAddr",
                                [tglobaltlsaddr], []>;
 
 def lea64addr : ComplexPattern<i64, 5, "selectLEAAddr",
-                        [add, sub, mul, X86mul_imm, shl, or, frameindex,
+                        [add, sub, mul, X86mul_imm, shl, or, xor, frameindex,
                          X86WrapperRIP], []>;
 
 def tls64addr : ComplexPattern<i64, 5, "selectTLSADDRAddr",
@@ -857,12 +868,12 @@ def relocImm : ComplexPattern<iAny, 1, "selectRelocImm",
 // X86 Instruction Predicate Definitions.
 def TruePredicate : Predicate<"true">;
 
-def HasCMov      : Predicate<"Subtarget->hasCMov()">;
-def NoCMov       : Predicate<"!Subtarget->hasCMov()">;
+def HasCMOV      : Predicate<"Subtarget->canUseCMOV()">;
+def NoCMOV       : Predicate<"!Subtarget->canUseCMOV()">;
 
 def HasMMX       : Predicate<"Subtarget->hasMMX()">;
-def Has3DNow     : Predicate<"Subtarget->has3DNow()">;
-def Has3DNowA    : Predicate<"Subtarget->has3DNowA()">;
+def Has3DNow     : Predicate<"Subtarget->hasThreeDNow()">;
+def Has3DNowA    : Predicate<"Subtarget->hasThreeDNowA()">;
 def HasSSE1      : Predicate<"Subtarget->hasSSE1()">;
 def UseSSE1      : Predicate<"Subtarget->hasSSE1() && !Subtarget->hasAVX()">;
 def HasSSE2      : Predicate<"Subtarget->hasSSE2()">;
@@ -901,6 +912,9 @@ def PKU        : Predicate<"Subtarget->hasPKU()">;
 def HasVNNI    : Predicate<"Subtarget->hasVNNI()">;
 def HasVP2INTERSECT : Predicate<"Subtarget->hasVP2INTERSECT()">;
 def HasBF16      : Predicate<"Subtarget->hasBF16()">;
+def HasFP16      : Predicate<"Subtarget->hasFP16()">;
+def HasAVXVNNI : Predicate <"Subtarget->hasAVXVNNI()">;
+def NoVLX_Or_NoVNNI : Predicate<"!Subtarget->hasVLX() || !Subtarget->hasVNNI()">;
 
 def HasBITALG    : Predicate<"Subtarget->hasBITALG()">;
 def HasPOPCNT    : Predicate<"Subtarget->hasPOPCNT()">;
@@ -958,37 +972,43 @@ def HasCLFLUSHOPT : Predicate<"Subtarget->hasCLFLUSHOPT()">;
 def HasCLWB      : Predicate<"Subtarget->hasCLWB()">;
 def HasWBNOINVD  : Predicate<"Subtarget->hasWBNOINVD()">;
 def HasRDPID     : Predicate<"Subtarget->hasRDPID()">;
+def HasRDPRU     : Predicate<"Subtarget->hasRDPRU()">;
 def HasWAITPKG   : Predicate<"Subtarget->hasWAITPKG()">;
 def HasINVPCID   : Predicate<"Subtarget->hasINVPCID()">;
-def HasCmpxchg8b : Predicate<"Subtarget->hasCmpxchg8b()">;
-def HasCmpxchg16b: Predicate<"Subtarget->hasCmpxchg16b()">;
+def HasCX8       : Predicate<"Subtarget->hasCX8()">;
+def HasCX16      : Predicate<"Subtarget->hasCX16()">;
 def HasPCONFIG   : Predicate<"Subtarget->hasPCONFIG()">;
 def HasENQCMD    : Predicate<"Subtarget->hasENQCMD()">;
+def HasKL        : Predicate<"Subtarget->hasKL()">;
+def HasWIDEKL    : Predicate<"Subtarget->hasWIDEKL()">;
+def HasHRESET    : Predicate<"Subtarget->hasHRESET()">;
 def HasSERIALIZE : Predicate<"Subtarget->hasSERIALIZE()">;
 def HasTSXLDTRK  : Predicate<"Subtarget->hasTSXLDTRK()">;
 def HasAMXTILE   : Predicate<"Subtarget->hasAMXTILE()">;
 def HasAMXBF16   : Predicate<"Subtarget->hasAMXBF16()">;
 def HasAMXINT8   : Predicate<"Subtarget->hasAMXINT8()">;
+def HasUINTR     : Predicate<"Subtarget->hasUINTR()">;
+def HasCRC32     : Predicate<"Subtarget->hasCRC32()">;
 def Not64BitMode : Predicate<"!Subtarget->is64Bit()">,
-                             AssemblerPredicate<(all_of (not Mode64Bit)), "Not 64-bit mode">;
+                             AssemblerPredicate<(all_of (not Is64Bit)), "Not 64-bit mode">;
 def In64BitMode  : Predicate<"Subtarget->is64Bit()">,
-                             AssemblerPredicate<(all_of Mode64Bit), "64-bit mode">;
+                             AssemblerPredicate<(all_of Is64Bit), "64-bit mode">;
 def IsLP64  : Predicate<"Subtarget->isTarget64BitLP64()">;
 def NotLP64 : Predicate<"!Subtarget->isTarget64BitLP64()">;
 def In16BitMode  : Predicate<"Subtarget->is16Bit()">,
-                             AssemblerPredicate<(all_of Mode16Bit), "16-bit mode">;
+                             AssemblerPredicate<(all_of Is16Bit), "16-bit mode">;
 def Not16BitMode : Predicate<"!Subtarget->is16Bit()">,
-                             AssemblerPredicate<(all_of (not Mode16Bit)), "Not 16-bit mode">;
+                             AssemblerPredicate<(all_of (not Is16Bit)), "Not 16-bit mode">;
 def In32BitMode  : Predicate<"Subtarget->is32Bit()">,
-                             AssemblerPredicate<(all_of Mode32Bit), "32-bit mode">;
+                             AssemblerPredicate<(all_of Is32Bit), "32-bit mode">;
 def IsWin64      : Predicate<"Subtarget->isTargetWin64()">;
 def NotWin64     : Predicate<"!Subtarget->isTargetWin64()">;
 def NotWin64WithoutFP : Predicate<"!Subtarget->isTargetWin64() ||"
                                   "Subtarget->getFrameLowering()->hasFP(*MF)"> {
   let RecomputePerFunction = 1;
 }
-def IsPS4        : Predicate<"Subtarget->isTargetPS4()">;
-def NotPS4       : Predicate<"!Subtarget->isTargetPS4()">;
+def IsPS         : Predicate<"Subtarget->isTargetPS()">;
+def NotPS        : Predicate<"!Subtarget->isTargetPS()">;
 def IsNaCl       : Predicate<"Subtarget->isTargetNaCl()">;
 def NotNaCl      : Predicate<"!Subtarget->isTargetNaCl()">;
 def SmallCode    : Predicate<"TM.getCodeModel() == CodeModel::Small">;
@@ -1016,6 +1036,7 @@ def HasFastMem32 : Predicate<"!Subtarget->isUnalignedMem32Slow()">;
 def HasFastLZCNT : Predicate<"Subtarget->hasFastLZCNT()">;
 def HasFastSHLDRotate : Predicate<"Subtarget->hasFastSHLDRotate()">;
 def HasERMSB : Predicate<"Subtarget->hasERMSB()">;
+def HasFSRM : Predicate<"Subtarget->hasFSRM()">;
 def HasMFence    : Predicate<"Subtarget->hasMFence()">;
 def UseIndirectThunkCalls : Predicate<"Subtarget->useIndirectThunkCalls()">;
 def NotUseIndirectThunkCalls : Predicate<"!Subtarget->useIndirectThunkCalls()">;
@@ -1053,6 +1074,7 @@ def i16immSExt8  : ImmLeaf<i16, [{ return isInt<8>(Imm); }]>;
 def i32immSExt8  : ImmLeaf<i32, [{ return isInt<8>(Imm); }]>;
 def i64immSExt8  : ImmLeaf<i64, [{ return isInt<8>(Imm); }]>;
 def i64immSExt32 : ImmLeaf<i64, [{ return isInt<32>(Imm); }]>;
+def i64timmSExt32 : TImmLeaf<i64, [{ return isInt<32>(Imm); }]>;
 
 def i16relocImmSExt8 : PatLeaf<(i16 relocImm), [{
   return isSExtAbsoluteSymbolRef(8, N);
@@ -1167,6 +1189,7 @@ def loadi32 : PatFrag<(ops node:$ptr), (i32 (unindexedload node:$ptr)), [{
 }]>;
 
 def loadi64  : PatFrag<(ops node:$ptr), (i64 (load node:$ptr))>;
+def loadf16  : PatFrag<(ops node:$ptr), (f16 (load node:$ptr))>;
 def loadf32  : PatFrag<(ops node:$ptr), (f32 (load node:$ptr))>;
 def loadf64  : PatFrag<(ops node:$ptr), (f64 (load node:$ptr))>;
 def loadf80  : PatFrag<(ops node:$ptr), (f80 (load node:$ptr))>;
@@ -2200,13 +2223,13 @@ def CMPXCHG64rm  : RI<0xB1, MRMDestMem, (outs), (ins i64mem:$dst, GR64:$src),
 
 let Defs = [EAX, EDX, EFLAGS], Uses = [EAX, EBX, ECX, EDX] in
 def CMPXCHG8B : I<0xC7, MRM1m, (outs), (ins i64mem:$dst),
-                  "cmpxchg8b\t$dst", []>, TB, Requires<[HasCmpxchg8b]>;
+                  "cmpxchg8b\t$dst", []>, TB, Requires<[HasCX8]>;
 
 let Defs = [RAX, RDX, EFLAGS], Uses = [RAX, RBX, RCX, RDX] in
 // NOTE: In64BitMode check needed for the AssemblerPredicate.
 def CMPXCHG16B : RI<0xC7, MRM1m, (outs), (ins i128mem:$dst),
                     "cmpxchg16b\t$dst", []>,
-                    TB, Requires<[HasCmpxchg16b,In64BitMode]>;
+                    TB, Requires<[HasCX16,In64BitMode]>;
 } // SchedRW, mayLoad, mayStore, hasSideEffects
 
 
@@ -2566,7 +2589,7 @@ let Predicates = [HasBMI], Defs = [EFLAGS] in {
 }
 
 multiclass bmi_bzhi<bits<8> opc, string mnemonic, RegisterClass RC,
-                    X86MemOperand x86memop, Intrinsic Int,
+                    X86MemOperand x86memop, SDNode Int,
                     PatFrag ld_frag, X86FoldableSchedWrite Sched> {
   def rr : I<opc, MRMSrcReg4VOp3, (outs RC:$dst), (ins RC:$src1, RC:$src2),
              !strconcat(mnemonic, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
@@ -2658,11 +2681,11 @@ let Predicates = [HasBMI2] in {
 //
 let Predicates = [HasTBM], Defs = [EFLAGS] in {
 
-multiclass tbm_ternary_imm<bits<8> opc, RegisterClass RC, string OpcodeStr,
-                           X86MemOperand x86memop, PatFrag ld_frag,
-                           SDNode OpNode, Operand immtype,
-                           SDPatternOperator immoperator,
-                           X86FoldableSchedWrite Sched> {
+multiclass tbm_bextri<bits<8> opc, RegisterClass RC, string OpcodeStr,
+                      X86MemOperand x86memop, PatFrag ld_frag,
+                      SDNode OpNode, Operand immtype,
+                      SDPatternOperator immoperator,
+                      X86FoldableSchedWrite Sched> {
   def ri : Ii32<opc,  MRMSrcReg, (outs RC:$dst), (ins RC:$src1, immtype:$cntl),
                 !strconcat(OpcodeStr,
                            "\t{$cntl, $src1, $dst|$dst, $src1, $cntl}"),
@@ -2676,12 +2699,12 @@ multiclass tbm_ternary_imm<bits<8> opc, RegisterClass RC, string OpcodeStr,
                 XOP, XOPA, Sched<[Sched.Folded]>;
 }
 
-defm BEXTRI32 : tbm_ternary_imm<0x10, GR32, "bextr{l}", i32mem, loadi32,
-                                X86bextr, i32imm, imm, WriteBEXTR>;
+defm BEXTRI32 : tbm_bextri<0x10, GR32, "bextr{l}", i32mem, loadi32,
+                           X86bextri, i32imm, timm, WriteBEXTR>;
 let ImmT = Imm32S in
-defm BEXTRI64 : tbm_ternary_imm<0x10, GR64, "bextr{q}", i64mem, loadi64,
-                                X86bextr, i64i32imm,
-                                i64immSExt32, WriteBEXTR>, VEX_W;
+defm BEXTRI64 : tbm_bextri<0x10, GR64, "bextr{q}", i64mem, loadi64,
+                           X86bextri, i64i32imm,
+                           i64timmSExt32, WriteBEXTR>, VEX_W;
 
 multiclass tbm_binary_rm<bits<8> opc, Format FormReg, Format FormMem,
                          RegisterClass RC, string OpcodeStr,
@@ -2787,8 +2810,7 @@ let SchedRW = [ WriteSystem ] in {
 
   let Uses = [ ECX, EAX, EBX ] in {
     def MWAITXrrr : I<0x01, MRM_FB, (outs), (ins), "mwaitx",
-                    [(int_x86_mwaitx ECX, EAX, EBX)]>,
-                    TB, Requires<[ HasMWAITX ]>;
+                    []>, TB, Requires<[ HasMWAITX ]>;
   }
 } // SchedRW
 
@@ -2823,7 +2845,7 @@ let SchedRW = [WriteSystem] in {
     def TPAUSE : I<0xAE, MRM6r,
                      (outs), (ins GR32orGR64:$src), "tpause\t$src",
                      [(set EFLAGS, (X86tpause GR32orGR64:$src, EDX, EAX))]>,
-                     PD, Requires<[HasWAITPKG]>, NotMemoryFoldable;
+                     PD, Requires<[HasWAITPKG]>;
   }
 } // SchedRW
 
@@ -2905,20 +2927,75 @@ def : InstAlias<"clzero\t{%eax|eax}", (CLZERO32r)>, Requires<[Not64BitMode]>;
 def : InstAlias<"clzero\t{%rax|rax}", (CLZERO64r)>, Requires<[In64BitMode]>;
 
 //===----------------------------------------------------------------------===//
+// INVLPGB Instruction
+// OPCODE 0F 01 FE
+//
+let SchedRW = [WriteSystem] in {
+  let Uses = [EAX, EDX] in
+  def INVLPGB32 : I<0x01, MRM_FE, (outs), (ins),
+                  "invlpgb", []>,
+                  PS, Requires<[Not64BitMode]>;
+  let Uses = [RAX, EDX] in
+  def INVLPGB64 : I<0x01, MRM_FE, (outs), (ins),
+                  "invlpgb", []>,
+                  PS, Requires<[In64BitMode]>;
+} // SchedRW
+
+def : InstAlias<"invlpgb\t{%eax, %edx|eax, edx}", (INVLPGB32)>, Requires<[Not64BitMode]>;
+def : InstAlias<"invlpgb\t{%rax, %edx|rax, edx}", (INVLPGB64)>, Requires<[In64BitMode]>;
+
+//===----------------------------------------------------------------------===//
+// TLBSYNC Instruction
+// OPCODE 0F 01 FF
+//
+let SchedRW = [WriteSystem] in {
+  def TLBSYNC   : I<0x01, MRM_FF, (outs), (ins),
+                  "tlbsync", []>,
+                  PS, Requires<[]>;
+} // SchedRW
+
+//===----------------------------------------------------------------------===//
+// HRESET Instruction
+//
+let Uses = [EAX], SchedRW = [WriteSystem] in
+  def HRESET : Ii8<0xF0, MRM_C0, (outs), (ins i32u8imm:$imm), "hreset\t$imm", []>,
+                   Requires<[HasHRESET]>, TAXS;
+
+//===----------------------------------------------------------------------===//
 // SERIALIZE Instruction
 //
-def SERIALIZE : I<0x01, MRM_E8, (outs), (ins), "serialize",
-                  [(int_x86_serialize)]>, PS,
-                  Requires<[HasSERIALIZE]>;
+let SchedRW = [WriteSystem] in
+  def SERIALIZE : I<0x01, MRM_E8, (outs), (ins), "serialize",
+                    [(int_x86_serialize)]>, PS,
+                    Requires<[HasSERIALIZE]>;
 
 //===----------------------------------------------------------------------===//
 // TSXLDTRK - TSX Suspend Load Address Tracking
 //
-let Predicates = [HasTSXLDTRK] in {
+let Predicates = [HasTSXLDTRK], SchedRW = [WriteSystem] in {
   def XSUSLDTRK : I<0x01, MRM_E8, (outs), (ins), "xsusldtrk",
                     [(int_x86_xsusldtrk)]>, XD;
   def XRESLDTRK : I<0x01, MRM_E9, (outs), (ins), "xresldtrk",
                     [(int_x86_xresldtrk)]>, XD;
+}
+
+//===----------------------------------------------------------------------===//
+// UINTR Instructions
+//
+let Predicates = [HasUINTR, In64BitMode], SchedRW = [WriteSystem] in {
+  def UIRET : I<0x01, MRM_EC, (outs), (ins), "uiret",
+               []>, XS;
+  def CLUI : I<0x01, MRM_EE, (outs), (ins), "clui",
+               [(int_x86_clui)]>, XS;
+  def STUI : I<0x01, MRM_EF, (outs), (ins), "stui",
+               [(int_x86_stui)]>, XS;
+
+  def SENDUIPI : I<0xC7, MRM6r, (outs), (ins GR64:$arg), "senduipi\t$arg",
+                   [(int_x86_senduipi GR64:$arg)]>, XS;
+
+  let Defs = [EFLAGS] in
+    def TESTUI : I<0x01, MRM_ED, (outs), (ins), "testui",
+                   [(set EFLAGS, (X86testui))]>, XS;
 }
 
 //===----------------------------------------------------------------------===//
@@ -3041,7 +3118,7 @@ def CLFLUSHOPT : I<0xAE, MRM7m, (outs), (ins i8mem:$src),
 
 let Predicates = [HasCLWB], SchedRW = [WriteLoad] in
 def CLWB       : I<0xAE, MRM6m, (outs), (ins i8mem:$src), "clwb\t$src",
-                   [(int_x86_clwb addr:$src)]>, PD, NotMemoryFoldable;
+                   [(int_x86_clwb addr:$src)]>, PD;
 
 let Predicates = [HasCLDEMOTE], SchedRW = [WriteLoad] in
 def CLDEMOTE : I<0x1C, MRM0m, (outs), (ins i8mem:$src), "cldemote\t$src",
@@ -3075,14 +3152,17 @@ include "X86InstrAVX512.td"
 include "X86InstrMMX.td"
 include "X86Instr3DNow.td"
 
-// MPX instructions
-include "X86InstrMPX.td"
-
 include "X86InstrVMX.td"
 include "X86InstrSVM.td"
+include "X86InstrSNP.td"
 
 include "X86InstrTSX.td"
 include "X86InstrSGX.td"
+
+include "X86InstrTDX.td"
+
+// Key Locker instructions
+include "X86InstrKL.td"
 
 // AMX instructions
 include "X86InstrAMX.td"

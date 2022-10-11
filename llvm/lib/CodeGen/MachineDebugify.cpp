@@ -14,15 +14,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
-#include "llvm/IR/DIBuilder.h"
-#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Transforms/Utils/Debugify.h"
@@ -89,10 +87,11 @@ bool applyDebugifyMetadataToMachineFunction(MachineModuleInfo &MMI,
   // Do this by introducing debug uses of each register definition. If that is
   // not possible (e.g. we have a phi or a meta instruction), emit a constant.
   uint64_t NextImm = 0;
+  SmallSet<DILocalVariable *, 16> VarSet;
   const MCInstrDesc &DbgValDesc = TII.get(TargetOpcode::DBG_VALUE);
   for (MachineBasicBlock &MBB : MF) {
     MachineBasicBlock::iterator FirstNonPHIIt = MBB.getFirstNonPHI();
-    for (auto I = MBB.begin(), E = MBB.end(); I != E; ) {
+    for (auto I = MBB.begin(), E = MBB.end(); I != E;) {
       MachineInstr &MI = *I;
       ++I;
 
@@ -113,6 +112,7 @@ bool applyDebugifyMetadataToMachineFunction(MachineModuleInfo &MMI,
         Line = EarliestDVI->getDebugLoc().getLine();
       DILocalVariable *LocalVar = Line2Var[Line];
       assert(LocalVar && "No variable for current line?");
+      VarSet.insert(LocalVar);
 
       // Emit DBG_VALUEs for register definitions.
       SmallVector<MachineOperand *, 4> RegDefs;
@@ -130,6 +130,33 @@ bool applyDebugifyMetadataToMachineFunction(MachineModuleInfo &MMI,
                 /*IsIndirect=*/false, ImmOp, LocalVar, Expr);
       }
     }
+  }
+
+  // Here we save the number of lines and variables into "llvm.mir.debugify".
+  // It is useful for mir-check-debugify.
+  NamedMDNode *NMD = M.getNamedMetadata("llvm.mir.debugify");
+  IntegerType *Int32Ty = Type::getInt32Ty(Ctx);
+  if (!NMD) {
+    NMD = M.getOrInsertNamedMetadata("llvm.mir.debugify");
+    auto addDebugifyOperand = [&](unsigned N) {
+      NMD->addOperand(MDNode::get(
+          Ctx, ValueAsMetadata::getConstant(ConstantInt::get(Int32Ty, N))));
+    };
+    // Add number of lines.
+    addDebugifyOperand(NextLine - 1);
+    // Add number of variables.
+    addDebugifyOperand(VarSet.size());
+  } else {
+    assert(NMD->getNumOperands() == 2 &&
+           "llvm.mir.debugify should have exactly 2 operands!");
+    auto setDebugifyOperand = [&](unsigned Idx, unsigned N) {
+      NMD->setOperand(Idx, MDNode::get(Ctx, ValueAsMetadata::getConstant(
+                                                ConstantInt::get(Int32Ty, N))));
+    };
+    // Set number of lines.
+    setDebugifyOperand(0, NextLine - 1);
+    // Set number of variables.
+    setDebugifyOperand(1, VarSet.size());
   }
 
   return true;

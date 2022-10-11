@@ -12,53 +12,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPU.h"
-#include "AMDGPUSubtarget.h"
+#include "GCNSubtarget.h"
 #include "Utils/AMDGPUBaseInfo.h"
-#include "llvm/ADT/APInt.h"
-#include "llvm/ADT/None.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/Triple.h"
-#include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/CaptureTracking.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
-#include "llvm/IR/Attributes.h"
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Constant.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DataLayout.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/GlobalValue.h"
-#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Instruction.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsR600.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Metadata.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Type.h"
-#include "llvm/IR/User.h"
-#include "llvm/IR/Value.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/Debug.h"
-#include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MathExtras.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
-#include <algorithm>
-#include <cassert>
-#include <cstdint>
-#include <map>
-#include <tuple>
-#include <utility>
-#include <vector>
 
 #define DEBUG_TYPE "amdgpu-promote-alloca"
 
@@ -83,8 +47,26 @@ static cl::opt<unsigned> PromoteAllocaToVectorLimit(
 
 // FIXME: This can create globals so should be a module pass.
 class AMDGPUPromoteAlloca : public FunctionPass {
+public:
+  static char ID;
+
+  AMDGPUPromoteAlloca() : FunctionPass(ID) {}
+
+  bool runOnFunction(Function &F) override;
+
+  StringRef getPassName() const override { return "AMDGPU Promote Alloca"; }
+
+  bool handleAlloca(AllocaInst &I, bool SufficientLDS);
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.setPreservesCFG();
+    FunctionPass::getAnalysisUsage(AU);
+  }
+};
+
+class AMDGPUPromoteAllocaImpl {
 private:
-  const TargetMachine *TM;
+  const TargetMachine &TM;
   Module *Mod = nullptr;
   const DataLayout *DL = nullptr;
 
@@ -116,28 +98,14 @@ private:
   /// Check whether we have enough local memory for promotion.
   bool hasSufficientLocalMem(const Function &F);
 
-public:
-  static char ID;
-
-  AMDGPUPromoteAlloca() : FunctionPass(ID) {}
-
-  bool doInitialization(Module &M) override;
-  bool runOnFunction(Function &F) override;
-
-  StringRef getPassName() const override { return "AMDGPU Promote Alloca"; }
-
   bool handleAlloca(AllocaInst &I, bool SufficientLDS);
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.setPreservesCFG();
-    FunctionPass::getAnalysisUsage(AU);
-  }
+public:
+  AMDGPUPromoteAllocaImpl(TargetMachine &TM) : TM(TM) {}
+  bool run(Function &F);
 };
 
 class AMDGPUPromoteAllocaToVector : public FunctionPass {
-private:
-  unsigned MaxVGPRs;
-
 public:
   static char ID;
 
@@ -148,8 +116,6 @@ public:
   StringRef getPassName() const override {
     return "AMDGPU Promote Alloca to vector";
   }
-
-  bool handleAlloca(AllocaInst &I);
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
@@ -162,8 +128,13 @@ public:
 char AMDGPUPromoteAlloca::ID = 0;
 char AMDGPUPromoteAllocaToVector::ID = 0;
 
-INITIALIZE_PASS(AMDGPUPromoteAlloca, DEBUG_TYPE,
-                "AMDGPU promote alloca to vector or LDS", false, false)
+INITIALIZE_PASS_BEGIN(AMDGPUPromoteAlloca, DEBUG_TYPE,
+                      "AMDGPU promote alloca to vector or LDS", false, false)
+// Move LDS uses from functions to kernels before promote alloca for accurate
+// estimation of LDS available
+INITIALIZE_PASS_DEPENDENCY(AMDGPULowerModuleLDS)
+INITIALIZE_PASS_END(AMDGPUPromoteAlloca, DEBUG_TYPE,
+                    "AMDGPU promote alloca to vector or LDS", false, false)
 
 INITIALIZE_PASS(AMDGPUPromoteAllocaToVector, DEBUG_TYPE "-to-vector",
                 "AMDGPU promote alloca to vector", false, false)
@@ -171,33 +142,46 @@ INITIALIZE_PASS(AMDGPUPromoteAllocaToVector, DEBUG_TYPE "-to-vector",
 char &llvm::AMDGPUPromoteAllocaID = AMDGPUPromoteAlloca::ID;
 char &llvm::AMDGPUPromoteAllocaToVectorID = AMDGPUPromoteAllocaToVector::ID;
 
-bool AMDGPUPromoteAlloca::doInitialization(Module &M) {
-  Mod = &M;
-  DL = &Mod->getDataLayout();
-
-  return false;
-}
-
 bool AMDGPUPromoteAlloca::runOnFunction(Function &F) {
   if (skipFunction(F))
     return false;
 
-  if (auto *TPC = getAnalysisIfAvailable<TargetPassConfig>())
-    TM = &TPC->getTM<TargetMachine>();
-  else
-    return false;
+  if (auto *TPC = getAnalysisIfAvailable<TargetPassConfig>()) {
+    return AMDGPUPromoteAllocaImpl(TPC->getTM<TargetMachine>()).run(F);
+  }
+  return false;
+}
 
-  const Triple &TT = TM->getTargetTriple();
+PreservedAnalyses AMDGPUPromoteAllocaPass::run(Function &F,
+                                               FunctionAnalysisManager &AM) {
+  bool Changed = AMDGPUPromoteAllocaImpl(TM).run(F);
+  if (Changed) {
+    PreservedAnalyses PA;
+    PA.preserveSet<CFGAnalyses>();
+    return PA;
+  }
+  return PreservedAnalyses::all();
+}
+
+bool AMDGPUPromoteAllocaImpl::run(Function &F) {
+  Mod = F.getParent();
+  DL = &Mod->getDataLayout();
+
+  const Triple &TT = TM.getTargetTriple();
   IsAMDGCN = TT.getArch() == Triple::amdgcn;
   IsAMDHSA = TT.getOS() == Triple::AMDHSA;
 
-  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(*TM, F);
+  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(TM, F);
   if (!ST.isPromoteAllocaEnabled())
     return false;
 
   if (IsAMDGCN) {
-    const GCNSubtarget &ST = TM->getSubtarget<GCNSubtarget>(F);
+    const GCNSubtarget &ST = TM.getSubtarget<GCNSubtarget>(F);
     MaxVGPRs = ST.getMaxNumVGPRs(ST.getWavesPerEU(F).first);
+    // A non-entry function has only 32 caller preserved registers.
+    // Do not promote alloca which will force spilling.
+    if (!AMDGPU::isEntryFunctionCC(F.getCallingConv()))
+      MaxVGPRs = std::min(MaxVGPRs, 32u);
   } else {
     MaxVGPRs = 128;
   }
@@ -221,9 +205,9 @@ bool AMDGPUPromoteAlloca::runOnFunction(Function &F) {
 }
 
 std::pair<Value *, Value *>
-AMDGPUPromoteAlloca::getLocalSizeYZ(IRBuilder<> &Builder) {
-  const Function &F = *Builder.GetInsertBlock()->getParent();
-  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(*TM, F);
+AMDGPUPromoteAllocaImpl::getLocalSizeYZ(IRBuilder<> &Builder) {
+  Function &F = *Builder.GetInsertBlock()->getParent();
+  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(TM, F);
 
   if (!IsAMDHSA) {
     Function *LocalSizeYFn
@@ -278,11 +262,12 @@ AMDGPUPromoteAlloca::getLocalSizeYZ(IRBuilder<> &Builder) {
     = Intrinsic::getDeclaration(Mod, Intrinsic::amdgcn_dispatch_ptr);
 
   CallInst *DispatchPtr = Builder.CreateCall(DispatchPtrFn, {});
-  DispatchPtr->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
-  DispatchPtr->addAttribute(AttributeList::ReturnIndex, Attribute::NonNull);
+  DispatchPtr->addRetAttr(Attribute::NoAlias);
+  DispatchPtr->addRetAttr(Attribute::NonNull);
+  F.removeFnAttr("amdgpu-no-dispatch-ptr");
 
   // Size of the dispatch packet struct.
-  DispatchPtr->addDereferenceableAttr(AttributeList::ReturnIndex, 64);
+  DispatchPtr->addDereferenceableRetAttr(64);
 
   Type *I32Ty = Type::getInt32Ty(Mod->getContext());
   Value *CastDispatchPtr = Builder.CreateBitCast(
@@ -290,7 +275,7 @@ AMDGPUPromoteAlloca::getLocalSizeYZ(IRBuilder<> &Builder) {
 
   // We could do a single 64-bit load here, but it's likely that the basic
   // 32-bit and extract sequence is already present, and it is probably easier
-  // to CSE this. The loads should be mergable later anyway.
+  // to CSE this. The loads should be mergeable later anyway.
   Value *GEPXY = Builder.CreateConstInBoundsGEP1_64(I32Ty, CastDispatchPtr, 1);
   LoadInst *LoadXY = Builder.CreateAlignedLoad(I32Ty, GEPXY, Align(4));
 
@@ -308,24 +293,29 @@ AMDGPUPromoteAlloca::getLocalSizeYZ(IRBuilder<> &Builder) {
   return std::make_pair(Y, LoadZU);
 }
 
-Value *AMDGPUPromoteAlloca::getWorkitemID(IRBuilder<> &Builder, unsigned N) {
-  const AMDGPUSubtarget &ST =
-      AMDGPUSubtarget::get(*TM, *Builder.GetInsertBlock()->getParent());
+Value *AMDGPUPromoteAllocaImpl::getWorkitemID(IRBuilder<> &Builder,
+                                              unsigned N) {
+  Function *F = Builder.GetInsertBlock()->getParent();
+  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(TM, *F);
   Intrinsic::ID IntrID = Intrinsic::not_intrinsic;
+  StringRef AttrName;
 
   switch (N) {
   case 0:
     IntrID = IsAMDGCN ? (Intrinsic::ID)Intrinsic::amdgcn_workitem_id_x
                       : (Intrinsic::ID)Intrinsic::r600_read_tidig_x;
+    AttrName = "amdgpu-no-workitem-id-x";
     break;
   case 1:
     IntrID = IsAMDGCN ? (Intrinsic::ID)Intrinsic::amdgcn_workitem_id_y
                       : (Intrinsic::ID)Intrinsic::r600_read_tidig_y;
+    AttrName = "amdgpu-no-workitem-id-y";
     break;
 
   case 2:
     IntrID = IsAMDGCN ? (Intrinsic::ID)Intrinsic::amdgcn_workitem_id_z
                       : (Intrinsic::ID)Intrinsic::r600_read_tidig_z;
+    AttrName = "amdgpu-no-workitem-id-z";
     break;
   default:
     llvm_unreachable("invalid dimension");
@@ -334,6 +324,7 @@ Value *AMDGPUPromoteAlloca::getWorkitemID(IRBuilder<> &Builder, unsigned N) {
   Function *WorkitemIdFn = Intrinsic::getDeclaration(Mod, IntrID);
   CallInst *CI = Builder.CreateCall(WorkitemIdFn);
   ST.makeLIDRangeMetadata(CI);
+  F->removeFnAttr(AttrName);
 
   return CI;
 }
@@ -343,86 +334,49 @@ static FixedVectorType *arrayTypeToVecType(ArrayType *ArrayTy) {
                               ArrayTy->getNumElements());
 }
 
-static Value *stripBitcasts(Value *V) {
-  while (Instruction *I = dyn_cast<Instruction>(V)) {
-    if (I->getOpcode() != Instruction::BitCast)
-      break;
-    V = I->getOperand(0);
-  }
-  return V;
-}
-
 static Value *
 calculateVectorIndex(Value *Ptr,
                      const std::map<GetElementPtrInst *, Value *> &GEPIdx) {
-  GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(stripBitcasts(Ptr));
+  auto *GEP = dyn_cast<GetElementPtrInst>(Ptr->stripPointerCasts());
   if (!GEP)
-    return nullptr;
+    return ConstantInt::getNullValue(Type::getInt32Ty(Ptr->getContext()));
 
   auto I = GEPIdx.find(GEP);
-  return I == GEPIdx.end() ? nullptr : I->second;
+  assert(I != GEPIdx.end() && "Must have entry for GEP!");
+  return I->second;
 }
 
-static Value* GEPToVectorIndex(GetElementPtrInst *GEP) {
-  // FIXME we only support simple cases
-  if (GEP->getNumOperands() != 3)
+static Value *GEPToVectorIndex(GetElementPtrInst *GEP, AllocaInst *Alloca,
+                               Type *VecElemTy, const DataLayout &DL) {
+  // TODO: Extracting a "multiple of X" from a GEP might be a useful generic
+  // helper.
+  unsigned BW = DL.getIndexTypeSizeInBits(GEP->getType());
+  MapVector<Value *, APInt> VarOffsets;
+  APInt ConstOffset(BW, 0);
+  if (GEP->getPointerOperand()->stripPointerCasts() != Alloca ||
+      !GEP->collectOffset(DL, BW, VarOffsets, ConstOffset))
     return nullptr;
 
-  ConstantInt *I0 = dyn_cast<ConstantInt>(GEP->getOperand(1));
-  if (!I0 || !I0->isZero())
+  unsigned VecElemSize = DL.getTypeAllocSize(VecElemTy);
+  if (VarOffsets.size() > 1)
     return nullptr;
 
-  return GEP->getOperand(2);
-}
-
-// Not an instruction handled below to turn into a vector.
-//
-// TODO: Check isTriviallyVectorizable for calls and handle other
-// instructions.
-static bool canVectorizeInst(Instruction *Inst, User *User,
-                             const DataLayout &DL) {
-  switch (Inst->getOpcode()) {
-  case Instruction::Load: {
-    // Currently only handle the case where the Pointer Operand is a GEP.
-    // Also we could not vectorize volatile or atomic loads.
-    LoadInst *LI = cast<LoadInst>(Inst);
-    if (isa<AllocaInst>(User) &&
-        LI->getPointerOperandType() == User->getType() &&
-        isa<VectorType>(LI->getType()))
-      return true;
-
-    Instruction *PtrInst = dyn_cast<Instruction>(LI->getPointerOperand());
-    if (!PtrInst)
-      return false;
-
-    return (PtrInst->getOpcode() == Instruction::GetElementPtr ||
-            PtrInst->getOpcode() == Instruction::BitCast) &&
-           LI->isSimple();
+  if (VarOffsets.size() == 1) {
+    // Only handle cases where we don't need to insert extra arithmetic
+    // instructions.
+    const auto &VarOffset = VarOffsets.front();
+    if (!ConstOffset.isZero() || VarOffset.second != VecElemSize)
+      return nullptr;
+    return VarOffset.first;
   }
-  case Instruction::BitCast:
-    return true;
-  case Instruction::Store: {
-    // Must be the stored pointer operand, not a stored value, plus
-    // since it should be canonical form, the User should be a GEP.
-    // Also we could not vectorize volatile or atomic stores.
-    StoreInst *SI = cast<StoreInst>(Inst);
-    if (isa<AllocaInst>(User) &&
-        SI->getPointerOperandType() == User->getType() &&
-        isa<VectorType>(SI->getValueOperand()->getType()))
-      return true;
 
-    Instruction *UserInst = dyn_cast<Instruction>(User);
-    if (!UserInst)
-      return false;
+  APInt Quot;
+  uint64_t Rem;
+  APInt::udivrem(ConstOffset, VecElemSize, Quot, Rem);
+  if (Rem != 0)
+    return nullptr;
 
-    return (SI->getPointerOperand() == User) &&
-           (UserInst->getOpcode() == Instruction::GetElementPtr ||
-            UserInst->getOpcode() == Instruction::BitCast) &&
-           SI->isSimple();
-  }
-  default:
-    return false;
-  }
+  return ConstantInt::get(GEP->getContext(), Quot);
 }
 
 static bool tryPromoteAllocaToVector(AllocaInst *Alloca, const DataLayout &DL,
@@ -464,73 +418,87 @@ static bool tryPromoteAllocaToVector(AllocaInst *Alloca, const DataLayout &DL,
   }
 
   std::map<GetElementPtrInst*, Value*> GEPVectorIdx;
-  std::vector<Value *> WorkList;
-  SmallVector<User *, 8> Users(Alloca->users());
-  SmallVector<User *, 8> UseUsers(Users.size(), Alloca);
-  Type *VecEltTy = VectorTy->getElementType();
-  while (!Users.empty()) {
-    User *AllocaUser = Users.pop_back_val();
-    User *UseUser = UseUsers.pop_back_val();
-    Instruction *Inst = dyn_cast<Instruction>(AllocaUser);
+  SmallVector<Instruction *> WorkList;
+  SmallVector<Use *, 8> Uses;
+  for (Use &U : Alloca->uses())
+    Uses.push_back(&U);
 
-    GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(AllocaUser);
-    if (!GEP) {
-      if (!canVectorizeInst(Inst, UseUser, DL))
+  Type *VecEltTy = VectorTy->getElementType();
+  while (!Uses.empty()) {
+    Use *U = Uses.pop_back_val();
+    Instruction *Inst = dyn_cast<Instruction>(U->getUser());
+
+    if (Value *Ptr = getLoadStorePointerOperand(Inst)) {
+      // This is a store of the pointer, not to the pointer.
+      if (isa<StoreInst>(Inst) &&
+          U->getOperandNo() != StoreInst::getPointerOperandIndex())
         return false;
 
-      if (Inst->getOpcode() == Instruction::BitCast) {
-        Type *FromTy = Inst->getOperand(0)->getType()->getPointerElementType();
-        Type *ToTy = Inst->getType()->getPointerElementType();
-        if (FromTy->isAggregateType() || ToTy->isAggregateType() ||
-            DL.getTypeSizeInBits(FromTy) != DL.getTypeSizeInBits(ToTy))
-          continue;
+      Type *AccessTy = getLoadStoreType(Inst);
+      Ptr = Ptr->stripPointerCasts();
 
-        for (User *CastUser : Inst->users()) {
-          if (isAssumeLikeIntrinsic(cast<Instruction>(CastUser)))
-            continue;
-          Users.push_back(CastUser);
-          UseUsers.push_back(Inst);
-        }
-
+      // Alloca already accessed as vector, leave alone.
+      if (Ptr == Alloca && DL.getTypeStoreSize(Alloca->getAllocatedType()) ==
+                               DL.getTypeStoreSize(AccessTy))
         continue;
-      }
 
-      WorkList.push_back(AllocaUser);
+      // Check that this is a simple access of a vector element.
+      bool IsSimple = isa<LoadInst>(Inst) ? cast<LoadInst>(Inst)->isSimple()
+                                          : cast<StoreInst>(Inst)->isSimple();
+      if (!IsSimple ||
+          !CastInst::isBitOrNoopPointerCastable(VecEltTy, AccessTy, DL))
+        return false;
+
+      WorkList.push_back(Inst);
       continue;
     }
 
-    Value *Index = GEPToVectorIndex(GEP);
-
-    // If we can't compute a vector index from this GEP, then we can't
-    // promote this alloca to vector.
-    if (!Index) {
-      LLVM_DEBUG(dbgs() << "  Cannot compute vector index for GEP " << *GEP
-                        << '\n');
-      return false;
+    if (isa<BitCastInst>(Inst)) {
+      // Look through bitcasts.
+      for (Use &U : Inst->uses())
+        Uses.push_back(&U);
+      continue;
     }
 
-    GEPVectorIdx[GEP] = Index;
-    Users.append(GEP->user_begin(), GEP->user_end());
-    UseUsers.append(GEP->getNumUses(), GEP);
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(Inst)) {
+      // If we can't compute a vector index from this GEP, then we can't
+      // promote this alloca to vector.
+      Value *Index = GEPToVectorIndex(GEP, Alloca, VecEltTy, DL);
+      if (!Index) {
+        LLVM_DEBUG(dbgs() << "  Cannot compute vector index for GEP " << *GEP
+                          << '\n');
+        return false;
+      }
+
+      GEPVectorIdx[GEP] = Index;
+      for (Use &U : Inst->uses())
+        Uses.push_back(&U);
+      continue;
+    }
+
+    // Ignore assume-like intrinsics and comparisons used in assumes.
+    if (isAssumeLikeIntrinsic(Inst))
+      continue;
+
+    if (isa<ICmpInst>(Inst) && all_of(Inst->users(), [](User *U) {
+          return isAssumeLikeIntrinsic(cast<Instruction>(U));
+        }))
+      continue;
+
+    // Unknown user.
+    return false;
   }
 
   LLVM_DEBUG(dbgs() << "  Converting alloca to vector " << *AllocaTy << " -> "
                     << *VectorTy << '\n');
 
-  for (Value *V : WorkList) {
-    Instruction *Inst = cast<Instruction>(V);
+  for (Instruction *Inst : WorkList) {
     IRBuilder<> Builder(Inst);
     switch (Inst->getOpcode()) {
     case Instruction::Load: {
-      if (Inst->getType() == AllocaTy || Inst->getType()->isVectorTy())
-        break;
-
       Value *Ptr = cast<LoadInst>(Inst)->getPointerOperand();
       Value *Index = calculateVectorIndex(Ptr, GEPVectorIdx);
-      if (!Index)
-        break;
-
-      Type *VecPtrTy = VectorTy->getPointerTo(AMDGPUAS::PRIVATE_ADDRESS);
+      Type *VecPtrTy = VectorTy->getPointerTo(Alloca->getAddressSpace());
       Value *BitCast = Builder.CreateBitCast(Alloca, VecPtrTy);
       Value *VecValue = Builder.CreateLoad(VectorTy, BitCast);
       Value *ExtractElement = Builder.CreateExtractElement(VecValue, Index);
@@ -542,16 +510,9 @@ static bool tryPromoteAllocaToVector(AllocaInst *Alloca, const DataLayout &DL,
     }
     case Instruction::Store: {
       StoreInst *SI = cast<StoreInst>(Inst);
-      if (SI->getValueOperand()->getType() == AllocaTy ||
-          SI->getValueOperand()->getType()->isVectorTy())
-        break;
-
       Value *Ptr = SI->getPointerOperand();
       Value *Index = calculateVectorIndex(Ptr, GEPVectorIdx);
-      if (!Index)
-        break;
-
-      Type *VecPtrTy = VectorTy->getPointerTo(AMDGPUAS::PRIVATE_ADDRESS);
+      Type *VecPtrTy = VectorTy->getPointerTo(Alloca->getAddressSpace());
       Value *BitCast = Builder.CreateBitCast(Alloca, VecPtrTy);
       Value *VecValue = Builder.CreateLoad(VectorTy, BitCast);
       Value *Elt = SI->getValueOperand();
@@ -592,11 +553,9 @@ static bool isCallPromotable(CallInst *CI) {
   }
 }
 
-bool AMDGPUPromoteAlloca::binaryOpIsDerivedFromSameAlloca(Value *BaseAlloca,
-                                                          Value *Val,
-                                                          Instruction *Inst,
-                                                          int OpIdx0,
-                                                          int OpIdx1) const {
+bool AMDGPUPromoteAllocaImpl::binaryOpIsDerivedFromSameAlloca(
+    Value *BaseAlloca, Value *Val, Instruction *Inst, int OpIdx0,
+    int OpIdx1) const {
   // Figure out which operand is the one we might not be promoting.
   Value *OtherOp = Inst->getOperand(OpIdx0);
   if (Val == OtherOp)
@@ -624,10 +583,8 @@ bool AMDGPUPromoteAlloca::binaryOpIsDerivedFromSameAlloca(Value *BaseAlloca,
   return true;
 }
 
-bool AMDGPUPromoteAlloca::collectUsesWithPtrTypes(
-  Value *BaseAlloca,
-  Value *Val,
-  std::vector<Value*> &WorkList) const {
+bool AMDGPUPromoteAllocaImpl::collectUsesWithPtrTypes(
+    Value *BaseAlloca, Value *Val, std::vector<Value *> &WorkList) const {
 
   for (User *User : Val->users()) {
     if (is_contained(WorkList, User))
@@ -686,6 +643,11 @@ bool AMDGPUPromoteAlloca::collectUsesWithPtrTypes(
       continue;
     }
 
+    // Do not promote vector/aggregate type instructions. It is hard to track
+    // their users.
+    if (isa<InsertValueInst>(User) || isa<InsertElementInst>(User))
+      return false;
+
     if (!User->getType()->isPointerTy())
       continue;
 
@@ -727,10 +689,10 @@ bool AMDGPUPromoteAlloca::collectUsesWithPtrTypes(
   return true;
 }
 
-bool AMDGPUPromoteAlloca::hasSufficientLocalMem(const Function &F) {
+bool AMDGPUPromoteAllocaImpl::hasSufficientLocalMem(const Function &F) {
 
   FunctionType *FTy = F.getFunctionType();
-  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(*TM, F);
+  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(TM, F);
 
   // If the function has any arguments in the local address space, then it's
   // possible these arguments require the entire local memory space, so
@@ -798,6 +760,17 @@ bool AMDGPUPromoteAlloca::hasSufficientLocalMem(const Function &F) {
     Align Alignment =
         DL.getValueOrABITypeAlignment(GV->getAlign(), GV->getValueType());
     uint64_t AllocSize = DL.getTypeAllocSize(GV->getValueType());
+
+    // HIP uses an extern unsized array in local address space for dynamically
+    // allocated shared memory.  In that case, we have to disable the promotion.
+    if (GV->hasExternalLinkage() && AllocSize == 0) {
+      LocalMemLimit = 0;
+      LLVM_DEBUG(dbgs() << "Function has a reference to externally allocated "
+                           "local memory. Promoting to local memory "
+                           "disabled.\n");
+      return false;
+    }
+
     AllocatedSizes.emplace_back(AllocSize, Alignment);
   }
 
@@ -805,10 +778,7 @@ bool AMDGPUPromoteAlloca::hasSufficientLocalMem(const Function &F) {
   //
   // FIXME: We should really do something to fix the addresses to a more optimal
   // value instead
-  llvm::sort(AllocatedSizes.begin(), AllocatedSizes.end(),
-             [](std::pair<uint64_t, Align> LHS, std::pair<uint64_t, Align> RHS) {
-               return LHS.second < RHS.second;
-             });
+  llvm::sort(AllocatedSizes, llvm::less_second());
 
   // Check how much local memory is being used by global objects
   CurrentLocalMemUsage = 0;
@@ -863,7 +833,7 @@ bool AMDGPUPromoteAlloca::hasSufficientLocalMem(const Function &F) {
 }
 
 // FIXME: Should try to pick the most likely to be profitable allocas first.
-bool AMDGPUPromoteAlloca::handleAlloca(AllocaInst &I, bool SufficientLDS) {
+bool AMDGPUPromoteAllocaImpl::handleAlloca(AllocaInst &I, bool SufficientLDS) {
   // Array allocations are probably not worth handling, since an allocation of
   // the array type is the canonical form.
   if (!I.isStaticAlloca() || I.isArrayAllocation())
@@ -904,7 +874,7 @@ bool AMDGPUPromoteAlloca::handleAlloca(AllocaInst &I, bool SufficientLDS) {
   if (!SufficientLDS)
     return false;
 
-  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(*TM, ContainingFunction);
+  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(TM, ContainingFunction);
   unsigned WorkGroupSize = ST.getFlatWorkGroupSizes(ContainingFunction).second;
 
   Align Alignment =
@@ -914,7 +884,7 @@ bool AMDGPUPromoteAlloca::handleAlloca(AllocaInst &I, bool SufficientLDS) {
   // usage order.
   //
   // FIXME: It is also possible that if we're allowed to use all of the memory
-  // could could end up using more than the maximum due to alignment padding.
+  // could end up using more than the maximum due to alignment padding.
 
   uint32_t NewSize = alignTo(CurrentLocalMemUsage, Alignment);
   uint32_t AllocSize = WorkGroupSize * DL.getTypeAllocSize(AllocaTy);
@@ -948,7 +918,7 @@ bool AMDGPUPromoteAlloca::handleAlloca(AllocaInst &I, bool SufficientLDS) {
       GlobalVariable::NotThreadLocal,
       AMDGPUAS::LOCAL_ADDRESS);
   GV->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-  GV->setAlignment(MaybeAlign(I.getAlignment()));
+  GV->setAlignment(I.getAlign());
 
   Value *TCntY, *TCntZ;
 
@@ -973,13 +943,15 @@ bool AMDGPUPromoteAlloca::handleAlloca(AllocaInst &I, bool SufficientLDS) {
   I.replaceAllUsesWith(Offset);
   I.eraseFromParent();
 
+  SmallVector<IntrinsicInst *> DeferredIntrs;
+
   for (Value *V : WorkList) {
     CallInst *Call = dyn_cast<CallInst>(V);
     if (!Call) {
       if (ICmpInst *CI = dyn_cast<ICmpInst>(V)) {
         Value *Src0 = CI->getOperand(0);
-        Type *EltTy = Src0->getType()->getPointerElementType();
-        PointerType *NewTy = PointerType::get(EltTy, AMDGPUAS::LOCAL_ADDRESS);
+        PointerType *NewTy = PointerType::getWithSamePointeeType(
+            cast<PointerType>(Src0->getType()), AMDGPUAS::LOCAL_ADDRESS);
 
         if (isa<ConstantPointerNull>(CI->getOperand(0)))
           CI->setOperand(0, ConstantPointerNull::get(NewTy));
@@ -995,8 +967,8 @@ bool AMDGPUPromoteAlloca::handleAlloca(AllocaInst &I, bool SufficientLDS) {
       if (isa<AddrSpaceCastInst>(V))
         continue;
 
-      Type *EltTy = V->getType()->getPointerElementType();
-      PointerType *NewTy = PointerType::get(EltTy, AMDGPUAS::LOCAL_ADDRESS);
+      PointerType *NewTy = PointerType::getWithSamePointeeType(
+          cast<PointerType>(V->getType()), AMDGPUAS::LOCAL_ADDRESS);
 
       // FIXME: It doesn't really make sense to try to do this for all
       // instructions.
@@ -1027,22 +999,13 @@ bool AMDGPUPromoteAlloca::handleAlloca(AllocaInst &I, bool SufficientLDS) {
       // These intrinsics are for address space 0 only
       Intr->eraseFromParent();
       continue;
-    case Intrinsic::memcpy: {
-      MemCpyInst *MemCpy = cast<MemCpyInst>(Intr);
-      Builder.CreateMemCpy(MemCpy->getRawDest(), MemCpy->getDestAlign(),
-                           MemCpy->getRawSource(), MemCpy->getSourceAlign(),
-                           MemCpy->getLength(), MemCpy->isVolatile());
-      Intr->eraseFromParent();
+    case Intrinsic::memcpy:
+    case Intrinsic::memmove:
+      // These have 2 pointer operands. In case if second pointer also needs
+      // to be replaced we defer processing of these intrinsics until all
+      // other values are processed.
+      DeferredIntrs.push_back(Intr);
       continue;
-    }
-    case Intrinsic::memmove: {
-      MemMoveInst *MemMove = cast<MemMoveInst>(Intr);
-      Builder.CreateMemMove(MemMove->getRawDest(), MemMove->getDestAlign(),
-                            MemMove->getRawSource(), MemMove->getSourceAlign(),
-                            MemMove->getLength(), MemMove->isVolatile());
-      Intr->eraseFromParent();
-      continue;
-    }
     case Intrinsic::memset: {
       MemSetInst *MemSet = cast<MemSetInst>(Intr);
       Builder.CreateMemSet(
@@ -1062,11 +1025,11 @@ bool AMDGPUPromoteAlloca::handleAlloca(AllocaInst &I, bool SufficientLDS) {
       continue;
     case Intrinsic::objectsize: {
       Value *Src = Intr->getOperand(0);
-      Type *SrcTy = Src->getType()->getPointerElementType();
-      Function *ObjectSize = Intrinsic::getDeclaration(Mod,
-        Intrinsic::objectsize,
-        { Intr->getType(), PointerType::get(SrcTy, AMDGPUAS::LOCAL_ADDRESS) }
-      );
+      Function *ObjectSize = Intrinsic::getDeclaration(
+          Mod, Intrinsic::objectsize,
+          {Intr->getType(),
+           PointerType::getWithSamePointeeType(
+               cast<PointerType>(Src->getType()), AMDGPUAS::LOCAL_ADDRESS)});
 
       CallInst *NewCall = Builder.CreateCall(
           ObjectSize,
@@ -1080,26 +1043,58 @@ bool AMDGPUPromoteAlloca::handleAlloca(AllocaInst &I, bool SufficientLDS) {
       llvm_unreachable("Don't know how to promote alloca intrinsic use.");
     }
   }
+
+  for (IntrinsicInst *Intr : DeferredIntrs) {
+    Builder.SetInsertPoint(Intr);
+    Intrinsic::ID ID = Intr->getIntrinsicID();
+    assert(ID == Intrinsic::memcpy || ID == Intrinsic::memmove);
+
+    MemTransferInst *MI = cast<MemTransferInst>(Intr);
+    auto *B =
+      Builder.CreateMemTransferInst(ID, MI->getRawDest(), MI->getDestAlign(),
+                                    MI->getRawSource(), MI->getSourceAlign(),
+                                    MI->getLength(), MI->isVolatile());
+
+    for (unsigned I = 0; I != 2; ++I) {
+      if (uint64_t Bytes = Intr->getParamDereferenceableBytes(I)) {
+        B->addDereferenceableParamAttr(I, Bytes);
+      }
+    }
+
+    Intr->eraseFromParent();
+  }
+
   return true;
 }
 
-bool AMDGPUPromoteAllocaToVector::runOnFunction(Function &F) {
-  if (skipFunction(F) || DisablePromoteAllocaToVector)
+bool handlePromoteAllocaToVector(AllocaInst &I, unsigned MaxVGPRs) {
+  // Array allocations are probably not worth handling, since an allocation of
+  // the array type is the canonical form.
+  if (!I.isStaticAlloca() || I.isArrayAllocation())
     return false;
 
-  const TargetMachine *TM;
-  if (auto *TPC = getAnalysisIfAvailable<TargetPassConfig>())
-    TM = &TPC->getTM<TargetMachine>();
-  else
+  LLVM_DEBUG(dbgs() << "Trying to promote " << I << '\n');
+
+  Module *Mod = I.getParent()->getParent()->getParent();
+  return tryPromoteAllocaToVector(&I, Mod->getDataLayout(), MaxVGPRs);
+}
+
+bool promoteAllocasToVector(Function &F, TargetMachine &TM) {
+  if (DisablePromoteAllocaToVector)
     return false;
 
-  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(*TM, F);
+  const AMDGPUSubtarget &ST = AMDGPUSubtarget::get(TM, F);
   if (!ST.isPromoteAllocaEnabled())
     return false;
 
-  if (TM->getTargetTriple().getArch() == Triple::amdgcn) {
-    const GCNSubtarget &ST = TM->getSubtarget<GCNSubtarget>(F);
+  unsigned MaxVGPRs;
+  if (TM.getTargetTriple().getArch() == Triple::amdgcn) {
+    const GCNSubtarget &ST = TM.getSubtarget<GCNSubtarget>(F);
     MaxVGPRs = ST.getMaxNumVGPRs(ST.getWavesPerEU(F).first);
+    // A non-entry function has only 32 caller preserved registers.
+    // Do not promote alloca which will force spilling.
+    if (!AMDGPU::isEntryFunctionCC(F.getCallingConv()))
+      MaxVGPRs = std::min(MaxVGPRs, 32u);
   } else {
     MaxVGPRs = 128;
   }
@@ -1114,23 +1109,31 @@ bool AMDGPUPromoteAllocaToVector::runOnFunction(Function &F) {
   }
 
   for (AllocaInst *AI : Allocas) {
-    if (handleAlloca(*AI))
+    if (handlePromoteAllocaToVector(*AI, MaxVGPRs))
       Changed = true;
   }
 
   return Changed;
 }
 
-bool AMDGPUPromoteAllocaToVector::handleAlloca(AllocaInst &I) {
-  // Array allocations are probably not worth handling, since an allocation of
-  // the array type is the canonical form.
-  if (!I.isStaticAlloca() || I.isArrayAllocation())
+bool AMDGPUPromoteAllocaToVector::runOnFunction(Function &F) {
+  if (skipFunction(F))
     return false;
+  if (auto *TPC = getAnalysisIfAvailable<TargetPassConfig>()) {
+    return promoteAllocasToVector(F, TPC->getTM<TargetMachine>());
+  }
+  return false;
+}
 
-  LLVM_DEBUG(dbgs() << "Trying to promote " << I << '\n');
-
-  Module *Mod = I.getParent()->getParent()->getParent();
-  return tryPromoteAllocaToVector(&I, Mod->getDataLayout(), MaxVGPRs);
+PreservedAnalyses
+AMDGPUPromoteAllocaToVectorPass::run(Function &F, FunctionAnalysisManager &AM) {
+  bool Changed = promoteAllocasToVector(F, TM);
+  if (Changed) {
+    PreservedAnalyses PA;
+    PA.preserveSet<CFGAnalyses>();
+    return PA;
+  }
+  return PreservedAnalyses::all();
 }
 
 FunctionPass *llvm::createAMDGPUPromoteAlloca() {

@@ -33,7 +33,7 @@
  * compatible, thus CINDEX_VERSION_MAJOR is expected to remain stable.
  */
 #define CINDEX_VERSION_MAJOR 0
-#define CINDEX_VERSION_MINOR 60
+#define CINDEX_VERSION_MINOR 62
 
 #define CINDEX_VERSION_ENCODE(major, minor) (((major)*10000) + ((minor)*1))
 
@@ -2052,62 +2052,58 @@ enum CXCursorKind {
    */
   CXCursor_CXXFunctionalCastExpr = 128,
 
-  /** OpenCL's addrspace_cast<> expression.
-   */
-  CXCursor_CXXAddrspaceCastExpr = 129,
-
   /** A C++ typeid expression (C++ [expr.typeid]).
    */
-  CXCursor_CXXTypeidExpr = 130,
+  CXCursor_CXXTypeidExpr = 129,
 
   /** [C++ 2.13.5] C++ Boolean Literal.
    */
-  CXCursor_CXXBoolLiteralExpr = 131,
+  CXCursor_CXXBoolLiteralExpr = 130,
 
   /** [C++0x 2.14.7] C++ Pointer Literal.
    */
-  CXCursor_CXXNullPtrLiteralExpr = 132,
+  CXCursor_CXXNullPtrLiteralExpr = 131,
 
   /** Represents the "this" expression in C++
    */
-  CXCursor_CXXThisExpr = 133,
+  CXCursor_CXXThisExpr = 132,
 
   /** [C++ 15] C++ Throw Expression.
    *
    * This handles 'throw' and 'throw' assignment-expression. When
    * assignment-expression isn't present, Op will be null.
    */
-  CXCursor_CXXThrowExpr = 134,
+  CXCursor_CXXThrowExpr = 133,
 
   /** A new expression for memory allocation and constructor calls, e.g:
    * "new CXXNewExpr(foo)".
    */
-  CXCursor_CXXNewExpr = 135,
+  CXCursor_CXXNewExpr = 134,
 
   /** A delete expression for memory deallocation and destructor calls,
    * e.g. "delete[] pArray".
    */
-  CXCursor_CXXDeleteExpr = 136,
+  CXCursor_CXXDeleteExpr = 135,
 
   /** A unary expression. (noexcept, sizeof, or other traits)
    */
-  CXCursor_UnaryExpr = 137,
+  CXCursor_UnaryExpr = 136,
 
   /** An Objective-C string literal i.e. @"foo".
    */
-  CXCursor_ObjCStringLiteral = 138,
+  CXCursor_ObjCStringLiteral = 137,
 
   /** An Objective-C \@encode expression.
    */
-  CXCursor_ObjCEncodeExpr = 139,
+  CXCursor_ObjCEncodeExpr = 138,
 
   /** An Objective-C \@selector expression.
    */
-  CXCursor_ObjCSelectorExpr = 140,
+  CXCursor_ObjCSelectorExpr = 139,
 
   /** An Objective-C \@protocol expression.
    */
-  CXCursor_ObjCProtocolExpr = 141,
+  CXCursor_ObjCProtocolExpr = 140,
 
   /** An Objective-C "bridged" cast expression, which casts between
    * Objective-C pointers and C pointers, transferring ownership in the process.
@@ -2116,7 +2112,7 @@ enum CXCursorKind {
    *   NSString *str = (__bridge_transfer NSString *)CFCreateString();
    * \endcode
    */
-  CXCursor_ObjCBridgedCastExpr = 142,
+  CXCursor_ObjCBridgedCastExpr = 141,
 
   /** Represents a C++0x pack expansion that produces a sequence of
    * expressions.
@@ -2131,7 +2127,7 @@ enum CXCursorKind {
    * }
    * \endcode
    */
-  CXCursor_PackExpansionExpr = 143,
+  CXCursor_PackExpansionExpr = 142,
 
   /** Represents an expression that computes the length of a parameter
    * pack.
@@ -2143,7 +2139,7 @@ enum CXCursorKind {
    * };
    * \endcode
    */
-  CXCursor_SizeOfPackExpr = 144,
+  CXCursor_SizeOfPackExpr = 143,
 
   /* Represents a C++ lambda expression that produces a local function
    * object.
@@ -2157,39 +2153,53 @@ enum CXCursorKind {
    * }
    * \endcode
    */
-  CXCursor_LambdaExpr = 145,
+  CXCursor_LambdaExpr = 144,
 
   /** Objective-c Boolean Literal.
    */
-  CXCursor_ObjCBoolLiteralExpr = 146,
+  CXCursor_ObjCBoolLiteralExpr = 145,
 
   /** Represents the "self" expression in an Objective-C method.
    */
-  CXCursor_ObjCSelfExpr = 147,
+  CXCursor_ObjCSelfExpr = 146,
 
   /** OpenMP 5.0 [2.1.5, Array Section].
    */
-  CXCursor_OMPArraySectionExpr = 148,
+  CXCursor_OMPArraySectionExpr = 147,
 
   /** Represents an @available(...) check.
    */
-  CXCursor_ObjCAvailabilityCheckExpr = 149,
+  CXCursor_ObjCAvailabilityCheckExpr = 148,
 
   /**
    * Fixed point literal
    */
-  CXCursor_FixedPointLiteral = 150,
+  CXCursor_FixedPointLiteral = 149,
 
   /** OpenMP 5.0 [2.1.4, Array Shaping].
    */
-  CXCursor_OMPArrayShapingExpr = 151,
+  CXCursor_OMPArrayShapingExpr = 150,
 
   /**
    * OpenMP 5.0 [2.1.6 Iterators]
    */
-  CXCursor_OMPIteratorExpr = 152,
+  CXCursor_OMPIteratorExpr = 151,
 
-  CXCursor_LastExpr = CXCursor_OMPIteratorExpr,
+  /** OpenCL's addrspace_cast<> expression.
+   */
+  CXCursor_CXXAddrspaceCastExpr = 152,
+
+  /**
+   * Expression that references a C++20 concept.
+   */
+  CXCursor_ConceptSpecializationExpr = 153,
+
+  /**
+   * Expression that references a C++20 concept.
+   */
+  CXCursor_RequiresExpr = 154,
+
+  CXCursor_LastExpr = CXCursor_RequiresExpr,
 
   /* Statements */
   CXCursor_FirstStmt = 200,
@@ -2568,7 +2578,75 @@ enum CXCursorKind {
    */
   CXCursor_OMPScanDirective = 287,
 
-  CXCursor_LastStmt = CXCursor_OMPScanDirective,
+  /** OpenMP tile directive.
+   */
+  CXCursor_OMPTileDirective = 288,
+
+  /** OpenMP canonical loop.
+   */
+  CXCursor_OMPCanonicalLoop = 289,
+
+  /** OpenMP interop directive.
+   */
+  CXCursor_OMPInteropDirective = 290,
+
+  /** OpenMP dispatch directive.
+   */
+  CXCursor_OMPDispatchDirective = 291,
+
+  /** OpenMP masked directive.
+   */
+  CXCursor_OMPMaskedDirective = 292,
+
+  /** OpenMP unroll directive.
+   */
+  CXCursor_OMPUnrollDirective = 293,
+
+  /** OpenMP metadirective directive.
+   */
+  CXCursor_OMPMetaDirective = 294,
+
+  /** OpenMP loop directive.
+   */
+  CXCursor_OMPGenericLoopDirective = 295,
+
+  /** OpenMP teams loop directive.
+   */
+  CXCursor_OMPTeamsGenericLoopDirective = 296,
+
+  /** OpenMP target teams loop directive.
+   */
+  CXCursor_OMPTargetTeamsGenericLoopDirective = 297,
+
+  /** OpenMP parallel loop directive.
+   */
+  CXCursor_OMPParallelGenericLoopDirective = 298,
+
+  /** OpenMP target parallel loop directive.
+   */
+  CXCursor_OMPTargetParallelGenericLoopDirective = 299,
+
+  /** OpenMP parallel masked directive.
+   */
+  CXCursor_OMPParallelMaskedDirective = 300,
+
+  /** OpenMP masked taskloop directive.
+   */
+  CXCursor_OMPMaskedTaskLoopDirective = 301,
+
+  /** OpenMP masked taskloop simd directive.
+   */
+  CXCursor_OMPMaskedTaskLoopSimdDirective = 302,
+
+  /** OpenMP parallel masked taskloop directive.
+   */
+  CXCursor_OMPParallelMaskedTaskLoopDirective = 303,
+
+  /** OpenMP parallel masked taskloop simd directive.
+   */
+  CXCursor_OMPParallelMaskedTaskLoopSimdDirective = 304,
+
+  CXCursor_LastStmt = CXCursor_OMPParallelMaskedTaskLoopSimdDirective,
 
   /**
    * Cursor that represents the translation unit itself.
@@ -2576,7 +2654,7 @@ enum CXCursorKind {
    * The translation unit cursor exists primarily to act as the root
    * cursor for traversing the contents of a translation unit.
    */
-  CXCursor_TranslationUnit = 300,
+  CXCursor_TranslationUnit = 350,
 
   /* Attributes */
   CXCursor_FirstAttr = 400,
@@ -2652,8 +2730,13 @@ enum CXCursorKind {
    * a friend declaration.
    */
   CXCursor_FriendDecl = 603,
+  /**
+   * a concept declaration.
+   */
+  CXCursor_ConceptDecl = 604,
+
   CXCursor_FirstExtraDecl = CXCursor_ModuleImportDecl,
-  CXCursor_LastExtraDecl = CXCursor_FriendDecl,
+  CXCursor_LastExtraDecl = CXCursor_ConceptDecl,
 
   /**
    * A code completion overload candidate.
@@ -2939,6 +3022,26 @@ CINDEX_LINKAGE int clang_getCursorPlatformAvailability(
  */
 CINDEX_LINKAGE void
 clang_disposeCXPlatformAvailability(CXPlatformAvailability *availability);
+
+/**
+ * If cursor refers to a variable declaration and it has initializer returns
+ * cursor referring to the initializer otherwise return null cursor.
+ */
+CINDEX_LINKAGE CXCursor clang_Cursor_getVarDeclInitializer(CXCursor cursor);
+
+/**
+ * If cursor refers to a variable declaration that has global storage returns 1.
+ * If cursor refers to a variable declaration that doesn't have global storage
+ * returns 0. Otherwise returns -1.
+ */
+CINDEX_LINKAGE int clang_Cursor_hasVarDeclGlobalStorage(CXCursor cursor);
+
+/**
+ * If cursor refers to a variable declaration that has external storage
+ * returns 1. If cursor refers to a variable declaration that doesn't have
+ * external storage returns 0. Otherwise returns -1.
+ */
+CINDEX_LINKAGE int clang_Cursor_hasVarDeclExternalStorage(CXCursor cursor);
 
 /**
  * Describe the "language" of the entity referred to by a cursor.
@@ -3254,8 +3357,9 @@ enum CXTypeKind {
   CXType_UAccum = 37,
   CXType_ULongAccum = 38,
   CXType_BFloat16 = 39,
+  CXType_Ibm128 = 40,
   CXType_FirstBuiltin = CXType_Void,
-  CXType_LastBuiltin = CXType_BFloat16,
+  CXType_LastBuiltin = CXType_Ibm128,
 
   CXType_Complex = 100,
   CXType_Pointer = 101,
@@ -3348,7 +3452,8 @@ enum CXTypeKind {
   CXType_OCLIntelSubgroupAVCImeDualRefStreamin = 175,
 
   CXType_ExtVector = 176,
-  CXType_Atomic = 177
+  CXType_Atomic = 177,
+  CXType_BTFTagAttributed = 178
 };
 
 /**
@@ -3374,6 +3479,8 @@ enum CXCallingConv {
   CXCallingConv_PreserveMost = 14,
   CXCallingConv_PreserveAll = 15,
   CXCallingConv_AArch64VectorCall = 16,
+  CXCallingConv_SwiftAsync = 17,
+  CXCallingConv_AArch64SVEPCS = 18,
 
   CXCallingConv_Invalid = 100,
   CXCallingConv_Unexposed = 200
@@ -3654,6 +3761,54 @@ CINDEX_LINKAGE CXString clang_getTypedefName(CXType CT);
 CINDEX_LINKAGE CXType clang_getPointeeType(CXType T);
 
 /**
+ * Retrieve the unqualified variant of the given type, removing as
+ * little sugar as possible.
+ *
+ * For example, given the following series of typedefs:
+ *
+ * \code
+ * typedef int Integer;
+ * typedef const Integer CInteger;
+ * typedef CInteger DifferenceType;
+ * \endcode
+ *
+ * Executing \c clang_getUnqualifiedType() on a \c CXType that
+ * represents \c DifferenceType, will desugar to a type representing
+ * \c Integer, that has no qualifiers.
+ *
+ * And, executing \c clang_getUnqualifiedType() on the type of the
+ * first argument of the following function declaration:
+ *
+ * \code
+ * void foo(const int);
+ * \endcode
+ *
+ * Will return a type representing \c int, removing the \c const
+ * qualifier.
+ *
+ * Sugar over array types is not desugared.
+ *
+ * A type can be checked for qualifiers with \c
+ * clang_isConstQualifiedType(), \c clang_isVolatileQualifiedType()
+ * and \c clang_isRestrictQualifiedType().
+ *
+ * A type that resulted from a call to \c clang_getUnqualifiedType
+ * will return \c false for all of the above calls.
+ */
+CINDEX_LINKAGE CXType clang_getUnqualifiedType(CXType CT);
+
+/**
+ * For reference types (e.g., "const int&"), returns the type that the
+ * reference refers to (e.g "const int").
+ *
+ * Otherwise, returns the type itself.
+ *
+ * A type that has kind \c CXType_LValueReference or
+ * \c CXType_RValueReference is a reference type.
+ */
+CINDEX_LINKAGE CXType clang_getNonReferenceType(CXType CT);
+
+/**
  * Return the cursor for the declaration of the given type.
  */
 CINDEX_LINKAGE CXCursor clang_getTypeDeclaration(CXType T);
@@ -3841,7 +3996,15 @@ enum CXTypeNullabilityKind {
   /**
    * Nullability is not applicable to this type.
    */
-  CXTypeNullability_Invalid = 3
+  CXTypeNullability_Invalid = 3,
+
+  /**
+   * Generally behaves like Nullable, except when used in a block parameter that
+   * was imported into a swift async method. There, swift will assume that the
+   * parameter can get null even if no error occurred. _Nullable parameters are
+   * assumed to only get null on error.
+   */
+  CXTypeNullability_NullableResult = 4
 };
 
 /**
@@ -6239,7 +6402,8 @@ typedef enum {
   CXIdxEntity_CXXDestructor = 23,
   CXIdxEntity_CXXConversionFunction = 24,
   CXIdxEntity_CXXTypeAlias = 25,
-  CXIdxEntity_CXXInterface = 26
+  CXIdxEntity_CXXInterface = 26,
+  CXIdxEntity_CXXConcept = 27
 
 } CXIdxEntityKind;
 

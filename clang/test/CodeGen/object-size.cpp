@@ -1,10 +1,10 @@
-// RUN: %clang_cc1 -triple x86_64-apple-darwin -emit-llvm -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-apple-darwin -emit-llvm -o - %s | FileCheck %s
 
 // C++-specific tests for __builtin_object_size
 
 int gi;
 
-// CHECK-LABEL: define void @_Z5test1v()
+// CHECK-LABEL: define{{.*}} void @_Z5test1v()
 void test1() {
   // Guaranteeing that our cast removal logic doesn't break more interesting
   // cases.
@@ -29,7 +29,7 @@ void test1() {
   gi = __builtin_object_size((char*)(B*)&c, 0);
 }
 
-// CHECK-LABEL: define void @_Z5test2v()
+// CHECK-LABEL: define{{.*}} void @_Z5test2v()
 void test2() {
   struct A { char buf[16]; };
   struct B : A {};

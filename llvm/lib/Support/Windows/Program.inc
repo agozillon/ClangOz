@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Errc.h"
@@ -18,12 +19,12 @@
 #include "llvm/Support/Windows/WindowsSupport.h"
 #include "llvm/Support/WindowsError.h"
 #include "llvm/Support/raw_ostream.h"
-#include <psapi.h>
 #include <cstdio>
 #include <fcntl.h>
 #include <io.h>
 #include <malloc.h>
 #include <numeric>
+#include <psapi.h>
 
 //===----------------------------------------------------------------------===//
 //=== WARNING: Implementation here must contain only Win32 specific code
@@ -67,15 +68,12 @@ ErrorOr<std::string> sys::findProgramByName(StringRef Name,
   if (const char *PathExtEnv = std::getenv("PATHEXT"))
     SplitString(PathExtEnv, PathExts, ";");
 
-  SmallVector<wchar_t, MAX_PATH> U16Result;
-  DWORD Len = MAX_PATH;
+  SmallVector<char, MAX_PATH> U8Result;
   for (StringRef Ext : PathExts) {
-    SmallVector<wchar_t, MAX_PATH> U16Ext;
-    if (std::error_code EC = windows::UTF8ToUTF16(Ext, U16Ext))
-      return EC;
-
+    SmallVector<wchar_t, MAX_PATH> U16Result;
+    DWORD Len = MAX_PATH;
     do {
-      U16Result.reserve(Len);
+      U16Result.resize_for_overwrite(Len);
       // Lets attach the extension manually. That is needed for files
       // with a point in name like aaa.bbb. SearchPathW will not add extension
       // from its argument to such files because it thinks they already had one.
@@ -85,23 +83,28 @@ ErrorOr<std::string> sys::findProgramByName(StringRef Name,
         return EC;
 
       Len = ::SearchPathW(Path, c_str(U16NameExt), nullptr,
-                          U16Result.capacity(), U16Result.data(), nullptr);
-    } while (Len > U16Result.capacity());
+                          U16Result.size(), U16Result.data(), nullptr);
+    } while (Len > U16Result.size());
 
-    if (Len != 0)
+    if (Len == 0)
+      continue;
+
+    U16Result.truncate(Len);
+
+    if (std::error_code EC =
+        windows::UTF16ToUTF8(U16Result.data(), U16Result.size(), U8Result))
+      return EC;
+
+    if (sys::fs::can_execute(U8Result))
       break; // Found it.
+
+    U8Result.clear();
   }
 
-  if (Len == 0)
+  if (U8Result.empty())
     return mapWindowsError(::GetLastError());
 
-  U16Result.set_size(Len);
-
-  SmallVector<char, MAX_PATH> U8Result;
-  if (std::error_code EC =
-          windows::UTF16ToUTF8(U16Result.data(), U16Result.size(), U8Result))
-    return EC;
-
+  llvm::sys::path::make_preferred(U8Result);
   return std::string(U8Result.begin(), U8Result.end());
 }
 
@@ -171,7 +174,8 @@ static HANDLE RedirectIO(Optional<StringRef> Path, int fd,
 static bool Execute(ProcessInfo &PI, StringRef Program,
                     ArrayRef<StringRef> Args, Optional<ArrayRef<StringRef>> Env,
                     ArrayRef<Optional<StringRef>> Redirects,
-                    unsigned MemoryLimit, std::string *ErrMsg) {
+                    unsigned MemoryLimit, std::string *ErrMsg,
+                    BitVector *AffinityMask) {
   if (!sys::fs::can_execute(Program)) {
     if (ErrMsg)
       *ErrMsg = "program not executable";
@@ -212,7 +216,7 @@ static bool Execute(ProcessInfo &PI, StringRef Program,
         return false;
       }
 
-      EnvBlock.insert(EnvBlock.end(), EnvString.begin(), EnvString.end());
+      llvm::append_range(EnvBlock, EnvString);
       EnvBlock.push_back(0);
     }
     EnvBlock.push_back(0);
@@ -277,11 +281,15 @@ static bool Execute(ProcessInfo &PI, StringRef Program,
     return false;
   }
 
+  unsigned CreateFlags = CREATE_UNICODE_ENVIRONMENT;
+  if (AffinityMask)
+    CreateFlags |= CREATE_SUSPENDED;
+
   std::vector<wchar_t> CommandUtf16(Command.size() + 1, 0);
   std::copy(Command.begin(), Command.end(), CommandUtf16.begin());
   BOOL rc = CreateProcessW(ProgramUtf16.data(), CommandUtf16.data(), 0, 0, TRUE,
-                           CREATE_UNICODE_ENVIRONMENT,
-                           EnvBlock.empty() ? 0 : EnvBlock.data(), 0, &si, &pi);
+                           CreateFlags, EnvBlock.empty() ? 0 : EnvBlock.data(),
+                           0, &si, &pi);
   DWORD err = GetLastError();
 
   // Regardless of whether the process got created or not, we are done with
@@ -327,6 +335,13 @@ static bool Execute(ProcessInfo &PI, StringRef Program,
       WaitForSingleObject(pi.hProcess, INFINITE);
       return false;
     }
+  }
+
+  // Set the affinity mask
+  if (AffinityMask) {
+    ::SetProcessAffinityMask(pi.hProcess,
+                             (DWORD_PTR)AffinityMask->getData().front());
+    ::ResumeThread(pi.hThread);
   }
 
   return true;
@@ -475,6 +490,18 @@ ProcessInfo sys::Wait(const ProcessInfo &PI, unsigned SecondsToWait,
   return WaitResult;
 }
 
+std::error_code llvm::sys::ChangeStdinMode(sys::fs::OpenFlags Flags){
+  if (!(Flags & fs::OF_CRLF))
+    return ChangeStdinToBinary();
+  return std::error_code();
+}
+
+std::error_code llvm::sys::ChangeStdoutMode(sys::fs::OpenFlags Flags){
+  if (!(Flags & fs::OF_CRLF))
+    return ChangeStdoutToBinary();
+  return std::error_code();
+}
+
 std::error_code sys::ChangeStdinToBinary() {
   int result = _setmode(_fileno(stdin), _O_BINARY);
   if (result == -1)
@@ -493,7 +520,7 @@ std::error_code
 llvm::sys::writeFileWithEncoding(StringRef FileName, StringRef Contents,
                                  WindowsEncodingMethod Encoding) {
   std::error_code EC;
-  llvm::raw_fd_ostream OS(FileName, EC, llvm::sys::fs::OF_Text);
+  llvm::raw_fd_ostream OS(FileName, EC, llvm::sys::fs::OF_TextWithCRLF);
   if (EC)
     return EC;
 

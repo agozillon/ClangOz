@@ -8,13 +8,29 @@ This document describes the available MLIR passes and their contracts.
 
 [include "GeneralPasses.md"]
 
+## Bufferization Passes
+
+[include "BufferizationPasses.md"]
+
 ## Conversion Passes
 
 [include "ConversionPasses.md"]
 
+## `async` Dialect Passes
+
+[include "AsyncPasses.md"]
+
 ## `affine` Dialect Passes
 
 [include "AffinePasses.md"]
+
+## `arith` Dialect Passes
+
+[include "ArithmeticPasses.md"]
+
+## `func` Dialect Passes
+
+[include "FuncPasses.md"]
 
 ## `gpu` Dialect Passes
 
@@ -28,22 +44,46 @@ This document describes the available MLIR passes and their contracts.
 
 [include "LLVMPasses.md"]
 
-## `loop` Dialect Passes
+## `memref` Dialect Passes
 
-[include "LoopPasses.md"]
+[include "MemRefPasses.md"]
 
 ## `quant` Dialect Passes
 
 [include "QuantPasses.md"]
 
+## Reducer Passes
+
+[include "ReducerPasses.md"]
+
+## `scf` Dialect Passes
+
+[include "SCFPasses.md"]
+
 ## `shape` Dialect Passes
 
 [include "ShapePasses.md"]
+
+## `sparse_tensor` Dialect Passes
+
+[include "SparseTensorPasses.md"]
 
 ## `spv` Dialect Passes
 
 [include "SPIRVPasses.md"]
 
-## `standard` Dialect Passes
+## `tensor` Dialect Passes
 
-[include "StandardPasses.md"]
+[include "TensorPasses.md"]
+
+## `transform` Dialect Passes
+
+[include "TransformPasses.md"]
+
+## `vector` Dialect Passes
+
+[include "VectorPasses.md"]
+
+## TOSA Dialect Passes
+
+[include "TosaPasses.md"]

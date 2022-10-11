@@ -45,7 +45,7 @@ class User : public Value {
   template <unsigned>
   friend struct HungoffOperandTraits;
 
-  LLVM_ATTRIBUTE_ALWAYS_INLINE inline static void *
+  LLVM_ATTRIBUTE_ALWAYS_INLINE static void *
   allocateFixedOperandUser(size_t, unsigned, unsigned);
 
 protected:
@@ -304,8 +304,8 @@ public:
   /// Replace uses of one Value with another.
   ///
   /// Replaces all references to the "From" definition with references to the
-  /// "To" definition.
-  void replaceUsesOfWith(Value *From, Value *To);
+  /// "To" definition. Returns whether any uses were replaced.
+  bool replaceUsesOfWith(Value *From, Value *To);
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:
   static bool classof(const Value *V) {

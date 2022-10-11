@@ -2,7 +2,13 @@
 if (NOT DEFINED LLVM_MAIN_SRC_DIR)
   project(Polly)
   cmake_minimum_required(VERSION 3.13.4)
+  set(POLLY_STANDALONE_BUILD TRUE)
+endif()
 
+# Must go below project(..)
+include(GNUInstallDirs)
+
+if(POLLY_STANDALONE_BUILD)
   # Where is LLVM installed?
   find_package(LLVM CONFIG REQUIRED)
   set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${LLVM_CMAKE_DIR})
@@ -14,14 +20,11 @@ if (NOT DEFINED LLVM_MAIN_SRC_DIR)
 
   # Sources available, too?
   if (LLVM_BUILD_MAIN_SRC_DIR)
-    set(LLVM_SOURCE_ROOT ${LLVM_BUILD_MAIN_SRC_DIR} CACHE PATH
-      "Path to LLVM source tree")
+    set(default_llvm_src "${LLVM_BUILD_MAIN_SRC_DIR}")
   else()
-    execute_process(COMMAND "${LLVM_TOOLS_BINARY_DIR}/llvm-config" --src-root
-      OUTPUT_VARIABLE MAIN_SRC_DIR
-      OUTPUT_STRIP_TRAILING_WHITESPACE)
-    set(LLVM_SOURCE_ROOT ${MAIN_SRC_DIR} CACHE PATH "Path to LLVM source tree")
+    set(default_llvm_src "${CMAKE_CURRENT_SOURCE_DIR}/../llvm")
   endif()
+  set(LLVM_SOURCE_ROOT ${default_llvm_src} CACHE PATH "Path to LLVM source tree")
 
   # Enable unit tests if available.
   set(POLLY_GTEST_AVAIL 0)
@@ -30,17 +33,13 @@ if (NOT DEFINED LLVM_MAIN_SRC_DIR)
     if (NOT TARGET gtest)
       add_subdirectory(${UNITTEST_DIR} utils/unittest)
     endif()
-
-    # LLVM Doesn't export gtest's include directorys, so do that here
-    set_target_properties(gtest
-      PROPERTIES INTERFACE_INCLUDE_DIRECTORIES
-      "${UNITTEST_DIR}/googletest/include;${UNITTEST_DIR}/googlemock/include"
-      )
     set(POLLY_GTEST_AVAIL 1)
   endif()
 
-  # Make sure the isl c files are built as fPIC
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+  if (LLVM_ENABLE_PIC)
+    # Make sure the isl c files are built as fPIC if possible
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+  endif ()
 
   # Set directory for polly-isl-test.
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
@@ -52,10 +51,15 @@ endif ()
 set(POLLY_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(POLLY_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
-# Add path for custom modules
-set(CMAKE_MODULE_PATH
-  ${CMAKE_MODULE_PATH}
-  "${CMAKE_CURRENT_SOURCE_DIR}/cmake"
+if(NOT DEFINED LLVM_COMMON_CMAKE_UTILS)
+  set(LLVM_COMMON_CMAKE_UTILS ${POLLY_SOURCE_DIR}/../cmake)
+endif()
+
+# Make sure that our source directory is on the current cmake module path so that
+# we can include cmake files from this directory.
+list(INSERT CMAKE_MODULE_PATH 0
+  "${POLLY_SOURCE_DIR}/cmake"
+  "${LLVM_COMMON_CMAKE_UTILS}/Modules"
   )
 
 include("polly_macros")
@@ -71,9 +75,6 @@ elseif (MSVC)
 else ()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions -fno-rtti")
 endif ()
-
-# Add path for custom modules
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${POLLY_SOURCE_DIR}/cmake")
 
 SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
@@ -126,18 +127,16 @@ include_directories(
 
 if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
   install(DIRECTORY include/
-    DESTINATION include
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
     FILES_MATCHING
     PATTERN "*.h"
-    PATTERN ".svn" EXCLUDE
     )
 
   install(DIRECTORY ${POLLY_BINARY_DIR}/include/
-    DESTINATION include
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
     FILES_MATCHING
     PATTERN "*.h"
     PATTERN "CMakeFiles" EXCLUDE
-    PATTERN ".svn" EXCLUDE
     )
 endif()
 

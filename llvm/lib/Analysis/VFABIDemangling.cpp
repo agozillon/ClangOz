@@ -6,8 +6,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/ADT/SmallSet.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/Analysis/VectorUtils.h"
 
 using namespace llvm;
@@ -290,9 +288,9 @@ bool verifyAllVectorsHaveSameWidth(FunctionType *Signature) {
 
   assert(VecTys.size() > 1 && "Invalid number of elements.");
   const ElementCount EC = VecTys[0]->getElementCount();
-  return llvm::all_of(
-      llvm::make_range(VecTys.begin() + 1, VecTys.end()),
-      [&EC](VectorType *VTy) { return (EC == VTy->getElementCount()); });
+  return llvm::all_of(llvm::drop_begin(VecTys), [&EC](VectorType *VTy) {
+    return (EC == VTy->getElementCount());
+  });
 }
 
 #endif // NDEBUG
@@ -310,7 +308,7 @@ ElementCount getECFromSignature(FunctionType *Signature) {
     if (auto *VTy = dyn_cast<VectorType>(Ty))
       return VTy->getElementCount();
 
-  return ElementCount(/*Min=*/1, /*Scalable=*/false);
+  return ElementCount::getFixed(/*Min=*/1);
 }
 } // namespace
 
@@ -419,8 +417,8 @@ Optional<VFInfo> VFABI::tryDemangleForVFABI(StringRef MangledName,
   // this parser:
   // 1. Uniqueness.
   // 2. Must be the last in the parameter list.
-  const auto NGlobalPreds = std::count_if(
-      Parameters.begin(), Parameters.end(), [](const VFParameter PK) {
+  const auto NGlobalPreds =
+      llvm::count_if(Parameters, [](const VFParameter &PK) {
         return PK.ParamKind == VFParamKind::GlobalPredicate;
       });
   assert(NGlobalPreds < 2 && "Cannot have more than one global predicate.");
@@ -442,10 +440,9 @@ Optional<VFInfo> VFABI::tryDemangleForVFABI(StringRef MangledName,
     if (!F)
       return None;
     const ElementCount EC = getECFromSignature(F->getFunctionType());
-    VF = EC.Min;
+    VF = EC.getKnownMinValue();
   }
 
-  // Sanity checks.
   // 1. We don't accept a zero lanes vectorization factor.
   // 2. We don't accept the demangling if the vector function is not
   // present in the module.
@@ -454,7 +451,7 @@ Optional<VFInfo> VFABI::tryDemangleForVFABI(StringRef MangledName,
   if (!M.getFunction(VectorName))
     return None;
 
-  const VFShape Shape({VF, IsScalable, Parameters});
+  const VFShape Shape({ElementCount::get(VF, IsScalable), Parameters});
   return VFInfo({Shape, std::string(ScalarName), std::string(VectorName), ISA});
 }
 

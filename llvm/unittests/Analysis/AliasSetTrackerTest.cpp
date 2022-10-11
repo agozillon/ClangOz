@@ -9,6 +9,7 @@
 #include "llvm/Analysis/AliasSetTracker.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TypeBasedAliasAnalysis.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/LLVMContext.h"
@@ -75,12 +76,13 @@ TEST(AliasSetTracker, AliasUnknownInst) {
 
   // Directly test aliasesUnknownInst.
   // Now every call instruction should only alias one alias set.
+  BatchAAResults BatchAA(AA);
   for (auto &Inst : *Test->begin()) {
     bool FoundAS = false;
     for (AliasSet &AS : AST) {
       if (!Inst.mayReadOrWriteMemory())
         continue;
-      if (!AS.aliasesUnknownInst(&Inst, AA))
+      if (!AS.aliasesUnknownInst(&Inst, BatchAA))
         continue;
       ASSERT_NE(FoundAS, true);
       FoundAS = true;

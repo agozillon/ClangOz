@@ -1,4 +1,4 @@
-//===----------------------- cxa_bad_cast.pass.cpp ------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -43,7 +43,7 @@ int main ()
         assert(false);
         ((void)d);
 #ifndef TEST_HAS_NO_EXCEPTIONS
-    } catch (std::bad_cast) {
+    } catch (std::bad_cast const&) {
         // success
         return 0;
     } catch (...) {

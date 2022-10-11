@@ -6,9 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "DAGISelMatcher.h"
 #include "CodeGenDAGPatterns.h"
+#include "CodeGenInstruction.h"
 #include "CodeGenRegisters.h"
+#include "DAGISelMatcher.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/TableGen/Error.h"
@@ -163,7 +164,7 @@ MatcherGen::MatcherGen(const PatternToMatch &pattern,
   PatWithNoTypes->RemoveAllTypes();
 
   // If there are types that are manifestly known, infer them.
-  InferPossibleTypes(Pattern.ForceMode);
+  InferPossibleTypes(Pattern.getForceMode());
 }
 
 /// InferPossibleTypes - As we emit the pattern, we end up generating type
@@ -267,7 +268,7 @@ void MatcherGen::EmitLeafMatchCode(const TreePatternNode *N) {
       std::string S;
       raw_string_ostream OS(S);
       OS << "We expect complex pattern uses to have names: " << *N;
-      PrintFatalError(OS.str());
+      PrintFatalError(S);
     }
 
     // Remember this ComplexPattern so that we can emit it after all the other
@@ -282,7 +283,9 @@ void MatcherGen::EmitLeafMatchCode(const TreePatternNode *N) {
     // check to ensure that this gets folded into the normal top-level
     // OpcodeSwitch.
     if (N == Pattern.getSrcPattern()) {
-      const SDNodeInfo &NI = CGP.getSDNodeInfo(CGP.getSDNodeNamed("build_vector"));
+      MVT VT = N->getSimpleType(0);
+      StringRef Name = VT.isScalableVector() ? "splat_vector" : "build_vector";
+      const SDNodeInfo &NI = CGP.getSDNodeInfo(CGP.getSDNodeNamed(Name));
       AddMatcher(new CheckOpcodeMatcher(NI));
     }
     return AddMatcher(new CheckImmAllOnesVMatcher());
@@ -292,7 +295,9 @@ void MatcherGen::EmitLeafMatchCode(const TreePatternNode *N) {
     // check to ensure that this gets folded into the normal top-level
     // OpcodeSwitch.
     if (N == Pattern.getSrcPattern()) {
-      const SDNodeInfo &NI = CGP.getSDNodeInfo(CGP.getSDNodeNamed("build_vector"));
+      MVT VT = N->getSimpleType(0);
+      StringRef Name = VT.isScalableVector() ? "splat_vector" : "build_vector";
+      const SDNodeInfo &NI = CGP.getSDNodeInfo(CGP.getSDNodeNamed(Name));
       AddMatcher(new CheckOpcodeMatcher(NI));
     }
     return AddMatcher(new CheckImmAllZerosVMatcher());
@@ -572,7 +577,7 @@ bool MatcherGen::EmitMatcherCode(unsigned Variant) {
 
   // Emit the matcher for the pattern structure and types.
   EmitMatchCode(Pattern.getSrcPattern(), PatWithNoTypes.get(),
-                Pattern.ForceMode);
+                Pattern.getForceMode());
 
   // If the pattern has a predicate on it (e.g. only enabled when a subtarget
   // feature is around, do the check).
@@ -744,7 +749,7 @@ void MatcherGen::EmitResultLeafAsOperand(const TreePatternNode *N,
     }
   }
 
-  errs() << "unhandled leaf node: \n";
+  errs() << "unhandled leaf node:\n";
   N->dump();
 }
 

@@ -15,7 +15,7 @@
 
 // RELOC: Relocations [
 // RELOC:   .rel.text {
-// RELOC:     0x0 R_ARM_TARGET1 patatino 0x0
+// RELOC:     0x0 R_ARM_TARGET1 patatino
 // RELOC:   }
 // RELOC: ]
 
@@ -32,6 +32,6 @@
 // RELATIVE: <$d.0>:
 // RELATIVE:     10150:       04 00 00 00     .word   0x00000004
 
-// ABS: can't create dynamic relocation R_ARM_TARGET1 against symbol: patatino in readonly segment; recompile object files with -fPIC or pass '-Wl,-z,notext' to allow text relocations in the output
+// ABS: relocation R_ARM_TARGET1 cannot be used against symbol 'patatino'; recompile with -fPIC
 // ABS: >>> defined in {{.*}}.o
 // ABS: >>> referenced by {{.*}}.o:(.text+0x0)

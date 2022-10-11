@@ -49,8 +49,8 @@ DWARFCompileUnit *SymbolFileDWARFDwo::GetDWOCompileUnitForHash(uint64_t hash) {
   DWARFCompileUnit *cu = FindSingleCompileUnit();
   if (!cu)
     return nullptr;
-  if (hash !=
-      cu->GetUnitDIEOnly().GetAttributeValueAsUnsigned(DW_AT_GNU_dwo_id, 0))
+  llvm::Optional<uint64_t> dwo_id = cu->GetDWOId();
+  if (!dwo_id || hash != *dwo_id)
     return nullptr;
   return cu;
 }

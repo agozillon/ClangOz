@@ -11,12 +11,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/TableGen/Error.h"
-#include "llvm/TableGen/Record.h"
-#include "llvm/TableGen/TableGenBackend.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/TableGen/Record.h"
 
 #define DEBUG_TYPE "json-emitter"
 
@@ -29,7 +29,6 @@ private:
   RecordKeeper &Records;
 
   json::Value translateInit(const Init &I);
-  json::Array listSuperclasses(const Record &R);
 
 public:
   JSONEmitter(RecordKeeper &R);
@@ -59,11 +58,9 @@ json::Value JSONEmitter::translateInit(const Init &I) {
     return Int->getValue();
   } else if (auto *Str = dyn_cast<StringInit>(&I)) {
     return Str->getValue();
-  } else if (auto *Code = dyn_cast<CodeInit>(&I)) {
-    return Code->getValue();
   } else if (auto *List = dyn_cast<ListInit>(&I)) {
     json::Array array;
-    for (auto val : *List)
+    for (auto *val : *List)
       array.push_back(translateInit(*val));
     return std::move(array);
   }
@@ -132,13 +129,13 @@ void JSONEmitter::run(raw_ostream &OS) {
   // construct the array for each one.
   std::map<std::string, json::Array> instance_lists;
   for (const auto &C : Records.getClasses()) {
-    auto &Name = C.second->getNameInitAsString();
+    const auto Name = C.second->getNameInitAsString();
     (void)instance_lists[Name];
   }
 
   // Main iteration over the defs.
   for (const auto &D : Records.getDefs()) {
-    auto &Name = D.second->getNameInitAsString();
+    const auto Name = D.second->getNameInitAsString();
     auto &Def = *D.second;
 
     json::Object obj;
@@ -147,7 +144,7 @@ void JSONEmitter::run(raw_ostream &OS) {
     for (const RecordVal &RV : Def.getValues()) {
       if (!Def.isTemplateArg(RV.getNameInit())) {
         auto Name = RV.getNameInitAsString();
-        if (RV.getPrefix())
+        if (RV.isNonconcreteOK())
           fields.push_back(Name);
         obj[Name] = translateInit(*RV.getValue());
       }

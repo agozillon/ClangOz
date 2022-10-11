@@ -35,16 +35,18 @@ using namespace clang;
 using namespace clang::syntax;
 
 namespace {
-ArrayRef<syntax::Token> tokens(syntax::Node *N) {
+ArrayRef<syntax::Token> tokens(syntax::Node *N,
+                               const TokenBufferTokenManager &STM) {
   assert(N->isOriginal() && "tokens of modified nodes are not well-defined");
   if (auto *L = dyn_cast<syntax::Leaf>(N))
-    return llvm::makeArrayRef(L->token(), 1);
+    return llvm::makeArrayRef(STM.getToken(L->getTokenKey()), 1);
   auto *T = cast<syntax::Tree>(N);
-  return llvm::makeArrayRef(T->firstLeaf()->token(),
-                            T->lastLeaf()->token() + 1);
+  return llvm::makeArrayRef(STM.getToken(T->findFirstLeaf()->getTokenKey()),
+                            STM.getToken(T->findLastLeaf()->getTokenKey()) + 1);
 }
+} // namespace
 
-std::vector<TestClangConfig> allTestClangConfigs() {
+std::vector<TestClangConfig> clang::syntax::allTestClangConfigs() {
   std::vector<TestClangConfig> all_configs;
   for (TestLanguage lang : {Lang_C89, Lang_C99, Lang_CXX03, Lang_CXX11,
                             Lang_CXX14, Lang_CXX17, Lang_CXX20}) {
@@ -61,10 +63,6 @@ std::vector<TestClangConfig> allTestClangConfigs() {
   return all_configs;
 }
 
-INSTANTIATE_TEST_CASE_P(SyntaxTreeTests, SyntaxTreeTest,
-                        testing::ValuesIn(allTestClangConfigs()), );
-} // namespace
-
 syntax::TranslationUnit *
 SyntaxTreeTest::buildTree(StringRef Code, const TestClangConfig &ClangConfig) {
   // FIXME: this code is almost the identical to the one in TokensTest. Share
@@ -73,23 +71,26 @@ SyntaxTreeTest::buildTree(StringRef Code, const TestClangConfig &ClangConfig) {
   public:
     BuildSyntaxTree(syntax::TranslationUnit *&Root,
                     std::unique_ptr<syntax::TokenBuffer> &TB,
+                    std::unique_ptr<syntax::TokenBufferTokenManager> &TM,
                     std::unique_ptr<syntax::Arena> &Arena,
                     std::unique_ptr<syntax::TokenCollector> Tokens)
-        : Root(Root), TB(TB), Arena(Arena), Tokens(std::move(Tokens)) {
+        : Root(Root), TB(TB), TM(TM), Arena(Arena), Tokens(std::move(Tokens)) {
       assert(this->Tokens);
     }
 
     void HandleTranslationUnit(ASTContext &Ctx) override {
       TB = std::make_unique<syntax::TokenBuffer>(std::move(*Tokens).consume());
       Tokens = nullptr; // make sure we fail if this gets called twice.
-      Arena = std::make_unique<syntax::Arena>(Ctx.getSourceManager(),
-                                              Ctx.getLangOpts(), *TB);
-      Root = syntax::buildSyntaxTree(*Arena, *Ctx.getTranslationUnitDecl());
+      TM = std::make_unique<syntax::TokenBufferTokenManager>(
+          *TB, Ctx.getLangOpts(), Ctx.getSourceManager());
+      Arena = std::make_unique<syntax::Arena>();
+      Root = syntax::buildSyntaxTree(*Arena, *TM, Ctx);
     }
 
   private:
     syntax::TranslationUnit *&Root;
     std::unique_ptr<syntax::TokenBuffer> &TB;
+    std::unique_ptr<syntax::TokenBufferTokenManager> &TM;
     std::unique_ptr<syntax::Arena> &Arena;
     std::unique_ptr<syntax::TokenCollector> Tokens;
   };
@@ -97,21 +98,23 @@ SyntaxTreeTest::buildTree(StringRef Code, const TestClangConfig &ClangConfig) {
   class BuildSyntaxTreeAction : public ASTFrontendAction {
   public:
     BuildSyntaxTreeAction(syntax::TranslationUnit *&Root,
+                          std::unique_ptr<syntax::TokenBufferTokenManager> &TM,
                           std::unique_ptr<syntax::TokenBuffer> &TB,
                           std::unique_ptr<syntax::Arena> &Arena)
-        : Root(Root), TB(TB), Arena(Arena) {}
+        : Root(Root), TM(TM), TB(TB), Arena(Arena) {}
 
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                    StringRef InFile) override {
       // We start recording the tokens, ast consumer will take on the result.
       auto Tokens =
           std::make_unique<syntax::TokenCollector>(CI.getPreprocessor());
-      return std::make_unique<BuildSyntaxTree>(Root, TB, Arena,
+      return std::make_unique<BuildSyntaxTree>(Root, TB, TM, Arena,
                                                std::move(Tokens));
     }
 
   private:
     syntax::TranslationUnit *&Root;
+    std::unique_ptr<syntax::TokenBufferTokenManager> &TM;
     std::unique_ptr<syntax::TokenBuffer> &TB;
     std::unique_ptr<syntax::Arena> &Arena;
   };
@@ -137,7 +140,10 @@ SyntaxTreeTest::buildTree(StringRef Code, const TestClangConfig &ClangConfig) {
     ArgsCStr.push_back(arg.c_str());
   }
 
-  Invocation = createInvocationFromCommandLine(ArgsCStr, Diags, FS);
+  CreateInvocationOptions CIOpts;
+  CIOpts.Diags = Diags;
+  CIOpts.VFS = FS;
+  Invocation = createInvocation(ArgsCStr, std::move(CIOpts));
   assert(Invocation);
   Invocation->getFrontendOpts().DisableFree = false;
   Invocation->getPreprocessorOpts().addRemappedFile(
@@ -149,7 +155,7 @@ SyntaxTreeTest::buildTree(StringRef Code, const TestClangConfig &ClangConfig) {
   Compiler.setSourceManager(SourceMgr.get());
 
   syntax::TranslationUnit *Root = nullptr;
-  BuildSyntaxTreeAction Recorder(Root, this->TB, this->Arena);
+  BuildSyntaxTreeAction Recorder(Root, this->TM, this->TB, this->Arena);
 
   // Action could not be executed but the frontend didn't identify any errors
   // in the code ==> problem in setting up the action.
@@ -161,65 +167,9 @@ SyntaxTreeTest::buildTree(StringRef Code, const TestClangConfig &ClangConfig) {
   return Root;
 }
 
-::testing::AssertionResult SyntaxTreeTest::treeDumpEqual(StringRef Code,
-                                                         StringRef Tree) {
-  SCOPED_TRACE(llvm::join(GetParam().getCommandLineArgs(), " "));
-
-  auto *Root = buildTree(Code, GetParam());
-  if (Diags->getClient()->getNumErrors() != 0) {
-    return ::testing::AssertionFailure()
-           << "Source file has syntax errors, they were printed to the test "
-              "log";
-  }
-  auto Actual = StringRef(Root->dump(*Arena)).trim().str();
-  // EXPECT_EQ shows the diff between the two strings if they are different.
-  EXPECT_EQ(Tree.trim().str(), Actual);
-  if (Actual != Tree.trim().str()) {
-    return ::testing::AssertionFailure();
-  }
-  return ::testing::AssertionSuccess();
-}
-
-::testing::AssertionResult
-SyntaxTreeTest::treeDumpEqualOnAnnotations(StringRef CodeWithAnnotations,
-                                           ArrayRef<StringRef> TreeDumps) {
-  SCOPED_TRACE(llvm::join(GetParam().getCommandLineArgs(), " "));
-
-  auto AnnotatedCode = llvm::Annotations(CodeWithAnnotations);
-  auto *Root = buildTree(AnnotatedCode.code(), GetParam());
-
-  if (Diags->getClient()->getNumErrors() != 0) {
-    return ::testing::AssertionFailure()
-           << "Source file has syntax errors, they were printed to the test "
-              "log";
-  }
-
-  auto AnnotatedRanges = AnnotatedCode.ranges();
-  if (AnnotatedRanges.size() != TreeDumps.size()) {
-    return ::testing::AssertionFailure()
-           << "The number of annotated ranges in the source code is different "
-              "to the number of their corresponding tree dumps.";
-  }
-  bool Failed = false;
-  for (unsigned i = 0; i < AnnotatedRanges.size(); i++) {
-    auto *AnnotatedNode = nodeByRange(AnnotatedRanges[i], Root);
-    assert(AnnotatedNode);
-    auto AnnotatedNodeDump =
-        StringRef(AnnotatedNode->dump(*Arena)).trim().str();
-    // EXPECT_EQ shows the diff between the two strings if they are different.
-    EXPECT_EQ(TreeDumps[i].trim().str(), AnnotatedNodeDump)
-        << "Dumps diverged for the code:\n"
-        << AnnotatedCode.code().slice(AnnotatedRanges[i].Begin,
-                                      AnnotatedRanges[i].End);
-    if (AnnotatedNodeDump != TreeDumps[i].trim().str())
-      Failed = true;
-  }
-  return Failed ? ::testing::AssertionFailure() : ::testing::AssertionSuccess();
-}
-
 syntax::Node *SyntaxTreeTest::nodeByRange(llvm::Annotations::Range R,
                                           syntax::Node *Root) {
-  ArrayRef<syntax::Token> Toks = tokens(Root);
+  ArrayRef<syntax::Token> Toks = tokens(Root, *TM);
 
   if (Toks.front().location().isFileID() && Toks.back().location().isFileID() &&
       syntax::Token::range(*SourceMgr, Toks.front(), Toks.back()) ==
@@ -229,7 +179,7 @@ syntax::Node *SyntaxTreeTest::nodeByRange(llvm::Annotations::Range R,
   auto *T = dyn_cast<syntax::Tree>(Root);
   if (!T)
     return nullptr;
-  for (auto *C = T->firstChild(); C != nullptr; C = C->nextSibling()) {
+  for (auto *C = T->getFirstChild(); C != nullptr; C = C->getNextSibling()) {
     if (auto *Result = nodeByRange(R, C))
       return Result;
   }

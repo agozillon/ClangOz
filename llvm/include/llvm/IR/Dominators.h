@@ -14,23 +14,38 @@
 #ifndef LLVM_IR_DOMINATORS_H
 #define LLVM_IR_DOMINATORS_H
 
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/DepthFirstIterator.h"
-#include "llvm/ADT/GraphTraits.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/PointerIntPair.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/ADT/ilist_iterator.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/IR/Use.h"
 #include "llvm/Pass.h"
+#include "llvm/Support/CFGDiff.h"
+#include "llvm/Support/CFGUpdate.h"
 #include "llvm/Support/GenericDomTree.h"
+#include "llvm/Support/GenericDomTreeConstruction.h"
+#include <algorithm>
 #include <utility>
+#include <vector>
 
 namespace llvm {
 
 class Function;
 class Instruction;
 class Module;
+class Value;
 class raw_ostream;
+template <class GraphType> struct GraphTraits;
 
 extern template class DomTreeNodeBase<BasicBlock>;
 extern template class DominatorTreeBase<BasicBlock, false>; // DomTree
@@ -66,9 +81,11 @@ extern template void DeleteEdge<BBPostDomTree>(BBPostDomTree &DT,
                                                BasicBlock *To);
 
 extern template void ApplyUpdates<BBDomTree>(BBDomTree &DT,
-                                             BBDomTreeGraphDiff &);
+                                             BBDomTreeGraphDiff &,
+                                             BBDomTreeGraphDiff *);
 extern template void ApplyUpdates<BBPostDomTree>(BBPostDomTree &DT,
-                                                 BBPostDomTreeGraphDiff &);
+                                                 BBPostDomTreeGraphDiff &,
+                                                 BBPostDomTreeGraphDiff *);
 
 extern template bool Verify<BBDomTree>(const BBDomTree &DT,
                                        BBDomTree::VerificationLevel VL);
@@ -163,12 +180,24 @@ class DominatorTree : public DominatorTreeBase<BasicBlock, false> {
   // Ensure base-class overloads are visible.
   using Base::dominates;
 
-  /// Return true if Def dominates a use in User.
+  /// Return true if the (end of the) basic block BB dominates the use U.
+  bool dominates(const BasicBlock *BB, const Use &U) const;
+
+  /// Return true if value Def dominates use U, in the sense that Def is
+  /// available at U, and could be substituted as the used value without
+  /// violating the SSA dominance requirement.
   ///
-  /// This performs the special checks necessary if Def and User are in the same
-  /// basic block. Note that Def doesn't dominate a use in Def itself!
-  bool dominates(const Instruction *Def, const Use &U) const;
-  bool dominates(const Instruction *Def, const Instruction *User) const;
+  /// In particular, it is worth noting that:
+  ///  * Non-instruction Defs dominate everything.
+  ///  * Def does not dominate a use in Def itself (outside of degenerate cases
+  ///    like unreachable code or trivial phi cycles).
+  ///  * Invoke/callbr Defs only dominate uses in their default destination.
+  bool dominates(const Value *Def, const Use &U) const;
+  /// Return true if value Def dominates all possible uses inside instruction
+  /// User. Same comments as for the Use-based API apply.
+  bool dominates(const Value *Def, const Instruction *User) const;
+  // Does not accept Value to avoid ambiguity with dominance checks between
+  // two basic blocks.
   bool dominates(const Instruction *Def, const BasicBlock *BB) const;
 
   /// Return true if an edge dominates a use.
@@ -262,6 +291,12 @@ public:
 struct DominatorTreeVerifierPass : PassInfoMixin<DominatorTreeVerifierPass> {
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
 };
+
+/// Enables verification of dominator trees.
+///
+/// This check is expensive and is disabled by default.  `-verify-dom-info`
+/// allows selectively enabling the check without needing to recompile.
+extern bool VerifyDomInfo;
 
 /// Legacy analysis pass which computes a \c DominatorTree.
 class DominatorTreeWrapperPass : public FunctionPass {

@@ -319,11 +319,16 @@ public:
   }
 
   /// Construct an SMTSolverRef from a SymbolData.
-  static inline llvm::SMTExprRef fromData(llvm::SMTSolverRef &Solver,
-                                          const SymbolID ID, const QualType &Ty,
-                                          uint64_t BitWidth) {
-    llvm::Twine Name = "$" + llvm::Twine(ID);
-    return Solver->mkSymbol(Name.str().c_str(), mkSort(Solver, Ty, BitWidth));
+  static inline llvm::SMTExprRef
+  fromData(llvm::SMTSolverRef &Solver, ASTContext &Ctx, const SymbolData *Sym) {
+    const SymbolID ID = Sym->getSymbolID();
+    const QualType Ty = Sym->getType();
+    const uint64_t BitWidth = Ctx.getTypeSize(Ty);
+
+    llvm::SmallString<16> Str;
+    llvm::raw_svector_ostream OS(Str);
+    OS << Sym->getKindStr() << ID;
+    return Solver->mkSymbol(Str.c_str(), mkSort(Solver, Ty, BitWidth));
   }
 
   // Wrapper to generate SMTSolverRef from SymbolCast data.
@@ -422,8 +427,7 @@ public:
       if (RetTy)
         *RetTy = Sym->getType();
 
-      return fromData(Solver, SD->getSymbolID(), Sym->getType(),
-                      Ctx.getTypeSize(Sym->getType()));
+      return fromData(Solver, Ctx, SD);
     }
 
     if (const SymbolCast *SC = dyn_cast<SymbolCast>(Sym)) {
@@ -440,6 +444,28 @@ public:
       if (hasComparison)
         *hasComparison = false;
       return getCastExpr(Solver, Ctx, Exp, FromTy, Sym->getType());
+    }
+
+    if (const UnarySymExpr *USE = dyn_cast<UnarySymExpr>(Sym)) {
+      if (RetTy)
+        *RetTy = Sym->getType();
+
+      QualType OperandTy;
+      llvm::SMTExprRef OperandExp =
+          getSymExpr(Solver, Ctx, USE->getOperand(), &OperandTy, hasComparison);
+      llvm::SMTExprRef UnaryExp =
+          fromUnOp(Solver, USE->getOpcode(), OperandExp);
+
+      // Currently, without the `support-symbolic-integer-casts=true` option,
+      // we do not emit `SymbolCast`s for implicit casts.
+      // One such implicit cast is missing if the operand of the unary operator
+      // has a different type than the unary itself.
+      if (Ctx.getTypeSize(OperandTy) != Ctx.getTypeSize(Sym->getType())) {
+        if (hasComparison)
+          *hasComparison = false;
+        return getCastExpr(Solver, Ctx, UnaryExp, OperandTy, Sym->getType());
+      }
+      return UnaryExp;
     }
 
     if (const BinarySymExpr *BSE = dyn_cast<BinarySymExpr>(Sym)) {

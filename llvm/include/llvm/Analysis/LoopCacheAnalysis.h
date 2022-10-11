@@ -14,19 +14,22 @@
 #ifndef LLVM_ANALYSIS_LOOPCACHEANALYSIS_H
 #define LLVM_ANALYSIS_LOOPCACHEANALYSIS_H
 
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/DependenceAnalysis.h"
 #include "llvm/Analysis/LoopAnalysisManager.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/Pass.h"
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/PassManager.h"
 
 namespace llvm {
 
+class AAResults;
+class DependenceInfo;
+class Instruction;
 class LPMUpdater;
+class raw_ostream;
+class LoopInfo;
+class Loop;
+class ScalarEvolution;
+class SCEV;
+class TargetTransformInfo;
+
 using CacheCostTy = int64_t;
 using LoopVectorTy = SmallVector<Loop *, 8>;
 
@@ -70,7 +73,7 @@ public:
   /// the same chace line iff the distance between them in the innermost
   /// dimension is less than the cache line size. Return None if unsure.
   Optional<bool> hasSpacialReuse(const IndexedReference &Other, unsigned CLS,
-                                 AliasAnalysis &AA) const;
+                                 AAResults &AA) const;
 
   /// Return true if the current object and the indexed reference \p Other
   /// have distance smaller than \p MaxDistance in the dimension associated with
@@ -78,7 +81,7 @@ public:
   /// MaxDistance and None if unsure.
   Optional<bool> hasTemporalReuse(const IndexedReference &Other,
                                   unsigned MaxDistance, const Loop &L,
-                                  DependenceInfo &DI, AliasAnalysis &AA) const;
+                                  DependenceInfo &DI, AAResults &AA) const;
 
   /// Compute the cost of the reference w.r.t. the given loop \p L when it is
   /// considered in the innermost position in the loop nest.
@@ -95,14 +98,26 @@ private:
   /// Attempt to delinearize the indexed reference.
   bool delinearize(const LoopInfo &LI);
 
+  /// Attempt to delinearize \p AccessFn for fixed-size arrays.
+  bool tryDelinearizeFixedSize(const SCEV *AccessFn,
+                               SmallVectorImpl<const SCEV *> &Subscripts);
+
   /// Return true if the index reference is invariant with respect to loop \p L.
   bool isLoopInvariant(const Loop &L) const;
 
   /// Return true if the indexed reference is 'consecutive' in loop \p L.
   /// An indexed reference is 'consecutive' if the only coefficient that uses
   /// the loop induction variable is the rightmost one, and the access stride is
-  /// smaller than the cache line size \p CLS.
-  bool isConsecutive(const Loop &L, unsigned CLS) const;
+  /// smaller than the cache line size \p CLS. Provide a valid \p Stride value
+  /// if the indexed reference is 'consecutive'.
+  bool isConsecutive(const Loop &L, const SCEV *&Stride, unsigned CLS) const;
+
+  /// Retrieve the index of the subscript corresponding to the given loop \p
+  /// L. Return a zero-based positive index if the subscript index is
+  /// succesfully located and a negative value otherwise. For example given the
+  /// indexed reference 'A[i][2j+1][3k+2]', the call
+  /// 'getSubscriptIndex(loop-k)' would return value 2.
+  int getSubscriptIndex(const Loop &L) const;
 
   /// Return the coefficient used in the rightmost dimension.
   const SCEV *getLastCoefficient() const;
@@ -118,7 +133,7 @@ private:
 
   /// Return true if the given reference \p Other is definetely aliased with
   /// the indexed reference represented by this class.
-  bool isAliased(const IndexedReference &Other, AliasAnalysis &AA) const;
+  bool isAliased(const IndexedReference &Other, AAResults &AA) const;
 
 private:
   /// True if the reference can be delinearized, false otherwise.
@@ -183,7 +198,7 @@ public:
   /// between array elements accessed in a loop so that the elements are
   /// classified to have temporal reuse.
   CacheCost(const LoopVectorTy &Loops, const LoopInfo &LI, ScalarEvolution &SE,
-            TargetTransformInfo &TTI, AliasAnalysis &AA, DependenceInfo &DI,
+            TargetTransformInfo &TTI, AAResults &AA, DependenceInfo &DI,
             Optional<unsigned> TRT = None);
 
   /// Create a CacheCost for the loop nest rooted by \p Root.
@@ -197,14 +212,14 @@ public:
   /// Return the estimated cost of loop \p L if the given loop is part of the
   /// loop nest associated with this object. Return -1 otherwise.
   CacheCostTy getLoopCost(const Loop &L) const {
-    auto IT = std::find_if(
-        LoopCosts.begin(), LoopCosts.end(),
-        [&L](const LoopCacheCostTy &LCC) { return LCC.first == &L; });
+    auto IT = llvm::find_if(LoopCosts, [&L](const LoopCacheCostTy &LCC) {
+      return LCC.first == &L;
+    });
     return (IT != LoopCosts.end()) ? (*IT).second : -1;
   }
 
   /// Return the estimated ordered loop costs.
-  const ArrayRef<LoopCacheCostTy> getLoopCosts() const { return LoopCosts; }
+  ArrayRef<LoopCacheCostTy> getLoopCosts() const { return LoopCosts; }
 
 private:
   /// Calculate the cache footprint of each loop in the nest (when it is
@@ -236,9 +251,10 @@ private:
 
   /// Sort the LoopCosts vector by decreasing cache cost.
   void sortLoopCosts() {
-    sort(LoopCosts, [](const LoopCacheCostTy &A, const LoopCacheCostTy &B) {
-      return A.second > B.second;
-    });
+    stable_sort(LoopCosts,
+                [](const LoopCacheCostTy &A, const LoopCacheCostTy &B) {
+                  return A.second > B.second;
+                });
   }
 
 private:
@@ -258,7 +274,7 @@ private:
   const LoopInfo &LI;
   ScalarEvolution &SE;
   TargetTransformInfo &TTI;
-  AliasAnalysis &AA;
+  AAResults &AA;
   DependenceInfo &DI;
 };
 

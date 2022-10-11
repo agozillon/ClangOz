@@ -1,18 +1,13 @@
 import xml.etree.ElementTree as ET
-
 import gdbremote_testcase
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
 
-
 class TestGdbRemoteLibrariesSvr4Support(gdbremote_testcase.GdbRemoteTestCaseBase):
-
-    mydir = TestBase.compute_mydir(__file__)
 
     FEATURE_NAME = "qXfer:libraries-svr4:read"
 
     def setup_test(self):
-        self.init_llgs_test()
         self.build()
         self.set_inferior_startup_launch()
         env = {}
@@ -105,28 +100,24 @@ class TestGdbRemoteLibrariesSvr4Support(gdbremote_testcase.GdbRemoteTestCaseBase
         for lib in self.get_expected_libs():
             self.assertIn(os.path.realpath(self.getBuildDir() + "/" + lib), libraries_svr4_names)
 
-    @llgs_test
-    @skipUnlessPlatform(["linux", "android", "netbsd"])
+    @skipUnlessPlatform(["linux", "android", "freebsd", "netbsd"])
     def test_supports_libraries_svr4(self):
         self.setup_test()
         self.assertTrue(self.has_libraries_svr4_support())
 
-    @llgs_test
-    @skipUnlessPlatform(["linux", "android", "netbsd"])
+    @skipUnlessPlatform(["linux", "android", "freebsd", "netbsd"])
     @expectedFailureNetBSD
     def test_libraries_svr4_well_formed(self):
         self.setup_test()
         self.libraries_svr4_well_formed()
 
-    @llgs_test
-    @skipUnlessPlatform(["linux", "android", "netbsd"])
+    @skipUnlessPlatform(["linux", "android", "freebsd", "netbsd"])
     @expectedFailureNetBSD
     def test_libraries_svr4_load_addr(self):
         self.setup_test()
         self.libraries_svr4_has_correct_load_addr()
 
-    @llgs_test
-    @skipUnlessPlatform(["linux", "android", "netbsd"])
+    @skipUnlessPlatform(["linux", "android", "freebsd", "netbsd"])
     @expectedFailureNetBSD
     def test_libraries_svr4_libs_present(self):
         self.setup_test()

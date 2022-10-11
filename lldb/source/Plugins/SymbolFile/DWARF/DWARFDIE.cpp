@@ -15,6 +15,7 @@
 #include "DWARFUnit.h"
 
 using namespace lldb_private;
+using namespace lldb_private::dwarf;
 
 namespace {
 
@@ -54,7 +55,7 @@ public:
   explicit ElaboratingDIEIterator(DWARFDIE d) : m_worklist(1, d) {}
 
   /// End marker
-  ElaboratingDIEIterator() {}
+  ElaboratingDIEIterator() = default;
 
   const DWARFDIE &operator*() const { return m_worklist.back(); }
   ElaboratingDIEIterator &operator++() {
@@ -192,7 +193,7 @@ DWARFDIE::LookupDeepestBlock(lldb::addr_t address) const {
   }
 
   if (check_children) {
-    for (DWARFDIE child = GetFirstChild(); child; child = child.GetSibling()) {
+    for (DWARFDIE child : children()) {
       if (DWARFDIE child_result = child.LookupDeepestBlock(address))
         return child_result;
     }
@@ -319,6 +320,18 @@ void DWARFDIE::AppendTypeName(Stream &s) const {
   case DW_TAG_volatile_type:
     s.PutCString("volatile ");
     break;
+  case DW_TAG_LLVM_ptrauth_type: {
+    unsigned key = GetAttributeValueAsUnsigned(DW_AT_LLVM_ptrauth_key, 0);
+    bool isAddressDiscriminated = GetAttributeValueAsUnsigned(
+        DW_AT_LLVM_ptrauth_address_discriminated, 0);
+    unsigned extraDiscriminator =
+        GetAttributeValueAsUnsigned(DW_AT_LLVM_ptrauth_extra_discriminator, 0);
+    bool isaPointer =
+        GetAttributeValueAsUnsigned(DW_AT_LLVM_ptrauth_isa_pointer, 0);
+    s.Printf("__ptrauth(%d, %d, 0x0%x, %d)", key, isAddressDiscriminated,
+             extraDiscriminator, isaPointer);
+    break;
+  }
   default:
     return;
   }
@@ -440,11 +453,15 @@ bool DWARFDIE::GetDIENamesAndRanges(
     const char *&name, const char *&mangled, DWARFRangeList &ranges,
     int &decl_file, int &decl_line, int &decl_column, int &call_file,
     int &call_line, int &call_column,
-    lldb_private::DWARFExpression *frame_base) const {
+    lldb_private::DWARFExpressionList *frame_base) const {
   if (IsValid()) {
     return m_die->GetDIENamesAndRanges(
         GetCU(), name, mangled, ranges, decl_file, decl_line, decl_column,
         call_file, call_line, call_column, frame_base);
   } else
     return false;
+}
+
+llvm::iterator_range<DWARFDIE::child_iterator> DWARFDIE::children() const {
+  return llvm::make_range(child_iterator(*this), child_iterator());
 }

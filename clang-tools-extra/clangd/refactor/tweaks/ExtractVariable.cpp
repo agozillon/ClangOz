@@ -5,12 +5,12 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+#include "AST.h"
 #include "ParsedAST.h"
 #include "Protocol.h"
 #include "Selection.h"
 #include "SourceCode.h"
 #include "refactor/Tweak.h"
-#include "support/Logger.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
@@ -22,7 +22,6 @@
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Tooling/Core/Replacement.h"
-#include "llvm/ADT/None.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
@@ -52,6 +51,7 @@ public:
 private:
   bool Extractable = false;
   const clang::Expr *Expr;
+  QualType VarType;
   const SelectionTree::Node *ExprNode;
   // Stmt before which we will extract
   const clang::Stmt *InsertionPoint = nullptr;
@@ -79,8 +79,33 @@ computeReferencedDecls(const clang::Expr *Expr) {
     }
   };
   FindDeclRefsVisitor Visitor;
-  Visitor.TraverseStmt(const_cast<Stmt *>(dyn_cast<Stmt>(Expr)));
+  Visitor.TraverseStmt(const_cast<Stmt *>(cast<Stmt>(Expr)));
   return Visitor.ReferencedDecls;
+}
+
+static QualType computeVariableType(const Expr *Expr, const ASTContext &Ctx) {
+  if (Ctx.getLangOpts().CPlusPlus11)
+    return Ctx.getAutoDeductType();
+
+  if (Expr->hasPlaceholderType(BuiltinType::PseudoObject)) {
+    if (const auto *PR = dyn_cast<ObjCPropertyRefExpr>(Expr)) {
+      if (PR->isMessagingSetter()) {
+        // Don't support extracting a compound reference like `self.prop += 1`
+        // since the meaning changes after extraction since we'll no longer call
+        // the setter. Non compound access like `self.prop = 1` is invalid since
+        // it returns nil (setter method must have a void return type).
+        return QualType();
+      } else if (PR->isMessagingGetter()) {
+        if (PR->isExplicitProperty())
+          return PR->getExplicitProperty()->getType();
+        else
+          return PR->getImplicitPropertyGetter()->getReturnType();
+      }
+    } else {
+      return QualType();
+    }
+  }
+  return Expr->getType();
 }
 
 ExtractionContext::ExtractionContext(const SelectionTree::Node *Node,
@@ -92,6 +117,12 @@ ExtractionContext::ExtractionContext(const SelectionTree::Node *Node,
   InsertionPoint = computeInsertionPoint();
   if (InsertionPoint)
     Extractable = true;
+  VarType = computeVariableType(Expr, Ctx);
+  if (VarType.isNull())
+    Extractable = false;
+  else
+    // Strip the outer nullability since it's not common for local variables.
+    AttributedType::stripOuterNullability(VarType);
 }
 
 // checks whether extracting before InsertionPoint will take a
@@ -175,9 +206,9 @@ ExtractionContext::insertDeclaration(llvm::StringRef VarName,
       toHalfOpenFileRange(SM, Ctx.getLangOpts(),
                           InsertionPoint->getSourceRange())
           ->getBegin();
-  // FIXME: Replace auto with explicit type and add &/&& as necessary
-  std::string ExtractedVarDecl = std::string("auto ") + VarName.str() + " = " +
-                                 ExtractionCode.str() + "; ";
+  std::string ExtractedVarDecl =
+      printType(VarType, ExprNode->getDeclContext(), VarName) + " = " +
+      ExtractionCode.str() + "; ";
   return tooling::Replacement(SM, InsertionLoc, 0, ExtractedVarDecl);
 }
 
@@ -202,7 +233,7 @@ ExtractionContext::insertDeclaration(llvm::StringRef VarName,
 struct ParsedBinaryOperator {
   BinaryOperatorKind Kind;
   SourceLocation ExprLoc;
-  llvm::SmallVector<const SelectionTree::Node*, 8> SelectedOperands;
+  llvm::SmallVector<const SelectionTree::Node *> SelectedOperands;
 
   // If N is a binary operator, populate this and return true.
   bool parse(const SelectionTree::Node &N) {
@@ -367,32 +398,54 @@ bool eligibleForExtraction(const SelectionTree::Node *N) {
     return false;
 
   // Void expressions can't be assigned to variables.
-  if (const Type *ExprType = E->getType().getTypePtrOrNull())
-    if (ExprType->isVoidType())
-      return false;
+  const Type *ExprType = E->getType().getTypePtrOrNull();
+  if (!ExprType || ExprType->isVoidType())
+    return false;
+
+  // Must know the type of the result in order to spell it, or instead use
+  // `auto` in C++.
+  if (!N->getDeclContext().getParentASTContext().getLangOpts().CPlusPlus11 &&
+      !ExprType)
+    return false;
 
   // A plain reference to a name (e.g. variable) isn't  worth extracting.
   // FIXME: really? What if it's e.g. `std::is_same<void, void>::value`?
-  if (llvm::isa<DeclRefExpr>(E) || llvm::isa<MemberExpr>(E))
+  if (llvm::isa<DeclRefExpr>(E))
     return false;
 
-  // Extracting Exprs like a = 1 gives dummy = a = 1 which isn't useful.
+  // Similarly disallow extraction for member exprs with an implicit `this`.
+  if (const auto *ME = dyn_cast<MemberExpr>(E))
+    if (const auto *TE = dyn_cast<CXXThisExpr>(ME->getBase()->IgnoreImpCasts()))
+      if (TE->isImplicit())
+        return false;
+
+  // Extracting Exprs like a = 1 gives placeholder = a = 1 which isn't useful.
   // FIXME: we could still hoist the assignment, and leave the variable there?
   ParsedBinaryOperator BinOp;
   if (BinOp.parse(*N) && BinaryOperator::isAssignmentOp(BinOp.Kind))
     return false;
 
+  const SelectionTree::Node &OuterImplicit = N->outerImplicit();
+  const auto *Parent = OuterImplicit.Parent;
+  if (!Parent)
+    return false;
   // We don't want to extract expressions used as statements, that would leave
-  // a `dummy;` around that has no effect.
+  // a `placeholder;` around that has no effect.
   // Unfortunately because the AST doesn't have ExprStmt, we have to check in
   // this roundabout way.
-  const SelectionTree::Node &OuterImplicit = N->outerImplicit();
-  if (!OuterImplicit.Parent ||
-      childExprIsStmt(OuterImplicit.Parent->ASTNode.get<Stmt>(),
+  if (childExprIsStmt(Parent->ASTNode.get<Stmt>(),
                       OuterImplicit.ASTNode.get<Expr>()))
     return false;
 
-  // FIXME: ban extracting the RHS of an assignment: `a = [[foo()]]`
+  // Disable extraction of full RHS on assignment operations, e.g:
+  // auto x = [[RHS_EXPR]];
+  // This would just result in duplicating the code.
+  if (const auto *BO = Parent->ASTNode.get<BinaryOperator>()) {
+    if (BO->isAssignmentOp() &&
+        BO->getRHS() == OuterImplicit.ASTNode.get<Expr>())
+      return false;
+  }
+
   return true;
 }
 
@@ -412,7 +465,7 @@ const SelectionTree::Node *computeExtractedExpr(const SelectionTree::Node *N) {
       llvm::isa<MemberExpr>(SelectedExpr))
     if (const SelectionTree::Node *Call = getCallExpr(N))
       TargetNode = Call;
-  // Extracting Exprs like a = 1 gives dummy = a = 1 which isn't useful.
+  // Extracting Exprs like a = 1 gives placeholder = a = 1 which isn't useful.
   if (const BinaryOperator *BinOpExpr =
           dyn_cast_or_null<BinaryOperator>(SelectedExpr)) {
     if (BinOpExpr->getOpcode() == BinaryOperatorKind::BO_Assign)
@@ -423,22 +476,24 @@ const SelectionTree::Node *computeExtractedExpr(const SelectionTree::Node *N) {
   return TargetNode;
 }
 
-/// Extracts an expression to the variable dummy
+/// Extracts an expression to the variable placeholder
 /// Before:
 /// int x = 5 + 4 * 3;
 ///         ^^^^^
 /// After:
-/// auto dummy = 5 + 4;
-/// int x = dummy * 3;
+/// auto placeholder = 5 + 4;
+/// int x = placeholder * 3;
 class ExtractVariable : public Tweak {
 public:
-  const char *id() const override final;
+  const char *id() const final;
   bool prepare(const Selection &Inputs) override;
   Expected<Effect> apply(const Selection &Inputs) override;
   std::string title() const override {
     return "Extract subexpression to variable";
   }
-  Intent intent() const override { return Refactor; }
+  llvm::StringLiteral kind() const override {
+    return CodeAction::REFACTOR_KIND;
+  }
 
 private:
   // the expression to extract
@@ -450,10 +505,6 @@ bool ExtractVariable::prepare(const Selection &Inputs) {
   if (Inputs.SelectionBegin == Inputs.SelectionEnd)
     return false;
   const ASTContext &Ctx = Inputs.AST->getASTContext();
-  // FIXME: Enable non-C++ cases once we start spelling types explicitly instead
-  // of making use of auto.
-  if (!Ctx.getLangOpts().CPlusPlus)
-    return false;
   const SourceManager &SM = Inputs.AST->getSourceManager();
   if (const SelectionTree::Node *N =
           computeExtractedExpr(Inputs.ASTSelection.commonAncestor()))
@@ -464,7 +515,7 @@ bool ExtractVariable::prepare(const Selection &Inputs) {
 Expected<Tweak::Effect> ExtractVariable::apply(const Selection &Inputs) {
   tooling::Replacements Result;
   // FIXME: get variable name from user or suggest based on type
-  std::string VarName = "dummy";
+  std::string VarName = "placeholder";
   SourceRange Range = Target->getExtractionChars();
   // insert new variable declaration
   if (auto Err = Result.add(Target->insertDeclaration(VarName, Range)))

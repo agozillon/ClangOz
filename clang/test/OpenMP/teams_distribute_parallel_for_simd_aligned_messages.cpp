@@ -91,7 +91,7 @@ template<int LEN> int test_warn() {
   return 0;
 }
 
-struct S1; // expected-note 2 {{declared here}}
+struct S1; // expected-note 2 {{declared here}} // expected-note {{forward declaration of 'S1'}}
 extern S1 a; // expected-note {{'a' declared here}}
 class S2 {
   mutable int a;
@@ -195,7 +195,7 @@ template<class I, class C> int foomain(I argc, C **argv) {
   int v = 0;
 
 #pragma omp target
-#pragma omp teams distribute parallel for simd aligned(f:j) // expected-note {{initializer of 'j' is not a constant expression}} expected-error {{expression is not an integral constant expression}}
+#pragma omp teams distribute parallel for simd aligned(f:j) // expected-note {{initializer of 'j' is not a constant expression}} expected-error {{integral constant expression}}
 
   for (I k = 0; k < argc; ++k) { ++k; v += j; }
 

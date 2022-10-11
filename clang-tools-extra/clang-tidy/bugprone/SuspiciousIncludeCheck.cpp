@@ -24,9 +24,9 @@ public:
 
   void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
                           StringRef FileName, bool IsAngled,
-                          CharSourceRange FilenameRange, const FileEntry *File,
-                          StringRef SearchPath, StringRef RelativePath,
-                          const Module *Imported,
+                          CharSourceRange FilenameRange,
+                          Optional<FileEntryRef> File, StringRef SearchPath,
+                          StringRef RelativePath, const Module *Imported,
                           SrcMgr::CharacteristicKind FileType) override;
 
 private:
@@ -46,15 +46,15 @@ SuspiciousIncludeCheck::SuspiciousIncludeCheck(StringRef Name,
   if (!utils::parseFileExtensions(RawStringImplementationFileExtensions,
                                   ImplementationFileExtensions,
                                   utils::defaultFileExtensionDelimiters())) {
-    llvm::errs() << "Invalid implementation file extension: "
-                 << RawStringImplementationFileExtensions << "\n";
+    this->configurationDiag("Invalid implementation file extension: '%0'")
+        << RawStringImplementationFileExtensions;
   }
 
   if (!utils::parseFileExtensions(RawStringHeaderFileExtensions,
                                   HeaderFileExtensions,
                                   utils::defaultFileExtensionDelimiters())) {
-    llvm::errs() << "Invalid header file extension: "
-                 << RawStringHeaderFileExtensions << "\n";
+    this->configurationDiag("Invalid header file extension: '%0'")
+        << RawStringHeaderFileExtensions;
   }
 }
 
@@ -72,7 +72,7 @@ void SuspiciousIncludeCheck::registerPPCallbacks(
 
 void SuspiciousIncludePPCallbacks::InclusionDirective(
     SourceLocation HashLoc, const Token &IncludeTok, StringRef FileName,
-    bool IsAngled, CharSourceRange FilenameRange, const FileEntry *File,
+    bool IsAngled, CharSourceRange FilenameRange, Optional<FileEntryRef> File,
     StringRef SearchPath, StringRef RelativePath, const Module *Imported,
     SrcMgr::CharacteristicKind FileType) {
   if (IncludeTok.getIdentifierInfo()->getPPKeywordID() == tok::pp_import)
@@ -93,10 +93,9 @@ void SuspiciousIncludePPCallbacks::InclusionDirective(
     llvm::sys::path::replace_extension(GuessedFileName,
                                        (HFE.size() ? "." : "") + HFE);
 
-    const DirectoryLookup *CurDir;
     Optional<FileEntryRef> File =
         PP->LookupFile(DiagLoc, GuessedFileName, IsAngled, nullptr, nullptr,
-                       CurDir, nullptr, nullptr, nullptr, nullptr, nullptr);
+                       nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
     if (File) {
       Check.diag(DiagLoc, "did you mean to include '%0'?", DiagnosticIDs::Note)
           << GuessedFileName;

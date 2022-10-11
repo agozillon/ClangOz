@@ -11,15 +11,16 @@
 // template <class Alloc>
 // struct allocator_traits
 // {
-//     static pointer allocate(allocator_type& a, size_type n);
+//     static constexpr pointer allocate(allocator_type& a, size_type n);
 //     ...
 // };
 
 // UNSUPPORTED: c++03, c++11, c++14, c++17
 
-#include <memory>
-#include <cstdint>
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 
 #include "test_macros.h"
 

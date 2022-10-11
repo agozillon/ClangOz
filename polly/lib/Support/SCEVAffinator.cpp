@@ -27,7 +27,7 @@ static cl::opt<bool> IgnoreIntegerWrapping(
     "polly-ignore-integer-wrapping",
     cl::desc("Do not build run-time checks to proof absence of integer "
              "wrapping"),
-    cl::Hidden, cl::ZeroOrMore, cl::init(false), cl::cat(PollyCategory));
+    cl::Hidden, cl::cat(PollyCategory));
 
 // The maximal number of basic sets we allow during the construction of a
 // piecewise affine function. More complex ones will result in very high
@@ -197,7 +197,7 @@ PWACtx SCEVAffinator::visit(const SCEV *Expr) {
 
   auto Key = std::make_pair(Expr, BB);
   PWACtx PWAC = CachedExpressions[Key];
-  if (PWAC.first)
+  if (!PWAC.first.is_null())
     return PWAC;
 
   auto ConstantAndLeftOverPair = extractConstantFactor(Expr, SE);
@@ -264,6 +264,10 @@ PWACtx SCEVAffinator::visitConstant(const SCEVConstant *Expr) {
   isl_local_space *ls = isl_local_space_from_space(Space);
   return getPWACtxFromPWA(
       isl::manage(isl_pw_aff_from_aff(isl_aff_val_on_domain(ls, v))));
+}
+
+PWACtx SCEVAffinator::visitPtrToIntExpr(const SCEVPtrToIntExpr *Expr) {
+  return visit(Expr->getOperand(0));
 }
 
 PWACtx SCEVAffinator::visitTruncateExpr(const SCEVTruncateExpr *Expr) {
@@ -461,6 +465,11 @@ PWACtx SCEVAffinator::visitUMinExpr(const SCEVUMinExpr *Expr) {
   llvm_unreachable("SCEVUMinExpr not yet supported");
 }
 
+PWACtx
+SCEVAffinator::visitSequentialUMinExpr(const SCEVSequentialUMinExpr *Expr) {
+  llvm_unreachable("SCEVSequentialUMinExpr not yet supported");
+}
+
 PWACtx SCEVAffinator::visitUDivExpr(const SCEVUDivExpr *Expr) {
   // The handling of unsigned division is basically the same as for signed
   // division, except the interpretation of the operands. As the divisor
@@ -538,8 +547,6 @@ PWACtx SCEVAffinator::visitUnknown(const SCEVUnknown *Expr) {
     switch (I->getOpcode()) {
     case Instruction::IntToPtr:
       return visit(SE.getSCEVAtScope(I->getOperand(0), getScope()));
-    case Instruction::PtrToInt:
-      return visit(SE.getSCEVAtScope(I->getOperand(0), getScope()));
     case Instruction::SDiv:
       return visitSDivInstruction(I);
     case Instruction::SRem:
@@ -549,8 +556,15 @@ PWACtx SCEVAffinator::visitUnknown(const SCEVUnknown *Expr) {
     }
   }
 
-  llvm_unreachable(
-      "Unknowns SCEV was neither parameter nor a valid instruction.");
+  if (isa<ConstantPointerNull>(Expr->getValue())) {
+    isl::val v{Ctx, 0};
+    isl::space Space{Ctx, 0, NumIterators};
+    isl::local_space ls{Space};
+    return getPWACtxFromPWA(isl::aff(ls, v));
+  }
+
+  llvm_unreachable("Unknowns SCEV was neither a parameter, a constant nor a "
+                   "valid instruction.");
 }
 
 PWACtx SCEVAffinator::complexityBailout() {

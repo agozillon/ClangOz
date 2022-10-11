@@ -33,8 +33,6 @@ struct RISCVRegisterInfo : public RISCVGenRegisterInfo {
   bool isAsmClobberable(const MachineFunction &MF,
                         MCRegister PhysReg) const override;
 
-  bool isConstantPhysReg(MCRegister PhysReg) const override;
-
   const uint32_t *getNoPreservedMask() const override;
 
   bool hasReservedSpillSlot(const MachineFunction &MF, Register Reg,
@@ -59,6 +57,15 @@ struct RISCVRegisterInfo : public RISCVGenRegisterInfo {
                      unsigned Kind = 0) const override {
     return &RISCV::GPRRegClass;
   }
+
+  const TargetRegisterClass *
+  getLargestLegalSuperClass(const TargetRegisterClass *RC,
+                            const MachineFunction &) const override;
+
+  void getOffsetOpcodes(const StackOffset &Offset,
+                        SmallVectorImpl<uint64_t> &Ops) const override;
+
+  unsigned getRegisterCostTableIndex(const MachineFunction &MF) const override;
 };
 }
 

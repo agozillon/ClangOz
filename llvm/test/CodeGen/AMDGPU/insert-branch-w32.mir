@@ -1,4 +1,5 @@
 # RUN: llc -march=amdgcn -mcpu=gfx1010 -verify-machineinstrs -run-pass branch-folder -o - %s | FileCheck %s
+# RUN: llc -march=amdgcn -mcpu=gfx1100 -verify-machineinstrs -run-pass branch-folder -o - %s | FileCheck %s
 
 # Designed to provoke calling SIInstrInfo::insertBranch in wave32 mode
 # The implicit $vcc operand should be $vcc_lo in this case
@@ -12,7 +13,6 @@ body:             |
   bb.0:
     $vgpr1 = V_MOV_B32_e32 1050, implicit $exec
     $sgpr0 = S_MOV_B32 1123418112
-    $vcc_hi = IMPLICIT_DEF
   bb.1:
     $vgpr0 = COPY killed $vgpr1, implicit $exec
     V_CMP_GT_U32_e32 5, $vgpr1, implicit-def $vcc_lo, implicit $exec, implicit-def $vcc
@@ -34,7 +34,6 @@ body:             |
   bb.0:
     $vgpr1 = V_MOV_B32_e32 1050, implicit $exec
     $sgpr0 = S_MOV_B32 1123418112
-    $vcc_hi = IMPLICIT_DEF
   bb.1:
     $vgpr0 = COPY killed $vgpr1, implicit $exec
     S_CBRANCH_VCCNZ %bb.1, implicit undef $vcc_lo, implicit undef $vcc

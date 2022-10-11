@@ -93,6 +93,9 @@ public:
   std::optional<DynamicType> GetType() const;
   int Rank() const;
   std::string AsFortran() const;
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+  LLVM_DUMP_METHOD void dump() const;
+#endif
   llvm::raw_ostream &AsFortran(llvm::raw_ostream &) const;
   static Derived Rewrite(FoldingContext &, Derived &&);
 };
@@ -116,8 +119,10 @@ class Operation {
 public:
   using Derived = DERIVED;
   using Result = RESULT;
-  static_assert(IsSpecificIntrinsicType<Result>);
   static constexpr std::size_t operands{sizeof...(OPERANDS)};
+  // Allow specific intrinsic types and Parentheses<SomeDerived>
+  static_assert(IsSpecificIntrinsicType<Result> ||
+      (operands == 1 && std::is_same_v<Result, SomeDerived>));
   template <int J> using Operand = std::tuple_element_t<J, OperandTypes>;
 
   // Unary operations wrap a single Expr with a CopyableIndirection.
@@ -172,7 +177,9 @@ public:
     }
   }
 
-  static constexpr std::optional<DynamicType> GetType() {
+  static constexpr std::conditional_t<Result::category != TypeCategory::Derived,
+      std::optional<DynamicType>, void>
+  GetType() {
     return Result::GetType();
   }
   int Rank() const {
@@ -202,15 +209,11 @@ template <typename TO, TypeCategory FROMCAT = TO::category>
 struct Convert : public Operation<Convert<TO, FROMCAT>, TO, SomeKind<FROMCAT>> {
   // Fortran doesn't have conversions between kinds of CHARACTER apart from
   // assignments, and in those the data must be convertible to/from 7-bit ASCII.
-  // Conversions between kinds of COMPLEX are represented piecewise.
   static_assert(((TO::category == TypeCategory::Integer ||
                      TO::category == TypeCategory::Real) &&
                     (FROMCAT == TypeCategory::Integer ||
                         FROMCAT == TypeCategory::Real)) ||
-      (TO::category == TypeCategory::Character &&
-          FROMCAT == TypeCategory::Character) ||
-      (TO::category == TypeCategory::Logical &&
-          FROMCAT == TypeCategory::Logical));
+      TO::category == FROMCAT);
   using Result = TO;
   using Operand = SomeKind<FROMCAT>;
   using Base = Operation<Convert, Result, Operand>;
@@ -224,6 +227,17 @@ struct Parentheses : public Operation<Parentheses<A>, A, A> {
   using Operand = A;
   using Base = Operation<Parentheses, A, A>;
   using Base::Base;
+};
+
+template <>
+struct Parentheses<SomeDerived>
+    : public Operation<Parentheses<SomeDerived>, SomeDerived, SomeDerived> {
+public:
+  using Result = SomeDerived;
+  using Operand = SomeDerived;
+  using Base = Operation<Parentheses, SomeDerived, SomeDerived>;
+  using Base::Base;
+  DynamicType GetType() const;
 };
 
 template <typename A> struct Negate : public Operation<Negate<A>, A, A> {
@@ -516,15 +530,18 @@ private:
       Power<Result>, Extremum<Result>>;
   using Indices = std::conditional_t<KIND == ImpliedDoIndex::Result::kind,
       std::tuple<ImpliedDoIndex>, std::tuple<>>;
+  using TypeParamInquiries =
+      std::conditional_t<KIND == TypeParamInquiry::Result::kind,
+          std::tuple<TypeParamInquiry>, std::tuple<>>;
   using DescriptorInquiries =
       std::conditional_t<KIND == DescriptorInquiry::Result::kind,
           std::tuple<DescriptorInquiry>, std::tuple<>>;
   using Others = std::tuple<Constant<Result>, ArrayConstructor<Result>,
-      TypeParamInquiry<KIND>, Designator<Result>, FunctionRef<Result>>;
+      Designator<Result>, FunctionRef<Result>>;
 
 public:
   common::TupleToVariant<common::CombineTuples<Operations, Conversions, Indices,
-      DescriptorInquiries, Others>>
+      TypeParamInquiries, DescriptorInquiries, Others>>
       u;
 };
 
@@ -539,8 +556,7 @@ public:
 
 private:
   // N.B. Real->Complex and Complex->Real conversions are done with CMPLX
-  // and part access operations (resp.).  Conversions between kinds of
-  // Complex are done via decomposition to Real and reconstruction.
+  // and part access operations (resp.).
   using Conversions = std::variant<Convert<Result, TypeCategory::Integer>,
       Convert<Result, TypeCategory::Real>>;
   using Operations = std::variant<ComplexComponent<KIND>, Parentheses<Result>,
@@ -560,12 +576,10 @@ public:
   using Result = Type<TypeCategory::Complex, KIND>;
   EVALUATE_UNION_CLASS_BOILERPLATE(Expr)
   explicit Expr(const Scalar<Result> &x) : u{Constant<Result>{x}} {}
-
-  // Note that many COMPLEX operations are represented as REAL operations
-  // over their components (viz., conversions, negation, add, and subtract).
-  using Operations =
-      std::variant<Parentheses<Result>, Multiply<Result>, Divide<Result>,
-          Power<Result>, RealToIntPower<Result>, ComplexConstructor<KIND>>;
+  using Operations = std::variant<Parentheses<Result>, Negate<Result>,
+      Convert<Result, TypeCategory::Complex>, Add<Result>, Subtract<Result>,
+      Multiply<Result>, Divide<Result>, Power<Result>, RealToIntPower<Result>,
+      ComplexConstructor<KIND>>;
   using Others = std::variant<Constant<Result>, ArrayConstructor<Result>,
       Designator<Result>, FunctionRef<Result>>;
 
@@ -605,12 +619,14 @@ FOR_EACH_CHARACTER_KIND(extern template class Expr, )
 // There are no relations between LOGICAL values.
 
 template <typename T>
-struct Relational : public Operation<Relational<T>, LogicalResult, T, T> {
+class Relational : public Operation<Relational<T>, LogicalResult, T, T> {
+public:
   using Result = LogicalResult;
   using Base = Operation<Relational, LogicalResult, T, T>;
   using Operand = typename Base::template Operand<0>;
   static_assert(Operand::category == TypeCategory::Integer ||
       Operand::category == TypeCategory::Real ||
+      Operand::category == TypeCategory::Complex ||
       Operand::category == TypeCategory::Character);
   CLASS_BOILERPLATE(Relational)
   Relational(
@@ -622,25 +638,24 @@ struct Relational : public Operation<Relational<T>, LogicalResult, T, T> {
 };
 
 template <> class Relational<SomeType> {
-  // COMPLEX data are compared piecewise.
-  using DirectlyComparableTypes =
-      common::CombineTuples<IntegerTypes, RealTypes, CharacterTypes>;
+  using DirectlyComparableTypes = common::CombineTuples<IntegerTypes, RealTypes,
+      ComplexTypes, CharacterTypes>;
 
 public:
   using Result = LogicalResult;
   EVALUATE_UNION_CLASS_BOILERPLATE(Relational)
   static constexpr DynamicType GetType() { return Result::GetType(); }
   int Rank() const {
-    return std::visit([](const auto &x) { return x.Rank(); }, u);
+    return common::visit([](const auto &x) { return x.Rank(); }, u);
   }
   llvm::raw_ostream &AsFortran(llvm::raw_ostream &o) const;
   common::MapTemplate<Relational, DirectlyComparableTypes> u;
 };
 
-FOR_EACH_INTEGER_KIND(extern template struct Relational, )
-FOR_EACH_REAL_KIND(extern template struct Relational, )
-FOR_EACH_CHARACTER_KIND(extern template struct Relational, )
-extern template struct Relational<SomeType>;
+FOR_EACH_INTEGER_KIND(extern template class Relational, )
+FOR_EACH_REAL_KIND(extern template class Relational, )
+FOR_EACH_CHARACTER_KIND(extern template class Relational, )
+extern template class Relational<SomeType>;
 
 // Logical expressions of a kind bigger than LogicalResult
 // do not include Relational<> operations as possibilities,
@@ -714,7 +729,8 @@ public:
     return values_.end();
   }
 
-  const Expr<SomeType> *Find(const Symbol &) const; // can return null
+  // can return nullopt
+  std::optional<Expr<SomeType>> Find(const Symbol &) const;
 
   StructureConstructor &Add(const semantics::Symbol &, Expr<SomeType> &&);
   int Rank() const { return 0; }
@@ -722,6 +738,7 @@ public:
   llvm::raw_ostream &AsFortran(llvm::raw_ostream &) const;
 
 private:
+  std::optional<Expr<SomeType>> CreateParentComponent(const Symbol &) const;
   Result result_;
   StructureConstructorValues values_;
 };
@@ -732,7 +749,7 @@ public:
   using Result = SomeDerived;
   EVALUATE_UNION_CLASS_BOILERPLATE(Expr)
   std::variant<Constant<Result>, ArrayConstructor<Result>, StructureConstructor,
-      Designator<Result>, FunctionRef<Result>>
+      Designator<Result>, FunctionRef<Result>, Parentheses<Result>>
       u;
 };
 
@@ -745,7 +762,7 @@ public:
   using Result = SomeKind<CAT>;
   EVALUATE_UNION_CLASS_BOILERPLATE(Expr)
   int GetKind() const;
-  common::MapTemplate<Expr, CategoryTypes<CAT>> u;
+  common::MapTemplate<evaluate::Expr, CategoryTypes<CAT>> u;
 };
 
 template <> class Expr<SomeCharacter> : public ExpressionBase<SomeCharacter> {
@@ -849,6 +866,8 @@ struct GenericExprWrapper {
 struct GenericAssignmentWrapper {
   GenericAssignmentWrapper() {}
   explicit GenericAssignmentWrapper(Assignment &&x) : v{std::move(x)} {}
+  explicit GenericAssignmentWrapper(std::optional<Assignment> &&x)
+      : v{std::move(x)} {}
   ~GenericAssignmentWrapper();
   static void Deleter(GenericAssignmentWrapper *);
   std::optional<Assignment> v; // vacant if error
@@ -863,10 +882,10 @@ FOR_EACH_INTRINSIC_KIND(extern template class ArrayConstructor, )
 #define INSTANTIATE_EXPRESSION_TEMPLATES \
   FOR_EACH_INTRINSIC_KIND(template class Expr, ) \
   FOR_EACH_CATEGORY_TYPE(template class Expr, ) \
-  FOR_EACH_INTEGER_KIND(template struct Relational, ) \
-  FOR_EACH_REAL_KIND(template struct Relational, ) \
-  FOR_EACH_CHARACTER_KIND(template struct Relational, ) \
-  template struct Relational<SomeType>; \
+  FOR_EACH_INTEGER_KIND(template class Relational, ) \
+  FOR_EACH_REAL_KIND(template class Relational, ) \
+  FOR_EACH_CHARACTER_KIND(template class Relational, ) \
+  template class Relational<SomeType>; \
   FOR_EACH_TYPE_AND_KIND(template class ExpressionBase, ) \
   FOR_EACH_INTRINSIC_KIND(template class ArrayConstructorValues, ) \
   FOR_EACH_INTRINSIC_KIND(template class ArrayConstructor, )

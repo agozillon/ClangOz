@@ -82,12 +82,12 @@ namespace dr213 { // dr213: yes
   template <class T> struct A : T {
     void h(T t) {
       char &r1 = f(t);
-      int &r2 = g(t); // expected-error {{undeclared}}
+      int &r2 = g(t); // expected-error {{explicit qualification required to use member 'g' from dependent base class}}
     }
   };
   struct B {
     int &f(B);
-    int &g(B); // expected-note {{in dependent base class}}
+    int &g(B); // expected-note {{here}}
   };
   char &f(B);
 
@@ -292,9 +292,9 @@ namespace dr224 { // dr224: no
     template <int, typename T> struct X { typedef T type; };
     template <class T> class A {
       static const int i = 5;
-      X<i, int>::type w; // FIXME: expected-error {{missing 'typename'}}
-      X<A::i, char>::type x; // FIXME: expected-error {{missing 'typename'}}
-      X<A<T>::i, double>::type y; // FIXME: expected-error {{missing 'typename'}}
+      X<i, int>::type w;
+      X<A::i, char>::type x;
+      X<A<T>::i, double>::type y;
       X<A<T*>::i, long>::type z; // expected-error {{missing 'typename'}}
       int f();
     };
@@ -483,7 +483,7 @@ namespace dr244 { // dr244: 11
   B* B_ptr = &D_object;
 
   void f() {
-    D_object.~B(); // expected-error {{does not match the type 'dr244::D' of the object being destroyed}}
+    D_object.~B(); // expected-error {{does not match the type 'D' of the object being destroyed}}
     D_object.B::~B();
     D_object.D::~B(); // FIXME: Missing diagnostic for this.
     B_ptr->~B();
@@ -597,12 +597,8 @@ namespace dr247 { // dr247: yes
   void (F::*i)() = &F::f;
 }
 
-namespace dr248 { // dr248: yes c++11
-  // FIXME: Should this also apply to c++98 mode? This was a DR against C++98.
+namespace dr248 { // dr248: sup P1949
   int \u040d\u040e = 0;
-#if __cplusplus < 201103L
-  // FIXME: expected-error@-2 {{expected ';'}}
-#endif
 }
 
 namespace dr249 { // dr249: yes
@@ -684,7 +680,7 @@ namespace dr257 { // dr257: yes
     C() {}
   };
   struct D : B {
-    D() {} // expected-error {{must explicitly initialize the base class 'dr257::A'}}
+    D() {} // expected-error {{must explicitly initialize the base class 'A'}}
     void f();
   };
 }
@@ -917,13 +913,13 @@ namespace dr280 { // dr280: yes
     operator f2*(); // expected-note {{candidate}}
     operator f3*(); // expected-note {{candidate}}
   };
-  struct D : private A, B { // expected-note 2{{here}}
+  struct D : private A, B { // expected-note {{here}}
     operator f2*(); // expected-note {{candidate}}
   } d;
   struct E : C, D {} e;
   void g() {
     d(); // ok, public
-    d(0); // expected-error {{private member of 'dr280::A'}} expected-error {{private base class 'dr280::A'}}
+    d(0); // expected-error {{private member of 'dr280::A'}}
     d(0, 0); // ok, suppressed by member in D
     d(0, 0, 0); // expected-error {{private member of 'dr280::B'}}
     e(); // expected-error {{ambiguous}}
@@ -1061,7 +1057,7 @@ namespace dr294 { // dr294: no
 
 namespace dr295 { // dr295: 3.7
   typedef int f();
-  const f g; // expected-warning {{'const' qualifier on function type 'dr295::f' (aka 'int ()') has no effect}}
+  const f g; // expected-warning {{'const' qualifier on function type 'f' (aka 'int ()') has no effect}}
   f &r = g;
   template<typename T> struct X {
     const T &f;
@@ -1069,10 +1065,10 @@ namespace dr295 { // dr295: 3.7
   X<f> x = {g};
 
   typedef int U();
-  typedef const U U; // expected-warning {{'const' qualifier on function type 'dr295::U' (aka 'int ()') has no effect}}
+  typedef const U U; // expected-warning {{'const' qualifier on function type 'U' (aka 'int ()') has no effect}}
 
   typedef int (*V)();
-  typedef volatile U *V; // expected-warning {{'volatile' qualifier on function type 'dr295::U' (aka 'int ()') has no effect}}
+  typedef volatile U *V; // expected-warning {{'volatile' qualifier on function type 'U' (aka 'int ()') has no effect}}
 }
 
 namespace dr296 { // dr296: yes
@@ -1098,9 +1094,9 @@ namespace dr298 { // dr298: yes
   struct B b; // expected-error {{typedef 'B' cannot be referenced with a struct specifier}}
   struct C c; // expected-error {{typedef 'C' cannot be referenced with a struct specifier}}
 
-  B::B() {} // expected-error {{requires a type specifier}}
+  B::B() {} // expected-error {{a type specifier is required}}
   B::A() {} // ok
-  C::~C() {} // expected-error {{destructor cannot be declared using a typedef 'dr298::C' (aka 'const dr298::A') of the class name}}
+  C::~C() {} // expected-error {{destructor cannot be declared using a typedef 'C' (aka 'const dr298::A') of the class name}}
 
   typedef struct D E; // expected-note {{here}}
   struct E {}; // expected-error {{conflicts with typedef}}

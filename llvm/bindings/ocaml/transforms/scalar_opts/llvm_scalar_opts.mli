@@ -96,11 +96,6 @@ external add_loop_unroll
   : [< Llvm.PassManager.any ] Llvm.PassManager.t -> unit
   = "llvm_add_loop_unroll"
 
-(** See the [llvm::createLoopUnswitchPass] function. *)
-external add_loop_unswitch
-  : [< Llvm.PassManager.any ] Llvm.PassManager.t -> unit
-  = "llvm_add_loop_unswitch"
-
 (** See the [llvm::createMemCpyOptPass] function. *)
 external add_memcpy_opt
   : [< Llvm.PassManager.any ] Llvm.PassManager.t -> unit
@@ -160,11 +155,6 @@ external add_lib_call_simplification
 external add_tail_call_elimination
   : [< Llvm.PassManager.any ] Llvm.PassManager.t -> unit
   = "llvm_add_tail_call_elimination"
-
-(** See the [llvm::createConstantPropagationPass] function. *)
-external add_constant_propagation
-  : [< Llvm.PassManager.any ] Llvm.PassManager.t -> unit
-  = "llvm_add_constant_propagation"
 
 (** See the [llvm::createDemoteMemoryToRegisterPass] function. *)
 external add_memory_to_register_demotion

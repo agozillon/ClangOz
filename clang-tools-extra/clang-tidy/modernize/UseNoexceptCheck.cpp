@@ -65,7 +65,7 @@ void UseNoexceptCheck::check(const MatchFinder::MatchResult &Result) {
   } else if (const auto *ParmDecl =
                  Result.Nodes.getNodeAs<ParmVarDecl>("parmVarDecl")) {
     FnTy = ParmDecl->getType()
-               ->getAs<Type>()
+               ->castAs<Type>()
                ->getPointeeType()
                ->getAs<FunctionProtoType>();
 
@@ -77,21 +77,22 @@ void UseNoexceptCheck::check(const MatchFinder::MatchResult &Result) {
                   .getExceptionSpecRange();
   }
 
+  assert(FnTy && "FunctionProtoType is null.");
+  if (isUnresolvedExceptionSpec(FnTy->getExceptionSpecType()))
+    return;
+
   assert(Range.isValid() && "Exception Source Range is invalid.");
 
   CharSourceRange CRange = Lexer::makeFileCharRange(
       CharSourceRange::getTokenRange(Range), *Result.SourceManager,
       Result.Context->getLangOpts());
 
-  assert(FnTy && "FunctionProtoType is null.");
   bool IsNoThrow = FnTy->isNothrow();
   StringRef ReplacementStr =
-      IsNoThrow
-          ? NoexceptMacro.empty() ? "noexcept" : NoexceptMacro.c_str()
-          : NoexceptMacro.empty()
-                ? (DtorOrOperatorDel || UseNoexceptFalse) ? "noexcept(false)"
-                                                          : ""
-                : "";
+      IsNoThrow ? NoexceptMacro.empty() ? "noexcept" : NoexceptMacro
+      : NoexceptMacro.empty()
+          ? (DtorOrOperatorDel || UseNoexceptFalse) ? "noexcept(false)" : ""
+          : "";
 
   FixItHint FixIt;
   if ((IsNoThrow || NoexceptMacro.empty()) && CRange.isValid())

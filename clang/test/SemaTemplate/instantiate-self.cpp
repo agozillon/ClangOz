@@ -5,7 +5,7 @@
 namespace test1 {
   template<typename T> struct A {
     struct B { // expected-note {{not complete until the closing '}'}}
-      B b; // expected-error {{has incomplete type 'test1::A<int>::B'}}
+      B b; // expected-error {{has incomplete type 'B'}}
     };
     B b; // expected-note {{in instantiation of}}
   };
@@ -62,10 +62,11 @@ namespace test5 {
 namespace test6 {
   template<typename T> constexpr T f(T);
   template<typename T> constexpr T g(T t) {
-    typedef int arr[f(T())]; // expected-error {{variable length array}}
+    // FIXME: It'd be nice to say that the function is currently being defined, rather than being undefined.
+    typedef int arr[f(T())]; // expected-error {{variable length array}} expected-note {{undefined function 'f<int>'}}
     return t;
   }
-  template<typename T> constexpr T f(T t) {
+  template<typename T> constexpr T f(T t) { // expected-note {{declared here}}
     typedef int arr[g(T())]; // expected-error {{zero size array}} expected-note {{instantiation of}}
     return t;
   }

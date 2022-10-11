@@ -33,6 +33,7 @@ public:
 
   ~WebAssemblyTargetMachine() override;
 
+  const WebAssemblySubtarget *getSubtargetImpl() const;
   const WebAssemblySubtarget *getSubtargetImpl(std::string CPU,
                                                std::string FS) const;
   const WebAssemblySubtarget *
@@ -45,7 +46,7 @@ public:
     return TLOF.get();
   }
 
-  TargetTransformInfo getTargetTransformInfo(const Function &F) override;
+  TargetTransformInfo getTargetTransformInfo(const Function &F) const override;
 
   bool usesPhysRegsForValues() const override { return false; }
 

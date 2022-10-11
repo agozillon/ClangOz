@@ -11,8 +11,6 @@ import lldbsuite.test.lldbutil as lldbutil
 
 
 class NumberOfThreadsTestCase(TestBase):
-
-    mydir = TestBase.compute_mydir(__file__)
     NO_DEBUG_INFO_TESTCASE = True
 
     def setUp(self):
@@ -62,7 +60,6 @@ class NumberOfThreadsTestCase(TestBase):
 
     @skipIfDarwin # rdar://33462362
     @skipIfWindows # This is flakey on Windows: llvm.org/pr37658, llvm.org/pr38373
-    @expectedFailureNetBSD
     def test_unique_stacks(self):
         """Test backtrace unique with multiple threads executing the same stack."""
         self.build()
@@ -110,7 +107,7 @@ class NumberOfThreadsTestCase(TestBase):
             # If we aren't stopped out the thread breakpoint try to resume.
             if thread.GetStopReason() != lldb.eStopReasonBreakpoint:
                 self.runCmd("thread continue %d"%(i+1))
-            self.assertEqual(thread.GetStopReason(), lldb.eStopReasonBreakpoint)
+            self.assertStopReason(thread.GetStopReason(), lldb.eStopReasonBreakpoint)
 
             expect_threads += " #%d"%(i+1)
 

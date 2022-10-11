@@ -35,7 +35,7 @@ public:
 
   // A subscription defines the scope of when a listener should receive events.
   // After destroying the subscription, no more events are received.
-  class LLVM_NODISCARD Subscription {
+  class [[nodiscard]] Subscription {
     Event *Parent;
     unsigned ListenerID;
 
@@ -51,7 +51,7 @@ public:
     Subscription &operator=(Subscription &&Other) {
       // If *this is active, unsubscribe.
       if (Parent) {
-        std::lock_guard<std::recursive_mutex>(Parent->ListenersMu);
+        std::lock_guard<std::recursive_mutex> Lock(Parent->ListenersMu);
         llvm::erase_if(Parent->Listeners,
                        [&](const std::pair<Listener, unsigned> &P) {
                          return P.second == ListenerID;

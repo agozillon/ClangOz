@@ -21,6 +21,7 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -45,6 +46,10 @@ EnablePCRelLinkerOpt("ppc-pcrel-linker-opt", cl::Hidden, cl::init(true),
 static cl::opt<bool>
 RunPreEmitPeephole("ppc-late-peephole", cl::Hidden, cl::init(true),
                    cl::desc("Run pre-emit peephole optimizations."));
+
+static cl::opt<uint64_t>
+DSCRValue("ppc-set-dscr", cl::Hidden,
+          cl::desc("Set the Data Stream Control Register."));
 
 namespace {
 
@@ -121,7 +126,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
       for (auto BBI = MBB.instr_begin(); BBI != MBB.instr_end(); ++BBI) {
         // Skip load immediate that is marked to be erased later because it
         // cannot be used to replace any other instructions.
-        if (InstrsToErase.find(&*BBI) != InstrsToErase.end())
+        if (InstrsToErase.contains(&*BBI))
           continue;
         // Skip non-load immediate.
         unsigned Opc = BBI->getOpcode();
@@ -286,7 +291,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
               !BBI->modifiesRegister(Pair.DefReg, TRI))
             continue;
 
-          // The use needs to be used in the address compuation and not
+          // The use needs to be used in the address computation and not
           // as the register being stored for a store.
           const MachineOperand *UseOp =
               hasPCRelativeForm(*BBI) ? &BBI->getOperand(2) : nullptr;
@@ -338,8 +343,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
 
         // Create the symbol.
         MCContext &Context = MF->getContext();
-        MCSymbol *Symbol =
-            Context.createTempSymbol(Twine("pcrel"), false, false);
+        MCSymbol *Symbol = Context.createNamedTempSymbol("pcrel");
         MachineOperand PCRelLabel =
             MachineOperand::CreateMCSymbol(Symbol, PPCII::MO_PCREL_OPT_FLAG);
         Pair->DefInst->addOperand(*MF, PCRelLabel);
@@ -349,7 +353,97 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
       return MadeChange;
     }
 
+    // This function removes redundant pairs of accumulator prime/unprime
+    // instructions. In some situations, it's possible the compiler inserts an
+    // accumulator prime instruction followed by an unprime instruction (e.g.
+    // when we store an accumulator after restoring it from a spill). If the
+    // accumulator is not used between the two, they can be removed. This
+    // function removes these redundant pairs from basic blocks.
+    // The algorithm is quite straightforward - every time we encounter a prime
+    // instruction, the primed register is added to a candidate set. Any use
+    // other than a prime removes the candidate from the set and any de-prime
+    // of a current candidate marks both the prime and de-prime for removal.
+    // This way we ensure we only remove prime/de-prime *pairs* with no
+    // intervening uses.
+    bool removeAccPrimeUnprime(MachineBasicBlock &MBB) {
+      DenseSet<MachineInstr *> InstrsToErase;
+      // Initially, none of the acc registers are candidates.
+      SmallVector<MachineInstr *, 8> Candidates(
+          PPC::UACCRCRegClass.getNumRegs(), nullptr);
+
+      for (MachineInstr &BBI : MBB.instrs()) {
+        unsigned Opc = BBI.getOpcode();
+        // If we are visiting a xxmtacc instruction, we add it and its operand
+        // register to the candidate set.
+        if (Opc == PPC::XXMTACC) {
+          Register Acc = BBI.getOperand(0).getReg();
+          assert(PPC::ACCRCRegClass.contains(Acc) &&
+                 "Unexpected register for XXMTACC");
+          Candidates[Acc - PPC::ACC0] = &BBI;
+        }
+        // If we are visiting a xxmfacc instruction and its operand register is
+        // in the candidate set, we mark the two instructions for removal.
+        else if (Opc == PPC::XXMFACC) {
+          Register Acc = BBI.getOperand(0).getReg();
+          assert(PPC::ACCRCRegClass.contains(Acc) &&
+                 "Unexpected register for XXMFACC");
+          if (!Candidates[Acc - PPC::ACC0])
+            continue;
+          InstrsToErase.insert(&BBI);
+          InstrsToErase.insert(Candidates[Acc - PPC::ACC0]);
+        }
+        // If we are visiting an instruction using an accumulator register
+        // as operand, we remove it from the candidate set.
+        else {
+          for (MachineOperand &Operand : BBI.operands()) {
+            if (!Operand.isReg())
+              continue;
+            Register Reg = Operand.getReg();
+            if (PPC::ACCRCRegClass.contains(Reg))
+              Candidates[Reg - PPC::ACC0] = nullptr;
+          }
+        }
+      }
+
+      for (MachineInstr *MI : InstrsToErase)
+        MI->eraseFromParent();
+      NumRemovedInPreEmit += InstrsToErase.size();
+      return !InstrsToErase.empty();
+    }
+
     bool runOnMachineFunction(MachineFunction &MF) override {
+      // If the user wants to set the DSCR using command-line options,
+      // load in the specified value at the start of main.
+      if (DSCRValue.getNumOccurrences() > 0 && MF.getName().equals("main") &&
+          MF.getFunction().hasExternalLinkage()) {
+        DSCRValue = (uint32_t)(DSCRValue & 0x01FFFFFF); // 25-bit DSCR mask
+        RegScavenger RS;
+        MachineBasicBlock &MBB = MF.front();
+        // Find an unused GPR according to register liveness
+        RS.enterBasicBlock(MBB);
+        unsigned InDSCR = RS.FindUnusedReg(&PPC::GPRCRegClass);
+        if (InDSCR) {
+          const PPCInstrInfo *TII =
+              MF.getSubtarget<PPCSubtarget>().getInstrInfo();
+          DebugLoc dl;
+          MachineBasicBlock::iterator IP = MBB.begin(); // Insert Point
+          // Copy the 32-bit DSCRValue integer into the GPR InDSCR using LIS and
+          // ORI, then move to DSCR. If the requested DSCR value is contained
+          // in a 16-bit signed number, we can emit a single `LI`, but the
+          // impact of saving one instruction in one function does not warrant
+          // any additional complexity in the logic here.
+          BuildMI(MBB, IP, dl, TII->get(PPC::LIS), InDSCR)
+              .addImm(DSCRValue >> 16);
+          BuildMI(MBB, IP, dl, TII->get(PPC::ORI), InDSCR)
+              .addReg(InDSCR)
+              .addImm(DSCRValue & 0xFFFF);
+          BuildMI(MBB, IP, dl, TII->get(PPC::MTUDSCR))
+              .addReg(InDSCR, RegState::Kill);
+        } else
+          errs() << "Warning: Ran out of registers - Unable to set DSCR as "
+                    "requested";
+      }
+
       if (skipFunction(MF.getFunction()) || !RunPreEmitPeephole) {
         // Remove UNENCODED_NOP even when this pass is disabled.
         // This needs to be done unconditionally so we don't emit zeros
@@ -370,6 +464,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
       for (MachineBasicBlock &MBB : MF) {
         Changed |= removeRedundantLIs(MBB, TRI);
         Changed |= addLinkerOpt(MBB, TRI);
+        Changed |= removeAccPrimeUnprime(MBB);
         for (MachineInstr &MI : MBB) {
           unsigned Opc = MI.getOpcode();
           if (Opc == PPC::UNENCODED_NOP) {

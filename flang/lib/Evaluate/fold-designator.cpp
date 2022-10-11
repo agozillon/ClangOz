@@ -15,7 +15,7 @@ DEFINE_DEFAULT_CONSTRUCTORS_AND_ASSIGNMENTS(OffsetSymbol)
 
 std::optional<OffsetSymbol> DesignatorFolder::FoldDesignator(
     const Symbol &symbol, ConstantSubscript which) {
-  if (semantics::IsPointer(symbol) || semantics::IsAllocatable(symbol)) {
+  if (IsAllocatableOrPointer(symbol)) {
     // A pointer may appear as a DATA statement object if it is the
     // rightmost symbol in a designator and has no subscripts.
     // An allocatable may appear if its initializer is NULL().
@@ -27,24 +27,15 @@ std::optional<OffsetSymbol> DesignatorFolder::FoldDesignator(
   } else if (symbol.has<semantics::ObjectEntityDetails>() &&
       !IsNamedConstant(symbol)) {
     if (auto type{DynamicType::From(symbol)}) {
-      if (auto bytes{ToInt64(type->MeasureSizeInBytes(&context_))}) {
-        if (auto extents{GetConstantExtents(context_, symbol)}) {
+      if (auto extents{GetConstantExtents(context_, symbol)}) {
+        if (auto bytes{ToInt64(
+                type->MeasureSizeInBytes(context_, GetRank(*extents) > 0))}) {
           OffsetSymbol result{symbol, static_cast<std::size_t>(*bytes)};
-          auto stride{*bytes};
-          for (auto extent : *extents) {
-            if (extent == 0) {
-              return std::nullopt;
-            }
-            auto quotient{which / extent};
-            auto remainder{which - extent * quotient};
-            result.Augment(stride * remainder);
-            which = quotient;
-            stride *= extent;
-          }
-          if (which > 0) {
-            isEmpty_ = true;
+          if (which < GetSize(*extents)) {
+            result.Augment(*bytes * which);
+            return result;
           } else {
-            return std::move(result);
+            isEmpty_ = true;
           }
         }
       }
@@ -57,9 +48,9 @@ std::optional<OffsetSymbol> DesignatorFolder::FoldDesignator(
     const ArrayRef &x, ConstantSubscript which) {
   const Symbol &array{x.base().GetLastSymbol()};
   if (auto type{DynamicType::From(array)}) {
-    if (auto bytes{ToInt64(type->MeasureSizeInBytes(&context_))}) {
-      if (auto extents{GetConstantExtents(context_, array)}) {
-        Shape lbs{GetLowerBounds(context_, x.base())};
+    if (auto extents{GetConstantExtents(context_, array)}) {
+      if (auto bytes{ToInt64(type->MeasureSizeInBytes(context_, true))}) {
+        Shape lbs{GetLBOUNDs(context_, x.base())};
         if (auto lowerBounds{AsConstantExtents(context_, lbs)}) {
           std::optional<OffsetSymbol> result;
           if (!x.base().IsSymbol() &&
@@ -79,7 +70,7 @@ std::optional<OffsetSymbol> DesignatorFolder::FoldDesignator(
             ConstantSubscript lower{lowerBounds->at(dim)};
             ConstantSubscript extent{extents->at(dim)};
             ConstantSubscript upper{lower + extent - 1};
-            if (!std::visit(
+            if (!common::visit(
                     common::visitors{
                         [&](const IndirectSubscriptIntegerExpr &expr) {
                           auto folded{
@@ -146,18 +137,18 @@ std::optional<OffsetSymbol> DesignatorFolder::FoldDesignator(
     const Component &component, ConstantSubscript which) {
   const Symbol &comp{component.GetLastSymbol()};
   const DataRef &base{component.base()};
-  std::optional<OffsetSymbol> result, baseResult;
+  std::optional<OffsetSymbol> baseResult, compResult;
   if (base.Rank() == 0) { // A%X(:) - apply "which" to component
     baseResult = FoldDesignator(base, 0);
-    result = FoldDesignator(comp, which);
+    compResult = FoldDesignator(comp, which);
   } else { // A(:)%X - apply "which" to base
     baseResult = FoldDesignator(base, which);
-    result = FoldDesignator(comp, 0);
+    compResult = FoldDesignator(comp, 0);
   }
-  if (result && baseResult) {
-    result->set_symbol(baseResult->symbol());
-    result->Augment(baseResult->offset() + comp.offset());
-    return result;
+  if (baseResult && compResult) {
+    OffsetSymbol result{baseResult->symbol(), compResult->size()};
+    result.Augment(baseResult->offset() + compResult->offset() + comp.offset());
+    return {std::move(result)};
   } else {
     return std::nullopt;
   }
@@ -178,7 +169,7 @@ std::optional<OffsetSymbol> DesignatorFolder::FoldDesignator(
 
 std::optional<OffsetSymbol> DesignatorFolder::FoldDesignator(
     const DataRef &dataRef, ConstantSubscript which) {
-  return std::visit(
+  return common::visit(
       [&](const auto &x) { return FoldDesignator(x, which); }, dataRef.u);
 }
 
@@ -215,9 +206,9 @@ static std::optional<ArrayRef> OffsetToArrayRef(FoldingContext &context,
     NamedEntity &&entity, const Shape &shape, const DynamicType &elementType,
     ConstantSubscript &offset) {
   auto extents{AsConstantExtents(context, shape)};
-  Shape lbs{GetLowerBounds(context, entity)};
+  Shape lbs{GetRawLowerBounds(context, entity)};
   auto lower{AsConstantExtents(context, lbs)};
-  auto elementBytes{ToInt64(elementType.MeasureSizeInBytes(&context))};
+  auto elementBytes{ToInt64(elementType.MeasureSizeInBytes(context, true))};
   if (!extents || !lower || !elementBytes || *elementBytes <= 0) {
     return std::nullopt;
   }
@@ -307,16 +298,18 @@ static std::optional<DataRef> OffsetToDataRef(FoldingContext &context,
 // Reconstructs a Designator from a symbol, an offset, and a size.
 std::optional<Expr<SomeType>> OffsetToDesignator(FoldingContext &context,
     const Symbol &baseSymbol, ConstantSubscript offset, std::size_t size) {
-  CHECK(offset >= 0);
+  if (offset < 0) {
+    return std::nullopt;
+  }
   if (std::optional<DataRef> dataRef{
           OffsetToDataRef(context, NamedEntity{baseSymbol}, offset, size)}) {
     const Symbol &symbol{dataRef->GetLastSymbol()};
-    if (auto type{DynamicType::From(symbol)}) {
-      if (std::optional<Expr<SomeType>> result{
-              TypedWrapper<Designator>(*type, std::move(*dataRef))}) {
-        if (IsAllocatableOrPointer(symbol)) {
-        } else if (auto elementBytes{
-                       ToInt64(type->MeasureSizeInBytes(&context))}) {
+    if (std::optional<Expr<SomeType>> result{
+            AsGenericExpr(std::move(*dataRef))}) {
+      if (IsAllocatableOrPointer(symbol)) {
+      } else if (auto type{DynamicType::From(symbol)}) {
+        if (auto elementBytes{
+                ToInt64(type->MeasureSizeInBytes(context, true))}) {
           if (auto *zExpr{std::get_if<Expr<SomeComplex>>(&result->u)}) {
             if (size * 2 > static_cast<std::size_t>(*elementBytes)) {
               return result;
@@ -324,7 +317,7 @@ std::optional<Expr<SomeType>> OffsetToDesignator(FoldingContext &context,
               // Pick a COMPLEX component
               auto part{
                   offset == 0 ? ComplexPart::Part::RE : ComplexPart::Part::IM};
-              return std::visit(
+              return common::visit(
                   [&](const auto &z) -> std::optional<Expr<SomeType>> {
                     using PartType = typename ResultType<decltype(z)>::Part;
                     return AsGenericExpr(Designator<PartType>{ComplexPart{
@@ -336,7 +329,7 @@ std::optional<Expr<SomeType>> OffsetToDesignator(FoldingContext &context,
                          std::get_if<Expr<SomeCharacter>>(&result->u)}) {
             if (offset > 0 || size != static_cast<std::size_t>(*elementBytes)) {
               // Select a substring
-              return std::visit(
+              return common::visit(
                   [&](const auto &x) -> std::optional<Expr<SomeType>> {
                     using T = typename std::decay_t<decltype(x)>::Result;
                     return AsGenericExpr(Designator<T>{
@@ -350,9 +343,9 @@ std::optional<Expr<SomeType>> OffsetToDesignator(FoldingContext &context,
             }
           }
         }
-        if (offset == 0) {
-          return result;
-        }
+      }
+      if (offset == 0) {
+        return result;
       }
     }
   }

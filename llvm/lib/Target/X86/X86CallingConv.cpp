@@ -299,7 +299,7 @@ static bool CC_X86_Intr(unsigned &ValNo, MVT &ValVT, MVT &LocVT,
                         ISD::ArgFlagsTy &ArgFlags, CCState &State) {
   const MachineFunction &MF = State.getMachineFunction();
   size_t ArgCount = State.getMachineFunction().getFunction().arg_size();
-  bool Is64Bit = static_cast<const X86Subtarget &>(MF.getSubtarget()).is64Bit();
+  bool Is64Bit = MF.getSubtarget<X86Subtarget>().is64Bit();
   unsigned SlotSize = Is64Bit ? 8 : 4;
   unsigned Offset;
   if (ArgCount == 1 && ValNo == 0) {
@@ -328,6 +328,16 @@ static bool CC_X86_Intr(unsigned &ValNo, MVT &ValVT, MVT &LocVT,
 
   State.addLoc(CCValAssign::getMem(ValNo, ValVT, Offset, LocVT, LocInfo));
   return true;
+}
+
+static bool CC_X86_64_Pointer(unsigned &ValNo, MVT &ValVT, MVT &LocVT,
+                              CCValAssign::LocInfo &LocInfo,
+                              ISD::ArgFlagsTy &ArgFlags, CCState &State) {
+  if (LocVT != MVT::i64) {
+    LocVT = MVT::i64;
+    LocInfo = CCValAssign::ZExt;
+  }
+  return false;
 }
 
 // Provides entry points of CC_X86 and RetCC_X86.

@@ -581,6 +581,13 @@ case. The only common architecture without that property is SPARC -- SPARCV8 SMP
 systems were common, yet it doesn't support any sort of compare-and-swap
 operation.
 
+Some targets (like RISCV) support a ``+forced-atomics`` target feature, which
+enables the use of lock-free atomics even if LLVM is not aware of any specific
+OS support for them. In this case, the user is responsible for ensuring that
+necessary ``__sync_*`` implementations are available. Code using
+``+forced-atomics`` is ABI-incompatible with code not using the feature, if
+atomic variables cross the ABI boundary.
+
 In either of these cases, the Target in LLVM can claim support for atomics of an
 appropriate size, and then implement some subset of the operations via libcalls
 to a ``__sync_*`` function. Such functions *must* not use locks in their
@@ -621,3 +628,23 @@ fence on either side of a normal load or store.)
 There's also, somewhat separately, the possibility to lower ``ATOMIC_FENCE`` to
 ``__sync_synchronize()``. This may happen or not happen independent of all the
 above, controlled purely by ``setOperationAction(ISD::ATOMIC_FENCE, ...)``.
+
+On AArch64, a variant of the __sync_* routines is used which contain the memory
+order as part of the function name. These routines may determine at runtime
+whether the single-instruction atomic operations which were introduced as part
+of AArch64 Large System Extensions "LSE" instruction set are available, or if
+it needs to fall back to an LL/SC loop. The following helper functions are
+implemented in both ``compiler-rt`` and ``libgcc`` libraries
+(``N`` is one of 1, 2, 4, 8, and ``M`` is one of 1, 2, 4, 8 and 16, and
+``ORDER`` is one of 'relax', 'acq', 'rel', 'acq_rel')::
+
+  iM __aarch64_casM_ORDER(iM expected, iM desired, iM *ptr)
+  iN __aarch64_swpN_ORDER(iN val, iN *ptr)
+  iN __aarch64_ldaddN_ORDER(iN val, iN *ptr)
+  iN __aarch64_ldclrN_ORDER(iN val, iN *ptr)
+  iN __aarch64_ldeorN_ORDER(iN val, iN *ptr)
+  iN __aarch64_ldsetN_ORDER(iN val, iN *ptr)
+
+Please note, if LSE instruction set is specified for AArch64 target then
+out-of-line atomics calls are not generated and single-instruction atomic
+operations are used in place.

@@ -7,18 +7,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "ParsedAST.h"
-#include "SourceCode.h"
 #include "refactor/Tweak.h"
 #include "support/Logger.h"
 #include "clang/AST/ExprObjC.h"
-#include "clang/Basic/LangOptions.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Tooling/Core/Replacement.h"
-#include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Error.h"
 
@@ -34,8 +30,10 @@ namespace {
 ///   NSLocalizedString(@"description", @"")
 class ObjCLocalizeStringLiteral : public Tweak {
 public:
-  const char *id() const override final;
-  Intent intent() const override { return Intent::Refactor; }
+  const char *id() const final;
+  llvm::StringLiteral kind() const override {
+    return CodeAction::REFACTOR_KIND;
+  }
 
   bool prepare(const Selection &Inputs) override;
   Expected<Tweak::Effect> apply(const Selection &Inputs) override;
@@ -68,8 +66,7 @@ ObjCLocalizeStringLiteral::apply(const Selection &Inputs) {
   const auto &TB = AST->getTokens();
   auto Toks = TB.spelledForExpanded(TB.expandedTokens(Str->getSourceRange()));
   if (!Toks || Toks->empty())
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                   "Failed to find tokens to replace.");
+    return error("Failed to find tokens to replace.");
   // Insert `NSLocalizedString(` before the literal.
   auto Reps = tooling::Replacements(tooling::Replacement(
       SM, Toks->front().location(), 0, "NSLocalizedString("));

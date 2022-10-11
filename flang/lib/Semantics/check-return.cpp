@@ -16,11 +16,10 @@
 namespace Fortran::semantics {
 
 static const Scope *FindContainingSubprogram(const Scope &start) {
-  const Scope *scope{FindProgramUnitContaining(start)};
-  return scope &&
-          (scope->kind() == Scope::Kind::MainProgram ||
-              scope->kind() == Scope::Kind::Subprogram)
-      ? scope
+  const Scope &scope{GetProgramUnitContaining(start)};
+  return scope.kind() == Scope::Kind::MainProgram ||
+          scope.kind() == Scope::Kind::Subprogram
+      ? &scope
       : nullptr;
 }
 
@@ -37,8 +36,9 @@ void ReturnStmtChecker::Leave(const parser::ReturnStmt &returnStmt) {
             IsFunction(*subprogramScope->GetSymbol()))) {
       context_.Say(
           "RETURN with expression is only allowed in SUBROUTINE subprogram"_err_en_US);
-    } else if (context_.ShouldWarn(common::LanguageFeature::ProgramReturn)) {
-      context_.Say("RETURN should not appear in a main program"_en_US);
+    } else if (subprogramScope->kind() == Scope::Kind::MainProgram &&
+        context_.ShouldWarn(common::LanguageFeature::ProgramReturn)) {
+      context_.Say("RETURN should not appear in a main program"_port_en_US);
     }
   }
 }

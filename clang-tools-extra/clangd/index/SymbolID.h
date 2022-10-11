@@ -9,12 +9,13 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_SYMBOLID_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_SYMBOLID_H
 
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace clang {
@@ -36,9 +37,7 @@ public:
   bool operator==(const SymbolID &Sym) const {
     return HashValue == Sym.HashValue;
   }
-  bool operator!=(const SymbolID &Sym) const {
-    return !(*this == Sym);
-  }
+  bool operator!=(const SymbolID &Sym) const { return !(*this == Sym); }
   bool operator<(const SymbolID &Sym) const {
     return HashValue < Sym.HashValue;
   }
@@ -53,11 +52,21 @@ public:
   std::string str() const;
   static llvm::Expected<SymbolID> fromStr(llvm::StringRef);
 
+  bool isNull() const { return *this == SymbolID(); }
+  explicit operator bool() const { return !isNull(); }
+
 private:
-  std::array<uint8_t, RawSize> HashValue;
+  std::array<uint8_t, RawSize> HashValue{};
 };
 
-llvm::hash_code hash_value(const SymbolID &ID);
+inline llvm::hash_code hash_value(const SymbolID &ID) {
+  // We already have a good hash, just return the first bytes.
+  static_assert(sizeof(size_t) <= SymbolID::RawSize,
+                "size_t longer than SHA1!");
+  size_t Result;
+  memcpy(&Result, ID.raw().data(), sizeof(size_t));
+  return llvm::hash_code(Result);
+}
 
 // Write SymbolID into the given stream. SymbolID is encoded as ID.str().
 llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const SymbolID &ID);

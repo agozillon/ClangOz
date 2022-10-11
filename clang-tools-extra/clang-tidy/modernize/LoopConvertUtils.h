@@ -26,7 +26,12 @@ namespace clang {
 namespace tidy {
 namespace modernize {
 
-enum LoopFixerKind { LFK_Array, LFK_Iterator, LFK_PseudoArray };
+enum LoopFixerKind {
+  LFK_Array,
+  LFK_Iterator,
+  LFK_ReverseIterator,
+  LFK_PseudoArray
+};
 
 /// A map used to walk the AST in reverse: maps child Stmt to parent Stmt.
 typedef llvm::DenseMap<const clang::Stmt *, const clang::Stmt *> StmtParentMap;
@@ -172,7 +177,7 @@ private:
 class DeclFinderASTVisitor
     : public clang::RecursiveASTVisitor<DeclFinderASTVisitor> {
 public:
-  DeclFinderASTVisitor(const std::string &Name,
+  DeclFinderASTVisitor(const StringRef &Name,
                        const StmtGeneratedVarNameMap *GeneratedDecls)
       : Name(Name), GeneratedDecls(GeneratedDecls), Found(false) {}
 
@@ -270,7 +275,7 @@ private:
 typedef llvm::SmallVector<Usage, 8> UsageResult;
 
 // General functions used by ForLoopIndexUseVisitor and LoopConvertCheck.
-const Expr *digThroughConstructors(const Expr *E);
+const Expr *digThroughConstructorsConversions(const Expr *E);
 bool areSameExpr(ASTContext *Context, const Expr *First, const Expr *Second);
 const DeclRefExpr *getDeclRef(const Expr *E);
 bool areSameVariable(const ValueDecl *First, const ValueDecl *Second);

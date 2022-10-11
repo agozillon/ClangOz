@@ -16,10 +16,10 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerIntPair.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SparseMultiSet.h"
 #include "llvm/ADT/SparseSet.h"
+#include "llvm/ADT/identity.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/ScheduleDAG.h"
@@ -29,6 +29,7 @@
 #include <cassert>
 #include <cstdint>
 #include <list>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -268,6 +269,11 @@ namespace llvm {
       return SU->SchedClass;
     }
 
+    /// IsReachable - Checks if SU is reachable from TargetSU.
+    bool IsReachable(SUnit *SU, SUnit *TargetSU) {
+      return Topo.IsReachable(SU, TargetSU);
+    }
+
     /// Returns an iterator to the top of the current scheduling region.
     MachineBasicBlock::iterator begin() const { return RegionBegin; }
 
@@ -362,16 +368,6 @@ namespace llvm {
     void addVRegDefDeps(SUnit *SU, unsigned OperIdx);
     void addVRegUseDeps(SUnit *SU, unsigned OperIdx);
 
-    /// Initializes register live-range state for updating kills.
-    /// PostRA helper for rewriting kill flags.
-    void startBlockForKills(MachineBasicBlock *BB);
-
-    /// Toggles a register operand kill flag.
-    ///
-    /// Other adjustments may be made to the instruction if necessary. Return
-    /// true if the operand has been deleted, false if not.
-    void toggleKillFlag(MachineInstr &MI, MachineOperand &MO);
-
     /// Returns a mask for which lanes get read/written by the given (register)
     /// machine operand.
     LaneBitmask getLaneMaskForMO(const MachineOperand &MO) const;
@@ -393,10 +389,7 @@ namespace llvm {
 
   /// Returns an existing SUnit for this MI, or nullptr.
   inline SUnit *ScheduleDAGInstrs::getSUnit(MachineInstr *MI) const {
-    DenseMap<MachineInstr*, SUnit*>::const_iterator I = MISUnitMap.find(MI);
-    if (I == MISUnitMap.end())
-      return nullptr;
-    return I->second;
+    return MISUnitMap.lookup(MI);
   }
 
 } // end namespace llvm

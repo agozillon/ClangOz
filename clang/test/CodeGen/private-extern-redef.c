@@ -24,13 +24,13 @@ extern int P;
 
 void bar(int);
 
-void foo() {
+void foo(void) {
   bar(I);
 }
 
 // CHECK: @J = hidden constant
 // CHECK: @K = hidden constant
-// CHECK: @L = constant
+// CHECK: @L ={{.*}} constant
 // CHECK: @M = hidden global
 // CHECK: @O = hidden global
 // CHECK: @I = external hidden

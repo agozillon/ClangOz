@@ -9,7 +9,7 @@
 ; RUN: opt -thinlto-bc -o %t3.o %s
 ; RUN: opt -thinlto-bc -o %t4.o %p/Inputs/devirt_promote.ll
 
-; RUN: llvm-lto2 run %t3.o %t4.o -save-temps -use-new-pm -pass-remarks=. \
+; RUN: llvm-lto2 run %t3.o %t4.o -save-temps -pass-remarks=. \
 ; RUN:   -whole-program-visibility \
 ; RUN:   -wholeprogramdevirt-print-index-based \
 ; RUN:   -o %t5 \
@@ -33,6 +33,9 @@
 ; NM-INDEX2: T _ZN1A1nEi.llvm.
 ; NM-INDEX2-NOT: U _ZN1A1nEi
 
+; The thin link devirtualizes all calls to _ZN1A1nEi.
+; PRINT: Devirtualized call to {{.*}} (_ZN1A1nEi)
+
 ; We should devirt call to _ZN1A1nEi once in importing module and once
 ; in original (exporting) module.
 ; REMARK-COUNT-2: single-impl: devirtualized a call to _ZN1A1nEi.llvm.
@@ -55,7 +58,7 @@ entry:
   %fptr1 = load i32 (%struct.A*, i32)*, i32 (%struct.A*, i32)** %2, align 8
 
   ; Check that the call was devirtualized.
-  ; CHECK-IR1: %call = tail call i32 bitcast (void ()* @_ZN1A1nEi
+  ; CHECK-IR1: %call = tail call i32 @_ZN1A1nEi
   %call = tail call i32 %fptr1(%struct.A* nonnull %obj, i32 %a)
 
   ret i32 %call

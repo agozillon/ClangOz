@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -debug-info-kind=standalone -std=c++11 -triple x86_64-darwin -emit-llvm -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -debug-info-kind=standalone -std=c++11 -triple x86_64-darwin -emit-llvm -o - %s | FileCheck %s
 
 struct A {
   A(int, ...);
@@ -8,7 +8,7 @@ struct B : A {
 };
 
 A::A(int i, ...) {}
-// CHECK: define void @{{.*}}foo
+// CHECK: define{{.*}} void @{{.*}}foo
 // CHECK-NOT: ret void
 // CHECK: call void @llvm.dbg.declare
 // CHECK-NOT: ret void

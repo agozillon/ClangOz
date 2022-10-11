@@ -8,6 +8,8 @@
 
 #include "lldb/Utility/Reproducer.h"
 #include "lldb/Utility/LLDBAssert.h"
+#include "lldb/Utility/ReproducerProvider.h"
+#include "lldb/Utility/Timer.h"
 
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Threading.h"
@@ -18,31 +20,12 @@ using namespace lldb_private::repro;
 using namespace llvm;
 using namespace llvm::yaml;
 
-static llvm::Optional<bool> GetEnv(const char *var) {
-  std::string val = llvm::StringRef(getenv(var)).lower();
-  if (val == "0" || val == "off")
-    return false;
-  if (val == "1" || val == "on")
-    return true;
-  return {};
-}
-
 Reproducer &Reproducer::Instance() { return *InstanceImpl(); }
 
 llvm::Error Reproducer::Initialize(ReproducerMode mode,
                                    llvm::Optional<FileSpec> root) {
   lldbassert(!InstanceImpl() && "Already initialized.");
   InstanceImpl().emplace();
-
-  // The environment can override the capture mode.
-  if (mode != ReproducerMode::Replay) {
-    if (llvm::Optional<bool> override = GetEnv("LLDB_CAPTURE_REPRODUCER")) {
-      if (*override)
-        mode = ReproducerMode::Capture;
-      else
-        mode = ReproducerMode::Off;
-    }
-  }
 
   switch (mode) {
   case ReproducerMode::Capture: {
@@ -61,15 +44,15 @@ llvm::Error Reproducer::Initialize(ReproducerMode mode,
     }
     return Instance().SetCapture(root);
   } break;
-  case ReproducerMode::Replay:
-    return Instance().SetReplay(root, /*passive*/ false);
-  case ReproducerMode::PassiveReplay:
-    return Instance().SetReplay(root, /*passive*/ true);
   case ReproducerMode::Off:
     break;
   };
 
   return Error::success();
+}
+
+void Reproducer::Initialize() {
+  llvm::cantFail(Initialize(repro::ReproducerMode::Off, llvm::None));
 }
 
 bool Reproducer::Initialized() { return InstanceImpl().operator bool(); }
@@ -129,26 +112,6 @@ llvm::Error Reproducer::SetCapture(llvm::Optional<FileSpec> root) {
   return Error::success();
 }
 
-llvm::Error Reproducer::SetReplay(llvm::Optional<FileSpec> root, bool passive) {
-  std::lock_guard<std::mutex> guard(m_mutex);
-
-  if (root && m_generator)
-    return make_error<StringError>(
-        "cannot replay a reproducer when generating one",
-        inconvertibleErrorCode());
-
-  if (!root) {
-    m_loader.reset();
-    return Error::success();
-  }
-
-  m_loader.emplace(*root, passive);
-  if (auto e = m_loader->LoadIndex())
-    return e;
-
-  return Error::success();
-}
-
 FileSpec Reproducer::GetReproducerPath() const {
   if (auto g = GetGenerator())
     return g->GetRoot();
@@ -166,14 +129,16 @@ static FileSpec MakeAbsolute(const FileSpec &file_spec) {
 
 Generator::Generator(FileSpec root) : m_root(MakeAbsolute(std::move(root))) {
   GetOrCreate<repro::WorkingDirectoryProvider>();
+  GetOrCreate<repro::HomeDirectoryProvider>();
 }
 
 Generator::~Generator() {
   if (!m_done) {
-    if (m_auto_generate)
+    if (m_auto_generate) {
       Keep();
-    else
+    } else {
       Discard();
+    }
   }
 }
 
@@ -186,6 +151,7 @@ ProviderBase *Generator::Register(std::unique_ptr<ProviderBase> provider) {
 }
 
 void Generator::Keep() {
+  LLDB_SCOPED_TIMER();
   assert(!m_done);
   m_done = true;
 
@@ -196,6 +162,7 @@ void Generator::Keep() {
 }
 
 void Generator::Discard() {
+  LLDB_SCOPED_TIMER();
   assert(!m_done);
   m_done = true;
 
@@ -230,8 +197,7 @@ void Generator::AddProvidersToIndex() {
 }
 
 Loader::Loader(FileSpec root, bool passive)
-    : m_root(MakeAbsolute(std::move(root))), m_loaded(false),
-      m_passive_replay(passive) {}
+    : m_root(MakeAbsolute(std::move(root))), m_loaded(false) {}
 
 llvm::Error Loader::LoadIndex() {
   if (m_loaded)
@@ -259,67 +225,6 @@ llvm::Error Loader::LoadIndex() {
 
 bool Loader::HasFile(StringRef file) {
   assert(m_loaded);
-  auto it = std::lower_bound(m_files.begin(), m_files.end(), file.str());
+  auto it = llvm::lower_bound(m_files, file.str());
   return (it != m_files.end()) && (*it == file);
 }
-
-llvm::Expected<std::unique_ptr<DataRecorder>>
-DataRecorder::Create(const FileSpec &filename) {
-  std::error_code ec;
-  auto recorder = std::make_unique<DataRecorder>(std::move(filename), ec);
-  if (ec)
-    return llvm::errorCodeToError(ec);
-  return std::move(recorder);
-}
-
-llvm::Expected<std::unique_ptr<YamlRecorder>>
-YamlRecorder::Create(const FileSpec &filename) {
-  std::error_code ec;
-  auto recorder = std::make_unique<YamlRecorder>(std::move(filename), ec);
-  if (ec)
-    return llvm::errorCodeToError(ec);
-  return std::move(recorder);
-}
-
-void VersionProvider::Keep() {
-  FileSpec file = GetRoot().CopyByAppendingPathComponent(Info::file);
-  std::error_code ec;
-  llvm::raw_fd_ostream os(file.GetPath(), ec, llvm::sys::fs::OF_Text);
-  if (ec)
-    return;
-  os << m_version << "\n";
-}
-
-void WorkingDirectoryProvider::Keep() {
-  FileSpec file = GetRoot().CopyByAppendingPathComponent(Info::file);
-  std::error_code ec;
-  llvm::raw_fd_ostream os(file.GetPath(), ec, llvm::sys::fs::OF_Text);
-  if (ec)
-    return;
-  os << m_cwd << "\n";
-}
-
-void FileProvider::RecordInterestingDirectory(const llvm::Twine &dir) {
-  if (m_collector)
-    m_collector->addFile(dir);
-}
-
-void FileProvider::RecordInterestingDirectoryRecursive(const llvm::Twine &dir) {
-  if (m_collector)
-    m_collector->addDirectory(dir);
-}
-
-void ProviderBase::anchor() {}
-char CommandProvider::ID = 0;
-char FileProvider::ID = 0;
-char ProviderBase::ID = 0;
-char VersionProvider::ID = 0;
-char WorkingDirectoryProvider::ID = 0;
-const char *CommandProvider::Info::file = "command-interpreter.yaml";
-const char *CommandProvider::Info::name = "command-interpreter";
-const char *FileProvider::Info::file = "files.yaml";
-const char *FileProvider::Info::name = "files";
-const char *VersionProvider::Info::file = "version.txt";
-const char *VersionProvider::Info::name = "version";
-const char *WorkingDirectoryProvider::Info::file = "cwd.txt";
-const char *WorkingDirectoryProvider::Info::name = "cwd";

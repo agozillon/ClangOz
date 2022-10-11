@@ -6,23 +6,23 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "include/errno.h"
-#include "include/sys/mman.h"
-#include "src/errno/llvmlibc_errno.h"
 #include "src/sys/mman/mmap.h"
 #include "src/sys/mman/munmap.h"
 #include "test/ErrnoSetterMatcher.h"
 #include "utils/UnitTest/Test.h"
 
+#include <errno.h>
+#include <sys/mman.h>
+
 using __llvm_libc::testing::ErrnoSetterMatcher::Fails;
 using __llvm_libc::testing::ErrnoSetterMatcher::Succeeds;
 
-TEST(MMapTest, NoError) {
+TEST(LlvmLibcMMapTest, NoError) {
   size_t alloc_size = 128;
-  llvmlibc_errno = 0;
+  errno = 0;
   void *addr = __llvm_libc::mmap(nullptr, alloc_size, PROT_READ,
                                  MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-  EXPECT_EQ(0, llvmlibc_errno);
+  EXPECT_EQ(0, errno);
   EXPECT_NE(addr, MAP_FAILED);
 
   int *array = reinterpret_cast<int *>(addr);
@@ -33,8 +33,8 @@ TEST(MMapTest, NoError) {
   EXPECT_THAT(__llvm_libc::munmap(addr, alloc_size), Succeeds());
 }
 
-TEST(MMapTest, Error_InvalidSize) {
-  llvmlibc_errno = 0;
+TEST(LlvmLibcMMapTest, Error_InvalidSize) {
+  errno = 0;
   void *addr = __llvm_libc::mmap(nullptr, 0, PROT_READ,
                                  MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   EXPECT_THAT(addr, Fails(EINVAL, MAP_FAILED));

@@ -13,16 +13,15 @@
 
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
-#include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
-#include "llvm/IR/DataLayout.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/raw_ostream.h"
-#include <algorithm>
 
 using namespace llvm;
 
@@ -62,19 +61,18 @@ void CCState::MarkAllocated(MCPhysReg Reg) {
     UsedRegs[*AI / 32] |= 1 << (*AI & 31);
 }
 
+void CCState::MarkUnallocated(MCPhysReg Reg) {
+  for (MCRegAliasIterator AI(Reg, &TRI, true); AI.isValid(); ++AI)
+    UsedRegs[*AI / 32] &= ~(1 << (*AI & 31));
+}
+
 bool CCState::IsShadowAllocatedReg(MCRegister Reg) const {
   if (!isAllocated(Reg))
     return false;
 
-  for (auto const &ValAssign : Locs) {
-    if (ValAssign.isRegLoc()) {
-      for (MCRegAliasIterator AI(ValAssign.getLocReg(), &TRI, true);
-           AI.isValid(); ++AI) {
-        if (*AI == Reg)
-          return false;
-      }
-    }
-  }
+  for (auto const &ValAssign : Locs)
+    if (ValAssign.isRegLoc() && TRI.regsOverlap(ValAssign.getLocReg(), Reg))
+      return false;
   return true;
 }
 
@@ -184,14 +182,17 @@ void CCState::AnalyzeCallResult(MVT VT, CCAssignFn Fn) {
   }
 }
 
+void CCState::ensureMaxAlignment(Align Alignment) {
+  if (!AnalyzingMustTailForwardedRegs)
+    MF.getFrameInfo().ensureMaxAlignment(Alignment);
+}
+
 static bool isValueTypeInRegForCC(CallingConv::ID CC, MVT VT) {
   if (VT.isVector())
     return true; // Assume -msse-regparm might be in effect.
   if (!VT.isInteger())
     return false;
-  if (CC == CallingConv::X86_VectorCall || CC == CallingConv::X86_FastCall)
-    return true;
-  return false;
+  return (CC == CallingConv::X86_VectorCall || CC == CallingConv::X86_FastCall);
 }
 
 void CCState::getRemainingRegParmsForType(SmallVectorImpl<MCPhysReg> &Regs,
@@ -207,8 +208,8 @@ void CCState::getRemainingRegParmsForType(SmallVectorImpl<MCPhysReg> &Regs,
 
   // Allocate something of this value type repeatedly until we get assigned a
   // location in memory.
-  bool HaveRegParm = true;
-  while (HaveRegParm) {
+  bool HaveRegParm;
+  do {
     if (Fn(0, VT, VT, CCValAssign::Full, Flags, *this)) {
 #ifndef NDEBUG
       dbgs() << "Call has unhandled type " << EVT(VT).getEVTString()
@@ -217,7 +218,7 @@ void CCState::getRemainingRegParmsForType(SmallVectorImpl<MCPhysReg> &Regs,
       llvm_unreachable(nullptr);
     }
     HaveRegParm = Locs.back().isRegLoc();
-  }
+  } while (HaveRegParm);
 
   // Copy all the registers from the value locations we added.
   assert(NumLocs < Locs.size() && "CC assignment failed to add location");
@@ -248,7 +249,7 @@ void CCState::analyzeMustTailForwardedRegisters(
     const TargetLowering *TL = MF.getSubtarget().getTargetLowering();
     const TargetRegisterClass *RC = TL->getRegClassFor(RegVT);
     for (MCPhysReg PReg : RemainingRegs) {
-      unsigned VReg = MF.addLiveIn(PReg, RC);
+      Register VReg = MF.addLiveIn(PReg, RC);
       Forwards.push_back(ForwardedRegister(VReg, PReg, RegVT));
     }
   }

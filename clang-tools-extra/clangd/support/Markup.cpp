@@ -12,8 +12,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Compiler.h"
-#include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstddef>
 #include <iterator>
@@ -215,7 +213,7 @@ std::string getMarkerForCodeBlock(llvm::StringRef Input) {
 
 // Trims the input and concatenates whitespace blocks into a single ` `.
 std::string canonicalizeSpaces(llvm::StringRef Input) {
-  llvm::SmallVector<llvm::StringRef, 4> Words;
+  llvm::SmallVector<llvm::StringRef> Words;
   llvm::SplitString(Input, Words);
   return llvm::join(Words, " ");
 }

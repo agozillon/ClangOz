@@ -72,8 +72,8 @@ declare swiftcc i8* @thisreturn_attribute(i8* returned swiftself)
 ; OPT-DAG: mov [[CSREG:r[1-9].*]], r0
 ; OPT-DAG: ldr r10, [r10]
 ; OPT: bl  {{_?}}thisreturn_attribute
-; OPT: str r0, {{\[}}[[CSREG]]
-define hidden swiftcc void @swiftself_nothisreturn(i8** noalias nocapture sret, i8** noalias nocapture readonly swiftself) {
+; OPT: str r0, [[[CSREG]]
+define hidden swiftcc void @swiftself_nothisreturn(i8** noalias nocapture sret(i8**), i8** noalias nocapture readonly swiftself) {
 entry:
   %2 = load i8*, i8** %1, align 8
   %3 = tail call swiftcc i8* @thisreturn_attribute(i8* swiftself %2)

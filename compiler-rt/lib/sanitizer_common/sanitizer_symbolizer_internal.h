@@ -21,7 +21,7 @@ namespace __sanitizer {
 
 // Parsing helpers, 'str' is searched for delimiter(s) and a string or uptr
 // is extracted. When extracting a string, a newly allocated (using
-// InternalAlloc) and null-terminataed buffer is returned. They return a pointer
+// InternalAlloc) and null-terminated buffer is returned. They return a pointer
 // to the next characted after the found delimiter.
 const char *ExtractToken(const char *str, const char *delims, char **result);
 const char *ExtractInt(const char *str, const char *delims, int *result);
@@ -70,10 +70,8 @@ class SymbolizerTool {
     return nullptr;
   }
 
-  // Called during the LateInitialize phase of Sanitizer initialization.
-  // Usually this is a safe place to call code that might need to use user
-  // memory allocators.
-  virtual void LateInitialize() {}
+ protected:
+  ~SymbolizerTool() {}
 };
 
 // SymbolizerProcess encapsulates communication between the tool and
@@ -85,14 +83,17 @@ class SymbolizerProcess {
   const char *SendCommand(const char *command);
 
  protected:
+  ~SymbolizerProcess() {}
+
   /// The maximum number of arguments required to invoke a tool process.
-  static const unsigned kArgVMax = 6;
+  static const unsigned kArgVMax = 16;
 
   // Customizable by subclasses.
   virtual bool StartSymbolizerSubprocess();
-  virtual bool ReadFromSymbolizer(char *buffer, uptr max_length);
+  virtual bool ReadFromSymbolizer();
   // Return the environment to run the symbolizer in.
   virtual char **GetEnvP() { return GetEnviron(); }
+  InternalMmapVector<char> &GetBuff() { return buffer_; }
 
  private:
   virtual bool ReachedEndOfOutput(const char *buffer, uptr length) const {
@@ -113,8 +114,7 @@ class SymbolizerProcess {
   fd_t input_fd_;
   fd_t output_fd_;
 
-  static const uptr kBufferSize = 16 * 1024;
-  char buffer_[kBufferSize];
+  InternalMmapVector<char> buffer_;
 
   static const uptr kMaxTimesRestarted = 5;
   static const int kSymbolizerStartupTimeMillis = 10;
@@ -128,7 +128,7 @@ class LLVMSymbolizerProcess;
 
 // This tool invokes llvm-symbolizer in a subprocess. It should be as portable
 // as the llvm-symbolizer tool is.
-class LLVMSymbolizer : public SymbolizerTool {
+class LLVMSymbolizer final : public SymbolizerTool {
  public:
   explicit LLVMSymbolizer(const char *path, LowLevelAllocator *allocator);
 

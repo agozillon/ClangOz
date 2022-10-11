@@ -84,8 +84,9 @@
 #include "lldb/Target/ThreadPlanCallFunction.h"
 #include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/LLDBAssert.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
-#include "lldb/Utility/Reproducer.h"
+#include "lldb/Utility/ReproducerProvider.h"
 #include "lldb/Utility/Stream.h"
 #include "lldb/Utility/StreamString.h"
 #include "lldb/Utility/StringList.h"
@@ -189,7 +190,7 @@ public:
       // when we move the expression result ot the ScratchASTContext). Let's at
       // least log these diagnostics until we find a way to properly render
       // them and display them to the user.
-      Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_EXPRESSIONS));
+      Log *log = GetLog(LLDBLog::Expressions);
       if (log) {
         llvm::SmallVector<char, 32> diag_str;
         Info.FormatDiagnostic(diag_str);
@@ -282,7 +283,7 @@ private:
 static void SetupModuleHeaderPaths(CompilerInstance *compiler,
                                    std::vector<std::string> include_directories,
                                    lldb::TargetSP target_sp) {
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_EXPRESSIONS));
+  Log *log = GetLog(LLDBLog::Expressions);
 
   HeaderSearchOptions &search_opts = compiler->getHeaderSearchOpts();
 
@@ -302,6 +303,56 @@ static void SetupModuleHeaderPaths(CompilerInstance *compiler,
   search_opts.ImplicitModuleMaps = true;
 }
 
+/// Iff the given identifier is a C++ keyword, remove it from the
+/// identifier table (i.e., make the token a normal identifier).
+static void RemoveCppKeyword(IdentifierTable &idents, llvm::StringRef token) {
+  // FIXME: 'using' is used by LLDB for local variables, so we can't remove
+  // this keyword without breaking this functionality.
+  if (token == "using")
+    return;
+  // GCC's '__null' is used by LLDB to define NULL/Nil/nil.
+  if (token == "__null")
+    return;
+
+  LangOptions cpp_lang_opts;
+  cpp_lang_opts.CPlusPlus = true;
+  cpp_lang_opts.CPlusPlus11 = true;
+  cpp_lang_opts.CPlusPlus20 = true;
+
+  clang::IdentifierInfo &ii = idents.get(token);
+  // The identifier has to be a C++-exclusive keyword. if not, then there is
+  // nothing to do.
+  if (!ii.isCPlusPlusKeyword(cpp_lang_opts))
+    return;
+  // If the token is already an identifier, then there is nothing to do.
+  if (ii.getTokenID() == clang::tok::identifier)
+    return;
+  // Otherwise the token is a C++ keyword, so turn it back into a normal
+  // identifier.
+  ii.revertTokenIDToIdentifier();
+}
+
+/// Remove all C++ keywords from the given identifier table.
+static void RemoveAllCppKeywords(IdentifierTable &idents) {
+#define KEYWORD(NAME, FLAGS) RemoveCppKeyword(idents, llvm::StringRef(#NAME));
+#include "clang/Basic/TokenKinds.def"
+}
+
+/// Configures Clang diagnostics for the expression parser.
+static void SetupDefaultClangDiagnostics(CompilerInstance &compiler) {
+  // List of Clang warning groups that are not useful when parsing expressions.
+  const std::vector<const char *> groupsToIgnore = {
+      "unused-value",
+      "odr",
+      "unused-getter-return-value",
+  };
+  for (const char *group : groupsToIgnore) {
+    compiler.getDiagnostics().setSeverityForGroup(
+        clang::diag::Flavor::WarningOrError, group,
+        clang::diag::Severity::Ignored, SourceLocation());
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // Implementation of ClangExpressionParser
 //===----------------------------------------------------------------------===//
@@ -314,7 +365,7 @@ ClangExpressionParser::ClangExpressionParser(
       m_pp_callbacks(nullptr),
       m_include_directories(std::move(include_directories)),
       m_filename(std::move(filename)) {
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_EXPRESSIONS));
+  Log *log = GetLog(LLDBLog::Expressions);
 
   // We can't compile expressions without a target.  So if the exe_scope is
   // null or doesn't have a target, then we just need to get out of here.  I'll
@@ -454,13 +505,17 @@ ClangExpressionParser::ClangExpressionParser(
 
   // 4. Create and install the target on the compiler.
   m_compiler->createDiagnostics();
+  // Limit the number of error diagnostics we emit.
+  // A value of 0 means no limit for both LLDB and Clang.
+  m_compiler->getDiagnostics().setErrorLimit(target_sp->GetExprErrorLimit());
+
   auto target_info = TargetInfo::CreateTargetInfo(
       m_compiler->getDiagnostics(), m_compiler->getInvocation().TargetOpts);
   if (log) {
     LLDB_LOGF(log, "Using SIMD alignment: %d",
               target_info->getSimdDefaultAlign());
     LLDB_LOGF(log, "Target datalayout string: '%s'",
-              target_info->getDataLayout().getStringRepresentation().c_str());
+              target_info->getDataLayoutString());
     LLDB_LOGF(log, "Target ABI: '%s'", target_info->getABI().str().c_str());
     LLDB_LOGF(log, "Target vector alignment: %d",
               target_info->getMaxVectorAlign());
@@ -504,7 +559,7 @@ ClangExpressionParser::ClangExpressionParser(
   case lldb::eLanguageTypeC_plus_plus_14:
     lang_opts.CPlusPlus11 = true;
     m_compiler->getHeaderSearchOpts().UseLibcxx = true;
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case lldb::eLanguageTypeC_plus_plus_03:
     lang_opts.CPlusPlus = true;
     if (process_sp)
@@ -598,18 +653,14 @@ ClangExpressionParser::ClangExpressionParser(
     m_compiler->getCodeGenOpts().setDebugInfo(codegenoptions::NoDebugInfo);
 
   // Disable some warnings.
-  m_compiler->getDiagnostics().setSeverityForGroup(
-      clang::diag::Flavor::WarningOrError, "unused-value",
-      clang::diag::Severity::Ignored, SourceLocation());
-  m_compiler->getDiagnostics().setSeverityForGroup(
-      clang::diag::Flavor::WarningOrError, "odr",
-      clang::diag::Severity::Ignored, SourceLocation());
+  SetupDefaultClangDiagnostics(*m_compiler);
 
   // Inform the target of the language options
   //
   // FIXME: We shouldn't need to do this, the target should be immutable once
   // created. This complexity should be lifted elsewhere.
-  m_compiler->getTarget().adjust(m_compiler->getLangOpts());
+  m_compiler->getTarget().adjust(m_compiler->getDiagnostics(),
+		                 m_compiler->getLangOpts());
 
   // 6. Set up the diagnostic buffer for reporting errors
 
@@ -623,11 +674,26 @@ ClangExpressionParser::ClangExpressionParser(
     m_compiler->createSourceManager(m_compiler->getFileManager());
   m_compiler->createPreprocessor(TU_Complete);
 
-  if (ClangModulesDeclVendor *decl_vendor =
-          target_sp->GetClangModulesDeclVendor()) {
-    if (auto *clang_persistent_vars = llvm::cast<ClangPersistentVariables>(
-            target_sp->GetPersistentExpressionStateForLanguage(
-                lldb::eLanguageTypeC))) {
+  switch (language) {
+  case lldb::eLanguageTypeC:
+  case lldb::eLanguageTypeC89:
+  case lldb::eLanguageTypeC99:
+  case lldb::eLanguageTypeC11:
+  case lldb::eLanguageTypeObjC:
+    // This is not a C++ expression but we enabled C++ as explained above.
+    // Remove all C++ keywords from the PP so that the user can still use
+    // variables that have C++ keywords as names (e.g. 'int template;').
+    RemoveAllCppKeywords(m_compiler->getPreprocessor().getIdentifierTable());
+    break;
+  default:
+    break;
+  }
+
+  if (auto *clang_persistent_vars = llvm::cast<ClangPersistentVariables>(
+          target_sp->GetPersistentExpressionStateForLanguage(
+              lldb::eLanguageTypeC))) {
+    if (std::shared_ptr<ClangModulesDeclVendor> decl_vendor =
+            clang_persistent_vars->GetClangModulesDeclVendor()) {
       std::unique_ptr<PPCallbacks> pp_callbacks(
           new LLDBPreprocessorCallbacks(*decl_vendor, *clang_persistent_vars,
                                         m_compiler->getSourceManager()));
@@ -656,11 +722,12 @@ ClangExpressionParser::ClangExpressionParser(
   m_llvm_context = std::make_unique<LLVMContext>();
   m_code_generator.reset(CreateLLVMCodeGen(
       m_compiler->getDiagnostics(), module_name,
-      m_compiler->getHeaderSearchOpts(), m_compiler->getPreprocessorOpts(),
-      m_compiler->getCodeGenOpts(), *m_llvm_context));
+      &m_compiler->getVirtualFileSystem(), m_compiler->getHeaderSearchOpts(),
+      m_compiler->getPreprocessorOpts(), m_compiler->getCodeGenOpts(),
+      *m_llvm_context));
 }
 
-ClangExpressionParser::~ClangExpressionParser() {}
+ClangExpressionParser::~ClangExpressionParser() = default;
 
 namespace {
 
@@ -930,7 +997,8 @@ public:
   void ProcessOverloadCandidates(Sema &S, unsigned CurrentArg,
                                  OverloadCandidate *Candidates,
                                  unsigned NumCandidates,
-                                 SourceLocation OpenParLoc) override {
+                                 SourceLocation OpenParLoc,
+                                 bool Braced) override {
     // At the moment we don't filter out any overloaded candidates.
   }
 
@@ -1004,14 +1072,14 @@ ClangExpressionParser::ParseInternal(DiagnosticManager &diagnostic_manager,
     }
 
     if (temp_fd != -1) {
-      lldb_private::NativeFile file(temp_fd, File::eOpenOptionWrite, true);
+      lldb_private::NativeFile file(temp_fd, File::eOpenOptionWriteOnly, true);
       const size_t expr_text_len = strlen(expr_text);
       size_t bytes_written = expr_text_len;
       if (file.Write(expr_text, bytes_written).Success()) {
         if (bytes_written == expr_text_len) {
           file.Close();
-          if (auto fileEntry =
-                  m_compiler->getFileManager().getFile(result_path)) {
+          if (auto fileEntry = m_compiler->getFileManager().getOptionalFileRef(
+                  result_path)) {
             source_mgr.setMainFileID(source_mgr.createFileID(
                 *fileEntry,
                 SourceLocation(), SrcMgr::C_User));
@@ -1074,6 +1142,7 @@ ClangExpressionParser::ParseInternal(DiagnosticManager &diagnostic_manager,
   ClangExpressionDeclMap *decl_map = type_system_helper->DeclMap();
   if (decl_map) {
     decl_map->InstallCodeGenerator(&m_compiler->getASTConsumer());
+    decl_map->InstallDiagnosticManager(diagnostic_manager);
 
     clang::ExternalASTSource *ast_source = decl_map->CreateProxy();
 
@@ -1243,7 +1312,7 @@ static bool FindFunctionInModule(ConstString &mangled_name,
                                  llvm::Module *module, const char *orig_name) {
   for (const auto &func : module->getFunctionList()) {
     const StringRef &name = func.getName();
-    if (name.find(orig_name) != StringRef::npos) {
+    if (name.contains(orig_name)) {
       mangled_name.SetString(name);
       return true;
     }
@@ -1258,7 +1327,7 @@ lldb_private::Status ClangExpressionParser::PrepareForExecution(
     bool &can_interpret, ExecutionPolicy execution_policy) {
   func_addr = LLDB_INVALID_ADDRESS;
   func_end = LLDB_INVALID_ADDRESS;
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_EXPRESSIONS));
+  Log *log = GetLog(LLDBLog::Expressions);
 
   lldb_private::Status err;
 

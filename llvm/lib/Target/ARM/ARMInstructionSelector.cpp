@@ -164,8 +164,6 @@ createARMInstructionSelector(const ARMBaseTargetMachine &TM,
 }
 }
 
-const unsigned zero_reg = 0;
-
 #define GET_GLOBALISEL_IMPL
 #include "ARMGenGlobalISel.inc"
 #undef GET_GLOBALISEL_IMPL
@@ -173,8 +171,8 @@ const unsigned zero_reg = 0;
 ARMInstructionSelector::ARMInstructionSelector(const ARMBaseTargetMachine &TM,
                                                const ARMSubtarget &STI,
                                                const ARMRegisterBankInfo &RBI)
-    : InstructionSelector(), TII(*STI.getInstrInfo()),
-      TRI(*STI.getRegisterInfo()), TM(TM), RBI(RBI), STI(STI), Opcodes(STI),
+    : TII(*STI.getInstrInfo()), TRI(*STI.getRegisterInfo()), TM(TM), RBI(RBI),
+      STI(STI), Opcodes(STI),
 #define GET_GLOBALISEL_PREDICATES_INIT
 #include "ARMGenGlobalISel.inc"
 #undef GET_GLOBALISEL_PREDICATES_INIT
@@ -626,12 +624,12 @@ bool ARMInstructionSelector::selectGlobal(MachineInstrBuilder &MIB,
 
   bool UseMovt = STI.useMovt();
 
-  unsigned Size = TM.getPointerSize(0);
+  LLT PtrTy = MRI.getType(MIB->getOperand(0).getReg());
   const Align Alignment(4);
 
-  auto addOpsForConstantPoolLoad = [&MF, Alignment,
-                                    Size](MachineInstrBuilder &MIB,
-                                          const GlobalValue *GV, bool IsSBREL) {
+  auto addOpsForConstantPoolLoad = [&MF, Alignment, PtrTy](
+                                       MachineInstrBuilder &MIB,
+                                       const GlobalValue *GV, bool IsSBREL) {
     assert((MIB->getOpcode() == ARM::LDRi12 ||
             MIB->getOpcode() == ARM::t2LDRpci) &&
            "Unsupported instruction");
@@ -646,7 +644,7 @@ bool ARMInstructionSelector::selectGlobal(MachineInstrBuilder &MIB,
     MIB.addConstantPoolIndex(CPIndex, /*Offset*/ 0, /*TargetFlags*/ 0)
         .addMemOperand(MF.getMachineMemOperand(
             MachinePointerInfo::getConstantPool(MF), MachineMemOperand::MOLoad,
-            Size, Alignment));
+            PtrTy, Alignment));
     if (MIB->getOpcode() == ARM::LDRi12)
       MIB.addImm(0);
     MIB.add(predOps(ARMCC::AL));
@@ -735,7 +733,7 @@ bool ARMInstructionSelector::selectGlobal(MachineInstrBuilder &MIB,
 
     // Add the offset to the SB register.
     MIB->setDesc(TII.get(Opcodes.ADDrr));
-    MIB->RemoveOperand(1);
+    MIB->removeOperand(1);
     MIB.addReg(ARM::R9) // FIXME: don't hardcode R9
         .addReg(Offset)
         .add(predOps(ARMCC::AL))
@@ -750,7 +748,7 @@ bool ARMInstructionSelector::selectGlobal(MachineInstrBuilder &MIB,
     } else {
       // Load the global's address from the constant pool.
       MIB->setDesc(TII.get(Opcodes.ConstPoolLoad));
-      MIB->RemoveOperand(1);
+      MIB->removeOperand(1);
       addOpsForConstantPoolLoad(MIB, GV, /*IsSBREL*/ false);
     }
   } else if (STI.isTargetMachO()) {
@@ -863,7 +861,7 @@ bool ARMInstructionSelector::select(MachineInstr &I) {
   switch (I.getOpcode()) {
   case G_SEXT:
     isSExt = true;
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case G_ZEXT: {
     assert(MRI.getType(I.getOperand(0).getReg()).getSizeInBits() <= 32 &&
            "Unsupported destination size for extension");
@@ -999,7 +997,7 @@ bool ARMInstructionSelector::select(MachineInstr &I) {
     auto CPIndex =
         ConstPool->getConstantPoolIndex(I.getOperand(1).getFPImm(), Alignment);
     MIB->setDesc(TII.get(LoadOpcode));
-    MIB->RemoveOperand(1);
+    MIB->removeOperand(1);
     MIB.addConstantPoolIndex(CPIndex, /*Offset*/ 0, /*TargetFlags*/ 0)
         .addMemOperand(
             MF.getMachineMemOperand(MachinePointerInfo::getConstantPool(MF),
@@ -1097,24 +1095,6 @@ bool ARMInstructionSelector::select(MachineInstr &I) {
     const auto NewOpc = selectLoadStoreOpCode(I.getOpcode(), RegBank, ValSize);
     if (NewOpc == G_LOAD || NewOpc == G_STORE)
       return false;
-
-    if (ValSize == 1 && NewOpc == Opcodes.STORE8) {
-      // Before storing a 1-bit value, make sure to clear out any unneeded bits.
-      Register OriginalValue = I.getOperand(0).getReg();
-
-      Register ValueToStore = MRI.createVirtualRegister(&ARM::GPRRegClass);
-      I.getOperand(0).setReg(ValueToStore);
-
-      auto InsertBefore = I.getIterator();
-      auto AndI = BuildMI(MBB, InsertBefore, I.getDebugLoc(), TII.get(Opcodes.AND))
-        .addDef(ValueToStore)
-        .addUse(OriginalValue)
-        .addImm(1)
-        .add(predOps(ARMCC::AL))
-        .add(condCodeOp());
-      if (!constrainSelectedInstRegOperands(*AndI, TII, TRI, RBI))
-        return false;
-    }
 
     I.setDesc(TII.get(NewOpc));
 

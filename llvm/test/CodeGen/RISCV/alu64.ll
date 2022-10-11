@@ -39,11 +39,11 @@ define i64 @slti(i64 %a) nounwind {
 ; RV32I-NEXT:    beqz a1, .LBB1_2
 ; RV32I-NEXT:  # %bb.1:
 ; RV32I-NEXT:    slti a0, a1, 0
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
 ; RV32I-NEXT:  .LBB1_2:
 ; RV32I-NEXT:    sltiu a0, a0, 2
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
   %1 = icmp slt i64 %a, 2
   %2 = zext i1 %1 to i64
@@ -60,12 +60,12 @@ define i64 @sltiu(i64 %a) nounwind {
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    beqz a1, .LBB2_2
 ; RV32I-NEXT:  # %bb.1:
-; RV32I-NEXT:    mv a0, zero
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a0, 0
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
 ; RV32I-NEXT:  .LBB2_2:
 ; RV32I-NEXT:    sltiu a0, a0, 3
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
   %1 = icmp ult i64 %a, 3
   %2 = zext i1 %1 to i64
@@ -109,7 +109,7 @@ define i64 @andi(i64 %a) nounwind {
 ; RV32I-LABEL: andi:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    andi a0, a0, 6
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
   %1 = and i64 %a, 6
   ret i64 %1
@@ -215,12 +215,11 @@ define i64 @sll(i64 %a, i64 %b) nounwind {
 ; RV32I-NEXT:    bltz a3, .LBB11_2
 ; RV32I-NEXT:  # %bb.1:
 ; RV32I-NEXT:    sll a1, a0, a3
-; RV32I-NEXT:    mv a0, zero
+; RV32I-NEXT:    li a0, 0
 ; RV32I-NEXT:    ret
 ; RV32I-NEXT:  .LBB11_2:
 ; RV32I-NEXT:    sll a1, a1, a2
-; RV32I-NEXT:    addi a3, zero, 31
-; RV32I-NEXT:    sub a3, a3, a2
+; RV32I-NEXT:    xori a3, a2, 31
 ; RV32I-NEXT:    srli a4, a0, 1
 ; RV32I-NEXT:    srl a3, a4, a3
 ; RV32I-NEXT:    or a1, a1, a3
@@ -241,11 +240,11 @@ define i64 @slt(i64 %a, i64 %b) nounwind {
 ; RV32I-NEXT:    beq a1, a3, .LBB12_2
 ; RV32I-NEXT:  # %bb.1:
 ; RV32I-NEXT:    slt a0, a1, a3
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
 ; RV32I-NEXT:  .LBB12_2:
 ; RV32I-NEXT:    sltu a0, a0, a2
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
   %1 = icmp slt i64 %a, %b
   %2 = zext i1 %1 to i64
@@ -263,11 +262,11 @@ define i64 @sltu(i64 %a, i64 %b) nounwind {
 ; RV32I-NEXT:    beq a1, a3, .LBB13_2
 ; RV32I-NEXT:  # %bb.1:
 ; RV32I-NEXT:    sltu a0, a1, a3
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
 ; RV32I-NEXT:  .LBB13_2:
 ; RV32I-NEXT:    sltu a0, a0, a2
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
   %1 = icmp ult i64 %a, %b
   %2 = zext i1 %1 to i64
@@ -301,12 +300,11 @@ define i64 @srl(i64 %a, i64 %b) nounwind {
 ; RV32I-NEXT:    bltz a3, .LBB15_2
 ; RV32I-NEXT:  # %bb.1:
 ; RV32I-NEXT:    srl a0, a1, a3
-; RV32I-NEXT:    mv a1, zero
+; RV32I-NEXT:    li a1, 0
 ; RV32I-NEXT:    ret
 ; RV32I-NEXT:  .LBB15_2:
 ; RV32I-NEXT:    srl a0, a0, a2
-; RV32I-NEXT:    addi a3, zero, 31
-; RV32I-NEXT:    sub a3, a3, a2
+; RV32I-NEXT:    xori a3, a2, 31
 ; RV32I-NEXT:    slli a4, a1, 1
 ; RV32I-NEXT:    sll a3, a4, a3
 ; RV32I-NEXT:    or a0, a0, a3
@@ -332,8 +330,7 @@ define i64 @sra(i64 %a, i64 %b) nounwind {
 ; RV32I-NEXT:    ret
 ; RV32I-NEXT:  .LBB16_2:
 ; RV32I-NEXT:    srl a0, a0, a2
-; RV32I-NEXT:    addi a3, zero, 31
-; RV32I-NEXT:    sub a3, a3, a2
+; RV32I-NEXT:    xori a3, a2, 31
 ; RV32I-NEXT:    slli a4, a1, 1
 ; RV32I-NEXT:    sll a3, a4, a3
 ; RV32I-NEXT:    or a0, a0, a3
@@ -429,6 +426,23 @@ define signext i32 @sraiw(i32 %a) nounwind {
 ; RV32I-NEXT:    ret
   %1 = ashr i32 %a, 9
   ret i32 %1
+}
+
+define i64 @sraiw_i64(i64 %a) nounwind {
+; RV64I-LABEL: sraiw_i64:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    sraiw a0, a0, 9
+; RV64I-NEXT:    ret
+;
+; RV32I-LABEL: sraiw_i64:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    srai a2, a0, 9
+; RV32I-NEXT:    srai a1, a0, 31
+; RV32I-NEXT:    mv a0, a2
+; RV32I-NEXT:    ret
+  %1 = shl i64 %a, 32
+  %2 = ashr i64 %1, 41
+  ret i64 %2
 }
 
 define signext i32 @sextw(i32 zeroext %a) nounwind {

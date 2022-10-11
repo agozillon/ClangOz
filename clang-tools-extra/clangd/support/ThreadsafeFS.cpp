@@ -9,8 +9,6 @@
 #include "support/ThreadsafeFS.h"
 #include "Logger.h"
 #include "llvm/ADT/None.h"
-#include "llvm/ADT/Optional.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Path.h"
@@ -55,7 +53,7 @@ private:
       assert(this->Wrapped);
     }
 
-    virtual llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>>
+    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>>
     getBuffer(const llvm::Twine &Name, int64_t FileSize,
               bool RequiresNullTerminator, bool /*IsVolatile*/) override {
       return Wrapped->getBuffer(Name, FileSize, RequiresNullTerminator,
@@ -87,8 +85,7 @@ RealThreadsafeFS::viewImpl() const {
   // Avoid using memory-mapped files.
   // FIXME: Try to use a similar approach in Sema instead of relying on
   //        propagation of the 'isVolatile' flag through all layers.
-  return new VolatileFileSystem(
-      llvm::vfs::createPhysicalFileSystem().release());
+  return new VolatileFileSystem(llvm::vfs::createPhysicalFileSystem());
 }
 } // namespace clangd
 } // namespace clang

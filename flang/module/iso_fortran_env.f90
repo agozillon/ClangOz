@@ -9,7 +9,7 @@
 ! See Fortran 2018, clause 16.10.2
 ! TODO: These are placeholder values so that some tests can be run.
 
-include '../runtime/magic-numbers.h' ! for IOSTAT= error/end code values
+include '../include/flang/Runtime/magic-numbers.h' ! for IOSTAT= error/end code values
 
 module iso_fortran_env
 
@@ -86,7 +86,7 @@ module iso_fortran_env
     selectedReal64 = selected_real_kind(15, 307), &   ! IEEE double
     selectedReal80 = selected_real_kind(18, 4931), &  ! 80x87 extended
     selectedReal64x2 = selected_real_kind(31, 307), & ! "double-double"
-    selectedReal128 = selected_real_kind(33, 9863), & ! IEEE quad
+    selectedReal128 = selected_real_kind(33, 4931), & ! IEEE quad
     safeReal16 = merge(selectedReal16, selected_real_kind(0,0), &
                        selectedReal16 >= 0), &
     safeBfloat16 = merge(selectedBfloat16, selected_real_kind(0,0), &
@@ -115,7 +115,7 @@ module iso_fortran_env
     real64x2 = merge(selectedReal64x2, merge(-2, -1, selectedReal64x2 >= 0), &
                      digits(real(0,kind=safeReal64x2)) == 106), &
     real128 = merge(selectedReal128, merge(-2, -1, selectedReal128 >= 0), &
-                    digits(real(0,kind=safeReal128)) == 112)
+                    digits(real(0,kind=safeReal128)) == 113)
 
   integer, parameter :: real_kinds(*) = [ &
     [(real16, integer :: j=1, count([real16 >= 0]))], &
@@ -129,9 +129,11 @@ module iso_fortran_env
   integer, parameter :: current_team = -1, initial_team = -2, parent_team = -3
 
   integer, parameter :: input_unit = 5, output_unit = 6
-  integer, parameter :: error_unit = output_unit
-  integer, parameter :: iostat_end = -1, iostat_eor = -2
-  integer, parameter :: iostat_inquire_internal_unit = -1
+  integer, parameter :: error_unit = 0
+  integer, parameter :: iostat_end = FORTRAN_RUNTIME_IOSTAT_END
+  integer, parameter :: iostat_eor = FORTRAN_RUNTIME_IOSTAT_EOR
+  integer, parameter :: iostat_inquire_internal_unit = &
+                          FORTRAN_RUNTIME_IOSTAT_INQUIRE_INTERNAL_UNIT
 
   integer, parameter :: character_storage_size = 8
   integer, parameter :: file_storage_size = 8
@@ -144,13 +146,14 @@ module iso_fortran_env
   integer, parameter :: stat_unlocked = FORTRAN_RUNTIME_STAT_UNLOCKED
   integer, parameter :: stat_unlocked_failed_image = FORTRAN_RUNTIME_STAT_UNLOCKED_FAILED_IMAGE
 
- contains
+  interface compiler_options
+    character(len=80) function compiler_options_1()
+    end function compiler_options_1
+  end interface compiler_options
 
-  character(len=80) function compiler_options()
-    compiler_options = 'COMPILER_OPTIONS() not yet implemented'
-  end function compiler_options
+  interface compiler_version
+    character(len=80) function compiler_version_1()
+    end function compiler_version_1
+  end interface compiler_version
 
-  character(len=80) function compiler_version()
-    compiler_version = 'f18 in development'
-  end function compiler_version
 end module iso_fortran_env

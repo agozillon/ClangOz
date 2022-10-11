@@ -12,9 +12,9 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Format.h"
 
-#include <ctype.h>
-#include <stdio.h>
-#include <string.h>
+#include <cctype>
+#include <cstdio>
+#include <cstring>
 
 using namespace lldb_private;
 
@@ -33,6 +33,17 @@ static inline bool separate(size_t count) {
   default:
     return false;
   }
+}
+
+UUID::UUID(UUID::CvRecordPdb70 debug_info) {
+  llvm::sys::swapByteOrder(debug_info.Uuid.Data1);
+  llvm::sys::swapByteOrder(debug_info.Uuid.Data2);
+  llvm::sys::swapByteOrder(debug_info.Uuid.Data3);
+  llvm::sys::swapByteOrder(debug_info.Age);
+  if (debug_info.Age)
+    *this = UUID(&debug_info, sizeof(debug_info));
+  else
+    *this = UUID(&debug_info.Uuid, sizeof(debug_info.Uuid));
 }
 
 std::string UUID::GetAsString(llvm::StringRef separator) const {
@@ -97,16 +108,6 @@ bool UUID::SetFromStringRef(llvm::StringRef str) {
   if (!rest.empty() || bytes.empty())
     return false;
 
-  *this = fromData(bytes);
+  *this = UUID(bytes);
   return true;
-}
-
-bool UUID::SetFromOptionalStringRef(llvm::StringRef str) {
-  bool result = SetFromStringRef(str);
-  if (result) {
-    if (llvm::all_of(m_bytes, [](uint8_t b) { return b == 0; }))
-        Clear();
-  }
-
-  return result;
 }

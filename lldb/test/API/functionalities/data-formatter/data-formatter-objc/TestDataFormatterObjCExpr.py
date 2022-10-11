@@ -14,7 +14,6 @@ from ObjCDataFormatterTestCase import ObjCDataFormatterTestCase
 
 class ObjCDataFormatterExpr(ObjCDataFormatterTestCase):
 
-    @skipUnlessDarwin
     def test_expr_with_run_command(self):
         """Test common cases of expression parser <--> formatters interaction."""
         self.build()
@@ -27,6 +26,8 @@ class ObjCDataFormatterExpr(ObjCDataFormatterTestCase):
             "thread list",
             STOPPED_DUE_TO_BREAKPOINT,
             substrs=['stopped', 'stop reason = breakpoint'])
+
+        self.runCmd('settings set target.prefer-dynamic-value no-dynamic-values')
 
         # This is the function to remove the custom formats in order to have a
         # clean slate for the next test case.

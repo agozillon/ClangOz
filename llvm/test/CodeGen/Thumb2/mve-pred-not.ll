@@ -323,25 +323,17 @@ entry:
 define arm_aapcs_vfpcc <2 x i64> @cmpeqz_v2i1(<2 x i64> %a, <2 x i64> %b) {
 ; CHECK-LABEL: cmpeqz_v2i1:
 ; CHECK:       @ %bb.0: @ %entry
-; CHECK-NEXT:    vmov r0, s1
-; CHECK-NEXT:    vmov r1, s0
+; CHECK-NEXT:    vmov r0, r1, d0
 ; CHECK-NEXT:    orrs r0, r1
-; CHECK-NEXT:    vmov r1, s2
-; CHECK-NEXT:    cset r0, eq
-; CHECK-NEXT:    tst.w r0, #1
-; CHECK-NEXT:    csetm r0, ne
-; CHECK-NEXT:    vmov.32 q2[0], r0
-; CHECK-NEXT:    vmov.32 q2[1], r0
-; CHECK-NEXT:    vmov r0, s3
-; CHECK-NEXT:    orrs r0, r1
-; CHECK-NEXT:    cset r0, eq
-; CHECK-NEXT:    tst.w r0, #1
-; CHECK-NEXT:    csetm r0, ne
-; CHECK-NEXT:    vmov.32 q2[2], r0
-; CHECK-NEXT:    vmov.32 q2[3], r0
-; CHECK-NEXT:    vbic q0, q0, q2
-; CHECK-NEXT:    vand q1, q1, q2
-; CHECK-NEXT:    vorr q0, q1, q0
+; CHECK-NEXT:    mov.w r1, #0
+; CHECK-NEXT:    csetm r0, eq
+; CHECK-NEXT:    bfi r1, r0, #0, #8
+; CHECK-NEXT:    vmov r0, r2, d1
+; CHECK-NEXT:    orrs r0, r2
+; CHECK-NEXT:    csetm r0, eq
+; CHECK-NEXT:    bfi r1, r0, #8, #8
+; CHECK-NEXT:    vmsr p0, r1
+; CHECK-NEXT:    vpsel q0, q1, q0
 ; CHECK-NEXT:    bx lr
 entry:
   %c1 = icmp eq <2 x i64> %a, zeroinitializer
@@ -353,25 +345,17 @@ entry:
 define arm_aapcs_vfpcc <2 x i64> @cmpeq_v2i1(<2 x i64> %a, <2 x i64> %b, <2 x i64> %c) {
 ; CHECK-LABEL: cmpeq_v2i1:
 ; CHECK:       @ %bb.0: @ %entry
-; CHECK-NEXT:    vmov r0, s1
-; CHECK-NEXT:    vmov r1, s0
+; CHECK-NEXT:    vmov r0, r1, d0
 ; CHECK-NEXT:    orrs r0, r1
-; CHECK-NEXT:    vmov r1, s2
-; CHECK-NEXT:    cset r0, eq
-; CHECK-NEXT:    tst.w r0, #1
-; CHECK-NEXT:    csetm r0, ne
-; CHECK-NEXT:    vmov.32 q2[0], r0
-; CHECK-NEXT:    vmov.32 q2[1], r0
-; CHECK-NEXT:    vmov r0, s3
-; CHECK-NEXT:    orrs r0, r1
-; CHECK-NEXT:    cset r0, eq
-; CHECK-NEXT:    tst.w r0, #1
-; CHECK-NEXT:    csetm r0, ne
-; CHECK-NEXT:    vmov.32 q2[2], r0
-; CHECK-NEXT:    vmov.32 q2[3], r0
-; CHECK-NEXT:    vbic q0, q0, q2
-; CHECK-NEXT:    vand q1, q1, q2
-; CHECK-NEXT:    vorr q0, q1, q0
+; CHECK-NEXT:    mov.w r1, #0
+; CHECK-NEXT:    csetm r0, eq
+; CHECK-NEXT:    bfi r1, r0, #0, #8
+; CHECK-NEXT:    vmov r0, r2, d1
+; CHECK-NEXT:    orrs r0, r2
+; CHECK-NEXT:    csetm r0, eq
+; CHECK-NEXT:    bfi r1, r0, #8, #8
+; CHECK-NEXT:    vmsr p0, r1
+; CHECK-NEXT:    vpsel q0, q1, q0
 ; CHECK-NEXT:    bx lr
 entry:
   %c1 = icmp eq <2 x i64> %a, zeroinitializer

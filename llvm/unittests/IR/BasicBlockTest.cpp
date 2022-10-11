@@ -11,9 +11,11 @@
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/NoFolder.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Support/SourceMgr.h"
 #include "gmock/gmock-matchers.h"
 #include "gtest/gtest.h"
@@ -35,10 +37,12 @@ TEST(BasicBlockTest, PhiRange) {
   BranchInst::Create(BB.get(), BB2.get());
 
   // Make sure this doesn't crash if there are no phis.
+  int PhiCount = 0;
   for (auto &PN : BB->phis()) {
     (void)PN;
-    EXPECT_TRUE(false) << "empty block should have no phis";
+    PhiCount++;
   }
+  ASSERT_EQ(PhiCount, 0) << "empty block should have no phis";
 
   // Make it a cycle.
   auto *BI = BranchInst::Create(BB.get(), BB.get());

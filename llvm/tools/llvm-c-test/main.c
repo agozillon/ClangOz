@@ -36,10 +36,10 @@ static void print_usage(void) {
   fprintf(stderr, "  * --targets-list\n");
   fprintf(stderr, "    List available targets\n\n");
   fprintf(stderr, "  * --object-list-sections\n");
-  fprintf(stderr, "    Read object file form stdin - list sections\n\n");
+  fprintf(stderr, "    Read object file from stdin - list sections\n\n");
   fprintf(stderr, "  * --object-list-symbols\n");
   fprintf(stderr,
-          "    Read object file form stdin - list symbols (like nm)\n\n");
+          "    Read object file from stdin - list symbols (like nm)\n\n");
   fprintf(stderr, "  * --disassemble\n");
   fprintf(stderr, "    Read lines of triple, hex ascii machine code from stdin "
                   "- print disassembly\n\n");
@@ -48,11 +48,13 @@ static void print_usage(void) {
       stderr,
       "    Read lines of name, rpn from stdin - print generated module\n\n");
   fprintf(stderr, "  * --echo\n");
-  fprintf(stderr,
-          "    Read bitcode file form stdin - print it back out\n\n");
+  fprintf(stderr, "    Read bitcode file from stdin - print it back out\n\n");
+  fprintf(stderr, "  * --echo --opaque-pointers\n");
+  fprintf(stderr, "    Read bitcode file from stdin - print it back out in "
+                  "opaque pointer mode\n\n");
   fprintf(stderr, "  * --test-diagnostic-handler\n");
   fprintf(stderr,
-          "    Read bitcode file form stdin with a diagnostic handler set\n\n");
+          "    Read bitcode file from stdin with a diagnostic handler set\n\n");
   fprintf(stderr, "  * --test-dibuilder\n");
   fprintf(stderr,
           "    Run tests for the DIBuilder C API - print generated module\n\n");
@@ -93,8 +95,9 @@ int main(int argc, char **argv) {
     return llvm_test_function_attributes();
   } else if (argc == 2 && !strcmp(argv[1], "--test-callsite-attributes")) {
     return llvm_test_callsite_attributes();
-  } else if (argc == 2 && !strcmp(argv[1], "--echo")) {
-    return llvm_echo();
+  } else if ((argc == 2 || argc == 3) && !strcmp(argv[1], "--echo")) {
+    return llvm_echo(argc == 3 ? strcmp(argv[2], "--no-opaque-pointers") != 0
+                               : 1);
   } else if (argc == 2 && !strcmp(argv[1], "--test-diagnostic-handler")) {
     return llvm_test_diagnostic_handler();
   } else if (argc == 2 && !strcmp(argv[1], "--test-dibuilder")) {

@@ -30,8 +30,6 @@ private:
   const Driver &D;
   bool IsValid = false;
   CudaVersion Version = CudaVersion::UNKNOWN;
-  std::string DetectedVersion;
-  bool DetectedVersionIsNotSupported = false;
   std::string InstallPath;
   std::string BinPath;
   std::string LibPath;
@@ -62,7 +60,10 @@ public:
   void print(raw_ostream &OS) const;
 
   /// Get the detected Cuda install's version.
-  CudaVersion version() const { return Version; }
+  CudaVersion version() const {
+    return Version == CudaVersion::NEW ? CudaVersion::PARTIALLY_SUPPORTED
+                                       : Version;
+  }
   /// Get the detected Cuda installation path.
   StringRef getInstallPath() const { return InstallPath; }
   /// Get the detected path to Cuda's bin directory.
@@ -78,9 +79,6 @@ public:
     return LibDeviceMap.lookup(Gpu);
   }
   void WarnIfUnsupportedVersion();
-
-private:
-  void ParseCudaVersionFile(llvm::StringRef V);
 };
 
 namespace tools {
@@ -113,18 +111,9 @@ class LLVM_LIBRARY_VISIBILITY Linker : public Tool {
                      const char *LinkingOutput) const override;
 };
 
-class LLVM_LIBRARY_VISIBILITY OpenMPLinker : public Tool {
- public:
-   OpenMPLinker(const ToolChain &TC)
-       : Tool("NVPTX::OpenMPLinker", "nvlink", TC) {}
-
-   bool hasIntegratedCPP() const override { return false; }
-
-   void ConstructJob(Compilation &C, const JobAction &JA,
-                     const InputInfo &Output, const InputInfoList &Inputs,
-                     const llvm::opt::ArgList &TCArgs,
-                     const char *LinkingOutput) const override;
-};
+void getNVPTXTargetFeatures(const Driver &D, const llvm::Triple &Triple,
+                            const llvm::opt::ArgList &Args,
+                            std::vector<StringRef> &Features);
 
 } // end namespace NVPTX
 } // end namespace tools
@@ -134,8 +123,7 @@ namespace toolchains {
 class LLVM_LIBRARY_VISIBILITY CudaToolChain : public ToolChain {
 public:
   CudaToolChain(const Driver &D, const llvm::Triple &Triple,
-                const ToolChain &HostTC, const llvm::opt::ArgList &Args,
-                const Action::OffloadKind OK);
+                const ToolChain &HostTC, const llvm::opt::ArgList &Args);
 
   const llvm::Triple *getAuxTriple() const override {
     return &HostTC.getTriple();
@@ -159,7 +147,9 @@ public:
   bool useIntegratedAs() const override { return false; }
   bool isCrossCompiling() const override { return true; }
   bool isPICDefault() const override { return false; }
-  bool isPIEDefault() const override { return false; }
+  bool isPIEDefault(const llvm::opt::ArgList &Args) const override {
+    return false;
+  }
   bool isPICDefaultForced() const override { return false; }
   bool SupportsProfiling() const override { return false; }
   bool supportsDebugInfoOption(const llvm::opt::Arg *A) const override;
@@ -188,6 +178,8 @@ public:
                      const llvm::opt::ArgList &Args) const override;
 
   unsigned GetDefaultDwarfVersion() const override { return 2; }
+  // NVPTX supports only DWARF2.
+  unsigned getMaxDwarfVersion() const override { return 2; }
 
   const ToolChain &HostTC;
   CudaInstallationDetector CudaInstallation;
@@ -195,9 +187,6 @@ public:
 protected:
   Tool *buildAssembler() const override;  // ptxas
   Tool *buildLinker() const override;     // fatbinary (ok, not really a linker)
-
-private:
-  const Action::OffloadKind OK;
 };
 
 } // end namespace toolchains

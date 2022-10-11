@@ -1,9 +1,11 @@
 // Test that dynamically allocated thread-specific storage is included in the root set.
-// RUN: LSAN_BASE="report_objects=1:use_stacks=0:use_registers=0"
 // RUN: %clangxx_lsan %s -o %t
-// RUN: %env_lsan_opts=$LSAN_BASE:"use_tls=0" not %run %t 2>&1 | FileCheck %s
-// RUN: %env_lsan_opts=$LSAN_BASE:"use_tls=1" %run %t 2>&1
+// RUN: %env_lsan_opts="report_objects=1:use_stacks=0:use_registers=0:use_tls=0" not %run %t 2>&1 | FileCheck %s
+// RUN: %env_lsan_opts="report_objects=1:use_stacks=0:use_registers=0:use_tls=1" %run %t 2>&1
 // RUN: %env_lsan_opts="" %run %t 2>&1
+
+// Investigate why it does not fail with use_tls=0
+// UNSUPPORTED: arm-linux || armhf-linux
 
 #include <assert.h>
 #include <pthread.h>

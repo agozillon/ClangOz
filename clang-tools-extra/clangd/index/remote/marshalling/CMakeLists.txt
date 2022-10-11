@@ -2,12 +2,10 @@ add_clang_library(clangdRemoteMarshalling
   Marshalling.cpp
 
   LINK_LIBS
-  RemoteIndexProtos
-
-  protobuf
+  clangdRemoteIndexProto
   clangDaemon
   clangdSupport
 
   DEPENDS
-  RemoteIndexProtos
+  clangdRemoteIndexProto
   )

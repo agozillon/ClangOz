@@ -6,13 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// UNSUPPORTED: libcpp-has-no-threads
+// UNSUPPORTED: no-threads
 // UNSUPPORTED: c++03, c++11
 
 // shared_timed_mutex was introduced in macosx10.12
-// UNSUPPORTED: with_system_cxx_lib=macosx10.11
-// UNSUPPORTED: with_system_cxx_lib=macosx10.10
-// UNSUPPORTED: with_system_cxx_lib=macosx10.9
+// UNSUPPORTED: use_system_cxx_lib && target={{.+}}-apple-macosx10.{{9|10|11}}
+
+// ALLOW_RETRIES: 3
 
 // <shared_mutex>
 
@@ -20,12 +20,15 @@
 
 // void lock_shared();
 
-#include <shared_mutex>
 #include <thread>
-#include <vector>
-#include <cstdlib>
-#include <cassert>
 
+#include <atomic>
+#include <cassert>
+#include <cstdlib>
+#include <shared_mutex>
+#include <vector>
+
+#include "make_test_thread.h"
 #include "test_macros.h"
 
 std::shared_timed_mutex m;
@@ -76,7 +79,7 @@ int main(int, char**)
   m.lock();
   std::vector<std::thread> v;
   for (int i = 0; i < threads; ++i)
-    v.push_back(std::thread(readerMustWait));
+    v.push_back(support::make_test_thread(readerMustWait));
   while (countDown > 0)
     std::this_thread::yield();
   readerStart = Clock::now();
@@ -88,8 +91,8 @@ int main(int, char**)
   countDown.store(threads + 1);
   m.lock_shared();
   for (auto& t : v)
-    t = std::thread(reader);
-  std::thread q(writerMustWait);
+    t = support::make_test_thread(reader);
+  std::thread q = support::make_test_thread(writerMustWait);
   while (countDown > 0)
     std::this_thread::yield();
   writerStart = Clock::now();

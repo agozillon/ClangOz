@@ -9,14 +9,12 @@
 // Allows setting up fake filesystem environments for tests.
 //
 //===----------------------------------------------------------------------===//
-#ifndef LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANGD_TESTFS_H
-#define LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANGD_TESTFS_H
-#include "ClangdServer.h"
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_UNITTESTS_TESTFS_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANGD_UNITTESTS_TESTFS_H
 #include "GlobalCompilationDatabase.h"
 #include "support/Path.h"
 #include "support/ThreadsafeFS.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
-#include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/VirtualFileSystem.h"
@@ -34,12 +32,21 @@ buildTestFS(llvm::StringMap<std::string> const &Files,
 class MockFS : public ThreadsafeFS {
 public:
   IntrusiveRefCntPtr<llvm::vfs::FileSystem> viewImpl() const override {
-    return buildTestFS(Files, Timestamps);
+    auto MemFS = buildTestFS(Files, Timestamps);
+    if (!OverlayRealFileSystemForModules)
+      return MemFS;
+    llvm::IntrusiveRefCntPtr<llvm::vfs::OverlayFileSystem> OverlayFileSystem =
+        new llvm::vfs::OverlayFileSystem(llvm::vfs::getRealFileSystem());
+    OverlayFileSystem->pushOverlay(MemFS);
+    return OverlayFileSystem;
   }
 
   // If relative paths are used, they are resolved with testPath().
   llvm::StringMap<std::string> Files;
   llvm::StringMap<time_t> Timestamps;
+  // If true, real file system will be used as fallback for the in-memory one.
+  // This is useful for testing module support.
+  bool OverlayRealFileSystemForModules = false;
 };
 
 // A Compilation database that returns a fixed set of compile flags.

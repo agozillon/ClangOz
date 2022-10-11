@@ -57,6 +57,11 @@ static struct {
   uint64_t data = 0xfffffffffffffffeULL;
 } garbage_string_long_mode4;
 
+size_t touch_string(std::string &in_str)
+{
+  return in_str.size(); // Break here to look at bad string
+}
+
 int main()
 {
     std::wstring wempty(L"");
@@ -74,6 +79,7 @@ int main()
     std::u32string u32_string(U"🍄🍅🍆🍌");
     std::u32string u32_empty(U"");
     std::basic_string<unsigned char> uchar(5, 'a');
+    std::string *null_str = nullptr;
 
 #if _LIBCPP_ABI_VERSION == 1
     std::string garbage1, garbage2, garbage3, garbage4, garbage5;
@@ -92,5 +98,7 @@ int main()
 #endif
 
     S.assign(L"!!!!!"); // Set break point at this line.
+    std::string *not_a_string = (std::string *) 0x0;
+    touch_string(*not_a_string);
     return 0;
 }

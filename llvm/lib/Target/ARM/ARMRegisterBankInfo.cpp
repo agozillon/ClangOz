@@ -13,9 +13,9 @@
 #include "ARMRegisterBankInfo.h"
 #include "ARMInstrInfo.h" // For the register classes
 #include "ARMSubtarget.h"
-#include "llvm/CodeGen/GlobalISel/RegisterBank.h"
-#include "llvm/CodeGen/GlobalISel/RegisterBankInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/RegisterBank.h"
+#include "llvm/CodeGen/RegisterBankInfo.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 
 #define GET_TARGET_REGBANK_IMPL
@@ -129,8 +129,7 @@ static void checkValueMappings() {
 } // end namespace arm
 } // end namespace llvm
 
-ARMRegisterBankInfo::ARMRegisterBankInfo(const TargetRegisterInfo &TRI)
-    : ARMGenRegisterBankInfo() {
+ARMRegisterBankInfo::ARMRegisterBankInfo(const TargetRegisterInfo &TRI) {
   // We have only one set of register banks, whatever the subtarget
   // is. Therefore, the initialization of the RegBanks table should be
   // done only once. Indeed the table of all register banks
@@ -156,10 +155,10 @@ ARMRegisterBankInfo::ARMRegisterBankInfo(const TargetRegisterInfo &TRI)
            "Subclass not added?");
     assert(RBGPR.covers(*TRI.getRegClass(ARM::tcGPRRegClassID)) &&
            "Subclass not added?");
-    assert(RBGPR.covers(*TRI.getRegClass(ARM::tGPR_and_tcGPRRegClassID)) &&
+    assert(RBGPR.covers(*TRI.getRegClass(ARM::GPRnoip_and_tcGPRRegClassID)) &&
            "Subclass not added?");
-    assert(RBGPR.covers(
-               *TRI.getRegClass(ARM::tGPREven_and_tGPR_and_tcGPRRegClassID)) &&
+    assert(RBGPR.covers(*TRI.getRegClass(
+               ARM::tGPREven_and_GPRnoip_and_tcGPRRegClassID)) &&
            "Subclass not added?");
     assert(RBGPR.covers(*TRI.getRegClass(ARM::tGPROdd_and_tcGPRRegClassID)) &&
            "Subclass not added?");
@@ -182,10 +181,12 @@ ARMRegisterBankInfo::getRegBankFromRegClass(const TargetRegisterClass &RC,
   switch (RC.getID()) {
   case GPRRegClassID:
   case GPRwithAPSRRegClassID:
+  case GPRnoipRegClassID:
   case GPRnopcRegClassID:
+  case GPRnoip_and_GPRnopcRegClassID:
   case rGPRRegClassID:
   case GPRspRegClassID:
-  case tGPR_and_tcGPRRegClassID:
+  case GPRnoip_and_tcGPRRegClassID:
   case tcGPRRegClassID:
   case tGPRRegClassID:
   case tGPREvenRegClassID:
@@ -193,7 +194,7 @@ ARMRegisterBankInfo::getRegBankFromRegClass(const TargetRegisterClass &RC,
   case tGPR_and_tGPREvenRegClassID:
   case tGPR_and_tGPROddRegClassID:
   case tGPREven_and_tcGPRRegClassID:
-  case tGPREven_and_tGPR_and_tcGPRRegClassID:
+  case tGPREven_and_GPRnoip_and_tcGPRRegClassID:
   case tGPROdd_and_tcGPRRegClassID:
     return getRegBank(ARM::GPRRegBankID);
   case HPRRegClassID:

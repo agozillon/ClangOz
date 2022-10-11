@@ -12,17 +12,15 @@ from lldbsuite.test import lldbutil
 
 class PersistObjCPointeeType(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
         # Find the line number to break for main.cpp.
         self.line = line_number('main.m', '// break here')
 
-    @skipUnlessDarwin
     @skipIf(archs=["i386", "i686"])
     @skipIf(debug_info="gmodules", archs=['arm64', 'armv7', 'armv7k', 'arm64e', 'arm64_32'])  # compile error with gmodules for iOS
+    @add_test_categories(["objc"])
     def test_with(self):
         """Test that we can p *objcObject"""
         self.build()

@@ -45,17 +45,17 @@
 
 namespace Fortran::semantics {
 
-using NameToSymbolMap = std::map<const char *, SymbolRef>;
+using NameToSymbolMap = std::multimap<parser::CharBlock, SymbolRef>;
 static void DoDumpSymbols(llvm::raw_ostream &, const Scope &, int indent = 0);
 static void PutIndent(llvm::raw_ostream &, int indent);
 
 static void GetSymbolNames(const Scope &scope, NameToSymbolMap &symbols) {
   // Finds all symbol names in the scope without collecting duplicates.
   for (const auto &pair : scope) {
-    symbols.emplace(pair.second->name().begin(), *pair.second);
+    symbols.emplace(pair.second->name(), *pair.second);
   }
   for (const auto &pair : scope.commonBlocks()) {
-    symbols.emplace(pair.second->name().begin(), *pair.second);
+    symbols.emplace(pair.second->name(), *pair.second);
   }
   for (const auto &child : scope.children()) {
     GetSymbolNames(child, symbols);
@@ -165,9 +165,9 @@ using StatementSemanticsPass2 = SemanticsVisitor<AccStructureChecker,
 
 static bool PerformStatementSemantics(
     SemanticsContext &context, parser::Program &program) {
-  ResolveNames(context, program);
+  ResolveNames(context, program, context.globalScope());
   RewriteParseTree(context, program);
-  ComputeOffsets(context);
+  ComputeOffsets(context, context.globalScope());
   CheckDeclarations(context);
   StatementSemanticsPass1{context}.Walk(program);
   StatementSemanticsPass2 pass2{context};
@@ -178,28 +178,125 @@ static bool PerformStatementSemantics(
   return !context.AnyFatalError();
 }
 
+/// This class keeps track of the common block appearances with the biggest size
+/// and with an initial value (if any) in a program. This allows reporting
+/// conflicting initialization and warning about appearances of a same
+/// named common block with different sizes. The biggest common block size and
+/// initialization (if any) can later be provided so that lowering can generate
+/// the correct symbol size and initial values, even when named common blocks
+/// appears with different sizes and are initialized outside of block data.
+class CommonBlockMap {
+private:
+  struct CommonBlockInfo {
+    // Common block symbol for the appearance with the biggest size.
+    SymbolRef biggestSize;
+    // Common block symbol for the appearance with the initialized members (if
+    // any).
+    std::optional<SymbolRef> initialization;
+  };
+
+public:
+  void MapCommonBlockAndCheckConflicts(
+      SemanticsContext &context, const Symbol &common) {
+    const Symbol *isInitialized{CommonBlockIsInitialized(common)};
+    auto [it, firstAppearance] = commonBlocks_.insert({common.name(),
+        isInitialized ? CommonBlockInfo{common, common}
+                      : CommonBlockInfo{common, std::nullopt}});
+    if (!firstAppearance) {
+      CommonBlockInfo &info{it->second};
+      if (isInitialized) {
+        if (info.initialization.has_value() &&
+            &**info.initialization != &common) {
+          // Use the location of the initialization in the error message because
+          // common block symbols may have no location if they are blank
+          // commons.
+          const Symbol &previousInit{
+              DEREF(CommonBlockIsInitialized(**info.initialization))};
+          context
+              .Say(isInitialized->name(),
+                  "Multiple initialization of COMMON block /%s/"_err_en_US,
+                  common.name())
+              .Attach(previousInit.name(),
+                  "Previous initialization of COMMON block /%s/"_en_US,
+                  common.name());
+        } else {
+          info.initialization = common;
+        }
+      }
+      if (common.size() != info.biggestSize->size() && !common.name().empty()) {
+        context
+            .Say(common.name(),
+                "A named COMMON block should have the same size everywhere it appears (%zd bytes here)"_port_en_US,
+                common.size())
+            .Attach(info.biggestSize->name(),
+                "Previously defined with a size of %zd bytes"_en_US,
+                info.biggestSize->size());
+      }
+      if (common.size() > info.biggestSize->size()) {
+        info.biggestSize = common;
+      }
+    }
+  }
+
+  CommonBlockList GetCommonBlocks() const {
+    CommonBlockList result;
+    for (const auto &[_, blockInfo] : commonBlocks_) {
+      result.emplace_back(
+          std::make_pair(blockInfo.initialization ? *blockInfo.initialization
+                                                  : blockInfo.biggestSize,
+              blockInfo.biggestSize->size()));
+    }
+    return result;
+  }
+
+private:
+  /// Return the symbol of an initialized member if a COMMON block
+  /// is initalized. Otherwise, return nullptr.
+  static Symbol *CommonBlockIsInitialized(const Symbol &common) {
+    const auto &commonDetails =
+        common.get<Fortran::semantics::CommonBlockDetails>();
+
+    for (const auto &member : commonDetails.objects()) {
+      if (IsInitialized(*member)) {
+        return &*member;
+      }
+    }
+
+    // Common block may be initialized via initialized variables that are in an
+    // equivalence with the common block members.
+    for (const Fortran::semantics::EquivalenceSet &set :
+        common.owner().equivalenceSets()) {
+      for (const Fortran::semantics::EquivalenceObject &obj : set) {
+        if (!obj.symbol.test(
+                Fortran::semantics::Symbol::Flag::CompilerCreated)) {
+          if (FindCommonBlockContaining(obj.symbol) == &common &&
+              IsInitialized(obj.symbol)) {
+            return &obj.symbol;
+          }
+        }
+      }
+    }
+    return nullptr;
+  }
+  std::map<SourceName, CommonBlockInfo> commonBlocks_;
+};
+
 SemanticsContext::SemanticsContext(
     const common::IntrinsicTypeDefaultKinds &defaultKinds,
     const common::LanguageFeatureControl &languageFeatures,
-    parser::AllSources &allSources)
+    parser::AllCookedSources &allCookedSources)
     : defaultKinds_{defaultKinds}, languageFeatures_{languageFeatures},
-      allSources_{allSources},
+      allCookedSources_{allCookedSources},
       intrinsics_{evaluate::IntrinsicProcTable::Configure(defaultKinds_)},
-      foldingContext_{
-          parser::ContextualMessages{&messages_}, defaultKinds_, intrinsics_} {}
+      globalScope_{*this}, intrinsicModulesScope_{globalScope_.MakeScope(
+                               Scope::Kind::IntrinsicModules, nullptr)},
+      foldingContext_{parser::ContextualMessages{&messages_}, defaultKinds_,
+          intrinsics_, targetCharacteristics_} {}
 
 SemanticsContext::~SemanticsContext() {}
 
 int SemanticsContext::GetDefaultKind(TypeCategory category) const {
   return defaultKinds_.GetDefaultKind(category);
-}
-
-bool SemanticsContext::IsEnabled(common::LanguageFeature feature) const {
-  return languageFeatures_.IsEnabled(feature);
-}
-
-bool SemanticsContext::ShouldWarn(common::LanguageFeature feature) const {
-  return languageFeatures_.ShouldWarn(feature);
 }
 
 const DeclTypeSpec &SemanticsContext::MakeNumericType(
@@ -221,23 +318,28 @@ bool SemanticsContext::AnyFatalError() const {
       (warningsAreErrors_ || messages_.AnyFatalError());
 }
 bool SemanticsContext::HasError(const Symbol &symbol) {
-  return CheckError(symbol.test(Symbol::Flag::Error));
+  return errorSymbols_.count(symbol) > 0;
 }
 bool SemanticsContext::HasError(const Symbol *symbol) {
-  return CheckError(!symbol || HasError(*symbol));
+  return !symbol || HasError(*symbol);
 }
 bool SemanticsContext::HasError(const parser::Name &name) {
   return HasError(name.symbol);
 }
-void SemanticsContext::SetError(Symbol &symbol, bool value) {
+void SemanticsContext::SetError(const Symbol &symbol, bool value) {
   if (value) {
-    CHECK(AnyFatalError());
-    symbol.set(Symbol::Flag::Error);
+    CheckError(symbol);
+    errorSymbols_.emplace(symbol);
   }
 }
-bool SemanticsContext::CheckError(bool error) {
-  CHECK(!error || AnyFatalError());
-  return error;
+void SemanticsContext::CheckError(const Symbol &symbol) {
+  if (!AnyFatalError()) {
+    std::string buf;
+    llvm::raw_string_ostream ss{buf};
+    ss << symbol;
+    common::die(
+        "No error was reported but setting error on: %s", ss.str().c_str());
+  }
 }
 
 const Scope &SemanticsContext::FindScope(parser::CharBlock source) const {
@@ -248,8 +350,20 @@ Scope &SemanticsContext::FindScope(parser::CharBlock source) {
   if (auto *scope{globalScope_.FindScope(source)}) {
     return *scope;
   } else {
-    common::die("SemanticsContext::FindScope(): invalid source location");
+    common::die(
+        "SemanticsContext::FindScope(): invalid source location for '%s'",
+        source.ToString().c_str());
   }
+}
+
+bool SemanticsContext::IsInModuleFile(parser::CharBlock source) const {
+  for (const Scope *scope{&FindScope(source)}; !scope->IsGlobal();
+       scope = &scope->parent()) {
+    if (scope->IsModuleFile()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void SemanticsContext::PopConstruct() {
@@ -259,20 +373,19 @@ void SemanticsContext::PopConstruct() {
 
 void SemanticsContext::CheckIndexVarRedefine(const parser::CharBlock &location,
     const Symbol &variable, parser::MessageFixedText &&message) {
-  if (const Symbol * root{GetAssociationRoot(variable)}) {
-    auto it{activeIndexVars_.find(*root)};
-    if (it != activeIndexVars_.end()) {
-      std::string kind{EnumToString(it->second.kind)};
-      Say(location, std::move(message), kind, root->name())
-          .Attach(it->second.location, "Enclosing %s construct"_en_US, kind);
-    }
+  const Symbol &symbol{ResolveAssociations(variable)};
+  auto it{activeIndexVars_.find(symbol)};
+  if (it != activeIndexVars_.end()) {
+    std::string kind{EnumToString(it->second.kind)};
+    Say(location, std::move(message), kind, symbol.name())
+        .Attach(it->second.location, "Enclosing %s construct"_en_US, kind);
   }
 }
 
 void SemanticsContext::WarnIndexVarRedefine(
     const parser::CharBlock &location, const Symbol &variable) {
-  CheckIndexVarRedefine(
-      location, variable, "Possible redefinition of %s variable '%s'"_en_US);
+  CheckIndexVarRedefine(location, variable,
+      "Possible redefinition of %s variable '%s'"_warn_en_US);
 }
 
 void SemanticsContext::CheckIndexVarRedefine(
@@ -297,19 +410,16 @@ void SemanticsContext::ActivateIndexVar(
     const parser::Name &name, IndexVarKind kind) {
   CheckIndexVarRedefine(name);
   if (const Symbol * indexVar{name.symbol}) {
-    if (const Symbol * root{GetAssociationRoot(*indexVar)}) {
-      activeIndexVars_.emplace(*root, IndexVarInfo{name.source, kind});
-    }
+    activeIndexVars_.emplace(
+        ResolveAssociations(*indexVar), IndexVarInfo{name.source, kind});
   }
 }
 
 void SemanticsContext::DeactivateIndexVar(const parser::Name &name) {
   if (Symbol * indexVar{name.symbol}) {
-    if (const Symbol * root{GetAssociationRoot(*indexVar)}) {
-      auto it{activeIndexVars_.find(*root)};
-      if (it != activeIndexVars_.end() && it->second.location == name.source) {
-        activeIndexVars_.erase(it);
-      }
+    auto it{activeIndexVars_.find(ResolveAssociations(*indexVar))};
+    if (it != activeIndexVars_.end() && it->second.location == name.source) {
+      activeIndexVars_.erase(it);
     }
   }
 }
@@ -324,19 +434,59 @@ SymbolVector SemanticsContext::GetIndexVars(IndexVarKind kind) {
   return result;
 }
 
+SourceName SemanticsContext::SaveTempName(std::string &&name) {
+  return {*tempNames_.emplace(std::move(name)).first};
+}
+
 SourceName SemanticsContext::GetTempName(const Scope &scope) {
   for (const auto &str : tempNames_) {
-    SourceName name{str};
-    if (scope.find(name) == scope.end()) {
-      return name;
+    if (IsTempName(str)) {
+      SourceName name{str};
+      if (scope.find(name) == scope.end()) {
+        return name;
+      }
     }
   }
-  tempNames_.emplace_back(".F18.");
-  tempNames_.back() += std::to_string(tempNames_.size());
-  return {tempNames_.back()};
+  return SaveTempName(".F18."s + std::to_string(tempNames_.size()));
+}
+
+bool SemanticsContext::IsTempName(const std::string &name) {
+  return name.size() > 5 && name.substr(0, 5) == ".F18.";
+}
+
+Scope *SemanticsContext::GetBuiltinModule(const char *name) {
+  return ModFileReader{*this}.Read(SourceName{name, std::strlen(name)},
+      true /*intrinsic*/, nullptr, true /*silence errors*/);
+}
+
+void SemanticsContext::UseFortranBuiltinsModule() {
+  if (builtinsScope_ == nullptr) {
+    builtinsScope_ = GetBuiltinModule("__fortran_builtins");
+    if (builtinsScope_) {
+      intrinsics_.SupplyBuiltins(*builtinsScope_);
+    }
+  }
+}
+
+parser::Program &SemanticsContext::SaveParseTree(parser::Program &&tree) {
+  return modFileParseTrees_.emplace_back(std::move(tree));
 }
 
 bool Semantics::Perform() {
+  // Implicitly USE the __Fortran_builtins module so that special types
+  // (e.g., __builtin_team_type) are available to semantics, esp. for
+  // intrinsic checking.
+  if (!program_.v.empty()) {
+    const auto *frontModule{std::get_if<common::Indirection<parser::Module>>(
+        &program_.v.front().u)};
+    if (frontModule &&
+        std::get<parser::Statement<parser::ModuleStmt>>(frontModule->value().t)
+                .statement.v.source == "__fortran_builtins") {
+      // Don't try to read the builtins module when we're actually building it.
+    } else {
+      context_.UseFortranBuiltinsModule();
+    }
+  }
   return ValidateLabels(context_, program_) &&
       parser::CanonicalizeDo(program_) && // force line break
       CanonicalizeAcc(context_.messages(), program_) &&
@@ -346,7 +496,7 @@ bool Semantics::Perform() {
 }
 
 void Semantics::EmitMessages(llvm::raw_ostream &os) const {
-  context_.messages().Emit(os, cooked_);
+  context_.messages().Emit(os, context_.allCookedSources());
 }
 
 void Semantics::DumpSymbols(llvm::raw_ostream &os) {
@@ -356,9 +506,10 @@ void Semantics::DumpSymbols(llvm::raw_ostream &os) {
 void Semantics::DumpSymbolsSources(llvm::raw_ostream &os) const {
   NameToSymbolMap symbols;
   GetSymbolNames(context_.globalScope(), symbols);
+  const parser::AllCookedSources &allCooked{context_.allCookedSources()};
   for (const auto &pair : symbols) {
     const Symbol &symbol{pair.second};
-    if (auto sourceInfo{cooked_.GetSourcePositionRange(symbol.name())}) {
+    if (auto sourceInfo{allCooked.GetSourcePositionRange(symbol.name())}) {
       os << symbol.name().ToString() << ": " << sourceInfo->first.file.path()
          << ", " << sourceInfo->first.line << ", " << sourceInfo->first.column
          << "-" << sourceInfo->second.column << "\n";
@@ -375,8 +526,8 @@ void DoDumpSymbols(llvm::raw_ostream &os, const Scope &scope, int indent) {
   if (const auto *symbol{scope.symbol()}) {
     os << ' ' << symbol->name();
   }
-  if (scope.size()) {
-    os << " size=" << scope.size() << " alignment=" << scope.alignment();
+  if (scope.alignment().has_value()) {
+    os << " size=" << scope.size() << " alignment=" << *scope.alignment();
   }
   if (scope.derivedTypeSpec()) {
     os << " instantiation of " << *scope.derivedTypeSpec();
@@ -431,4 +582,19 @@ static void PutIndent(llvm::raw_ostream &os, int indent) {
     os << "  ";
   }
 }
+
+void SemanticsContext::MapCommonBlockAndCheckConflicts(const Symbol &common) {
+  if (!commonBlockMap_) {
+    commonBlockMap_ = std::make_unique<CommonBlockMap>();
+  }
+  commonBlockMap_->MapCommonBlockAndCheckConflicts(*this, common);
+}
+
+CommonBlockList SemanticsContext::GetCommonBlocks() const {
+  if (commonBlockMap_) {
+    return commonBlockMap_->GetCommonBlocks();
+  }
+  return {};
+}
+
 } // namespace Fortran::semantics

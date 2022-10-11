@@ -6,6 +6,9 @@
 #
 #===----------------------------------------------------------------------===##
 
+import os
+
+
 def _getSubstitution(substitution, config):
   for (orig, replacement) in config.substitutions:
     if orig == substitution:
@@ -13,24 +16,34 @@ def _getSubstitution(substitution, config):
   raise ValueError('Substitution {} is not in the config.'.format(substitution))
 
 def configure(parameters, features, config, lit_config):
-  # Apply parameters to the configuration first, since parameters are things
-  # that we request explicitly and which might influence what features are
-  # implicitly made available next.
+  note = lambda s: lit_config.note("({}) {}".format(config.name, s))
+  config.environment = dict(os.environ)
+
+  # Apply the actions supplied by parameters to the configuration first, since
+  # parameters are things that we request explicitly and which might influence
+  # what features are implicitly made available next.
   for param in parameters:
-    feature = param.getFeature(config, lit_config.params)
-    if feature:
-      feature.enableIn(config)
-      lit_config.note("Enabling Lit feature '{}' as a result of parameter '{}'".format(feature.getName(config), param.name))
+    actions = param.getActions(config, lit_config.params)
+    for action in actions:
+      action.applyTo(config)
+      if lit_config.debug:
+        note("Applied '{}' as a result of parameter '{}'".format(
+          action.pretty(config, lit_config.params),
+          param.pretty(config, lit_config.params)))
 
   # Then, apply the automatically-detected features.
-  printFeatures = []
   for feature in features:
-    if feature.isSupported(config):
-      feature.enableIn(config)
-      printFeatures.append(feature.getName(config))
-  printFeatures = ["'{}'".format(f) for f in sorted(printFeatures)]
-  lit_config.note("Enabling implicitly detected Lit features {}".format(', '.join(printFeatures)))
+    actions = feature.getActions(config)
+    for action in actions:
+      action.applyTo(config)
+      if lit_config.debug:
+        note("Applied '{}' as a result of implicitly detected feature '{}'".format(
+          action.pretty(config, lit_config.params),
+          feature.pretty(config)))
 
   # Print the basic substitutions
   for sub in ('%{cxx}', '%{flags}', '%{compile_flags}', '%{link_flags}', '%{exec}'):
-    lit_config.note("Using {} substitution: '{}'".format(sub, _getSubstitution(sub, config)))
+    note("Using {} substitution: '{}'".format(sub, _getSubstitution(sub, config)))
+
+  # Print all available features
+  note("All available features: {}".format(', '.join(config.available_features)))

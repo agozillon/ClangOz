@@ -9,8 +9,8 @@
 ; CI: ds_read2_b32 {{v\[[0-9]+:[0-9]+\]}}, {{v[0-9]+}} offset0:1 offset1:3
 ; CI: buffer_store_dword
 
-; GFX9: global_store_dword
 ; GFX9: ds_read2_b32 {{v\[[0-9]+:[0-9]+\]}}, {{v[0-9]+}} offset0:1 offset1:3
+; GFX9: global_store_dword
 ; GFX9: global_store_dword
 define amdgpu_kernel void @reorder_local_load_global_store_local_load(i32 addrspace(1)* %out, i32 addrspace(1)* %gptr) #0 {
   %ptr0 = load i32 addrspace(3)*, i32 addrspace(3)* addrspace(3)* @stored_lds_ptr, align 4
@@ -83,13 +83,13 @@ define amdgpu_kernel void @no_reorder_barrier_local_load_global_store_local_load
 ; GCN-DAG: v_readfirstlane_b32 s[[PTR_LO:[0-9]+]], v{{[0-9]+}}
 ; GCN: v_readfirstlane_b32 s[[PTR_HI:[0-9]+]], v{{[0-9]+}}
 
-; CI: s_load_dword s{{[0-9]+}}, s{{\[}}[[PTR_LO]]:[[PTR_HI]]{{\]}}, 0x1
+; CI: s_load_dword s{{[0-9]+}}, s[[[PTR_LO]]:[[PTR_HI]]], 0x1
 ; CI: buffer_store_dword
-; CI: s_load_dword s{{[0-9]+}}, s{{\[}}[[PTR_LO]]:[[PTR_HI]]{{\]}}, 0x3
+; CI: s_load_dword s{{[0-9]+}}, s[[[PTR_LO]]:[[PTR_HI]]], 0x3
 
-; GFX9: s_load_dword s{{[0-9]+}}, s{{\[}}[[PTR_LO]]:[[PTR_HI]]{{\]}}, 0x4
+; GFX9: s_load_dword s{{[0-9]+}}, s[[[PTR_LO]]:[[PTR_HI]]], 0x4
 ; GFX9: global_store_dword
-; GFX9: s_load_dword s{{[0-9]+}}, s{{\[}}[[PTR_LO]]:[[PTR_HI]]{{\]}}, 0xc
+; GFX9: s_load_dword s{{[0-9]+}}, s[[[PTR_LO]]:[[PTR_HI]]], 0xc
 
 ; CI: buffer_store_dword
 ; GFX9: global_store_dword
@@ -113,11 +113,11 @@ define amdgpu_kernel void @reorder_constant_load_global_store_constant_load(i32 
 ; GCN: v_readfirstlane_b32 s[[PTR_LO:[0-9]+]], v{{[0-9]+}}
 ; GCN: v_readfirstlane_b32 s[[PTR_HI:[0-9]+]], v{{[0-9]+}}
 
-; CI-DAG: s_load_dword s{{[0-9]+}}, s{{\[}}[[PTR_LO]]:[[PTR_HI]]{{\]}}, 0x1
-; CI-DAG: s_load_dword s{{[0-9]+}}, s{{\[}}[[PTR_LO]]:[[PTR_HI]]{{\]}}, 0x3
+; CI-DAG: s_load_dword s{{[0-9]+}}, s[[[PTR_LO]]:[[PTR_HI]]], 0x1
+; CI-DAG: s_load_dword s{{[0-9]+}}, s[[[PTR_LO]]:[[PTR_HI]]], 0x3
 
-; GFX9-DAG: s_load_dword s{{[0-9]+}}, s{{\[}}[[PTR_LO]]:[[PTR_HI]]{{\]}}, 0x4
-; GFX9-DAG: s_load_dword s{{[0-9]+}}, s{{\[}}[[PTR_LO]]:[[PTR_HI]]{{\]}}, 0xc
+; GFX9-DAG: s_load_dword s{{[0-9]+}}, s[[[PTR_LO]]:[[PTR_HI]]], 0x4
+; GFX9-DAG: s_load_dword s{{[0-9]+}}, s[[[PTR_LO]]:[[PTR_HI]]], 0xc
 
 ; GCN-DAG: ds_write_b32
 ; CI: buffer_store_dword
@@ -160,13 +160,13 @@ define amdgpu_kernel void @reorder_smrd_load_local_store_smrd_load(i32 addrspace
 }
 
 ; GCN-LABEL: {{^}}reorder_global_load_local_store_global_load:
+; CI: buffer_load_dword
+; CI: buffer_load_dword
 ; CI: ds_write_b32
-; CI: buffer_load_dword
-; CI: buffer_load_dword
 ; CI: buffer_store_dword
 
-; GFX9: global_load_dword v{{[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, off offset:4
-; GFX9: global_load_dword v{{[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, off offset:12
+; GFX9: global_load_dword v{{[0-9]+}}, v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}} offset:4
+; GFX9: global_load_dword v{{[0-9]+}}, v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}} offset:12
 ; GFX9: ds_write_b32
 define amdgpu_kernel void @reorder_global_load_local_store_global_load(i32 addrspace(1)* %out, i32 addrspace(3)* %lptr, i32 addrspace(1)* %ptr0) #0 {
   %ptr1 = getelementptr inbounds i32, i32 addrspace(1)* %ptr0, i64 1
@@ -216,11 +216,11 @@ define amdgpu_kernel void @reorder_local_offsets(i32 addrspace(1)* nocapture %ou
 ; CI: buffer_store_dword
 ; CI: s_endpgm
 
-; GFX9-DAG: global_load_dword {{v[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, off offset:400
-; GFX9-DAG: global_load_dword {{v[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, off offset:408
-; GFX9-DAG: global_store_dword v{{\[[0-9]+:[0-9]+\]}}, {{v[0-9]+}}, off offset:12
-; GFX9-DAG: global_store_dword v{{\[[0-9]+:[0-9]+\]}}, {{v[0-9]+}}, off offset:400
-; GFX9-DAG: global_store_dword v{{\[[0-9]+:[0-9]+\]}}, {{v[0-9]+}}, off offset:408
+; GFX9-DAG: global_load_dword {{v[0-9]+}}, v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}} offset:400
+; GFX9-DAG: global_load_dword {{v[0-9]+}}, v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}} offset:408
+; GFX9-DAG: global_store_dword v{{[0-9]+}}, v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}} offset:12
+; GFX9-DAG: global_store_dword v{{[0-9]+}}, v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}} offset:400
+; GFX9-DAG: global_store_dword v{{[0-9]+}}, v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}} offset:408
 ; GFX9: global_store_dword
 ; GFX9: s_endpgm
 define amdgpu_kernel void @reorder_global_offsets(i32 addrspace(1)* nocapture %out, i32 addrspace(1)* noalias nocapture readnone %gptr, i32 addrspace(1)* noalias nocapture %ptr0) #0 {
@@ -249,13 +249,13 @@ define amdgpu_kernel void @reorder_global_offsets(i32 addrspace(1)* nocapture %o
 ; CI: v_mov_b32
 ; CI: v_mov_b32
 
-; CI: v_add_i32
-; CI: v_add_i32
+; CI-DAG: v_add_i32
+; CI-DAG: v_add_i32
 
-; CI: buffer_store_dword v{{[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, s{{\[[0-9]+:[0-9]+\]}}, 0 addr64{{$}}
-; CI: buffer_store_dword v{{[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, s{{\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:20{{$}}
-; CI: buffer_store_dword v{{[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, s{{\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:36{{$}}
-; CI-NEXT: buffer_store_dword v{{[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, s{{\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:52{{$}}
+; CI-DAG: buffer_store_dword v{{[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, s{{\[[0-9]+:[0-9]+\]}}, 0 addr64{{$}}
+; CI-DAG: buffer_store_dword v{{[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, s{{\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:20{{$}}
+; CI-DAG: buffer_store_dword v{{[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, s{{\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:36{{$}}
+; CI: buffer_store_dword v{{[0-9]+}}, v{{\[[0-9]+:[0-9]+\]}}, s{{\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:52{{$}}
 
 ; GFX9: global_load_dword {{v[0-9]+}}, v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}} offset:12
 ; GFX9: global_load_dword {{v[0-9]+}}, v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}} offset:28
@@ -291,8 +291,8 @@ define amdgpu_kernel void @reorder_global_offsets_addr64_soffset0(i32 addrspace(
 }
 
 ; GCN-LABEL: {{^}}reorder_local_load_tbuffer_store_local_load:
-; GCN: tbuffer_store_format
 ; GCN: ds_read2_b32 {{v\[[0-9]+:[0-9]+\]}}, {{v[0-9]+}} offset0:1 offset1:2
+; GCN: tbuffer_store_format
 define amdgpu_vs void @reorder_local_load_tbuffer_store_local_load(i32 addrspace(1)* %out, i32 %a1, i32 %vaddr) #0 {
   %ptr0 = load i32 addrspace(3)*, i32 addrspace(3)* addrspace(3)* @stored_lds_ptr, align 4
 

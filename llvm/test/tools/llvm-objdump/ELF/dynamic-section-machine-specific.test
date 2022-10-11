@@ -28,12 +28,12 @@ Sections:
       - Tag:   DT_NULL
         Value: 0
 ProgramHeaders:
-  - Type: PT_LOAD
-    Sections:
-      - Section: .dynamic
-  - Type: PT_DYNAMIC
-    Sections:
-      - Section: .dynamic
+  - Type:     PT_LOAD
+    FirstSec: .dynamic
+    LastSec:  .dynamic
+  - Type:     PT_DYNAMIC
+    FirstSec: .dynamic
+    LastSec:  .dynamic
 
 ## Case 2: Test that MIPS machine-specific tags can be dumped.
 ##         MIPS has a few long tag names. Show that we indent columns properly.
@@ -86,6 +86,7 @@ ProgramHeaders:
 # MIPS-NEXT:  MIPS_PLTGOT                0x0000000000001000
 # MIPS-NEXT:  MIPS_RWPLT                 0x0000000000001000
 # MIPS-NEXT:  MIPS_RLD_MAP_REL           0x0000000000001000
+# MIPS-NEXT:  MIPS_XHASH                 0x0000000000002000
 
 --- !ELF
 FileHeader:
@@ -187,15 +188,17 @@ Sections:
         Value: 0x1000
       - Tag:   DT_MIPS_RLD_MAP_REL
         Value: 0x1000
+      - Tag:   DT_MIPS_XHASH
+        Value: 0x2000
       - Tag:   DT_NULL
         Value: 0
 ProgramHeaders:
-  - Type: PT_LOAD
-    Sections:
-      - Section: .dynamic
-  - Type: PT_DYNAMIC
-    Sections:
-      - Section: .dynamic
+  - Type:     PT_LOAD
+    FirstSec: .dynamic
+    LastSec:  .dynamic
+  - Type:     PT_DYNAMIC
+    FirstSec: .dynamic
+    LastSec:  .dynamic
 
 ## Case 3: Test that PPC machine-specific tags can be dumped.
 # RUN: yaml2obj --docnum=3 -o %t.ppc %s
@@ -222,12 +225,12 @@ Sections:
       - Tag:   DT_NULL
         Value: 0
 ProgramHeaders:
-  - Type: PT_LOAD
-    Sections:
-      - Section: .dynamic
-  - Type: PT_DYNAMIC
-    Sections:
-      - Section: .dynamic
+  - Type:     PT_LOAD
+    FirstSec: .dynamic
+    LastSec:  .dynamic
+  - Type:     PT_DYNAMIC
+    FirstSec: .dynamic
+    LastSec:  .dynamic
 
 ## Case 4: Test that PPC64 machine-specific tags can be dumped.
 # RUN: yaml2obj --docnum=4 -o %t.ppc64 %s
@@ -251,12 +254,12 @@ Sections:
       - Tag:   DT_NULL
         Value: 0
 ProgramHeaders:
-  - Type: PT_LOAD
-    Sections:
-      - Section: .dynamic
-  - Type: PT_DYNAMIC
-    Sections:
-      - Section: .dynamic
+  - Type:     PT_LOAD
+    FirstSec: .dynamic
+    LastSec:  .dynamic
+  - Type:      PT_DYNAMIC
+    FirstSec: .dynamic
+    LastSec:  .dynamic
 
 ## Case 5: Test that AARCH64 machine-specific tags can be dumped.
 # RUN: yaml2obj --docnum=5 -o %t.aarch64 %s
@@ -283,9 +286,38 @@ Sections:
       - Tag:   DT_NULL
         Value: 0
 ProgramHeaders:
-  - Type: PT_LOAD
-    Sections:
-      - Section: .dynamic
-  - Type: PT_DYNAMIC
-    Sections:
-      - Section: .dynamic
+  - Type:     PT_LOAD
+    FirstSec: .dynamic
+    LastSec:  .dynamic
+  - Type:     PT_DYNAMIC
+    FirstSec: .dynamic
+    LastSec:  .dynamic
+
+## Case 6: Test that RISC-V machine-specific tags can be dumped.
+# RUN: yaml2obj --docnum=6 %s -o %t.rv
+# RUN: llvm-objdump -p %t.rv | FileCheck %s --check-prefix=RISCV
+
+# RISCV:      Dynamic Section:
+# RISCV-NEXT:  RISCV_VARIANT_CC     0x0000000000000001
+
+--- !ELF
+FileHeader:
+  Class:   ELFCLASS64
+  Data:    ELFDATA2LSB
+  Type:    ET_EXEC
+  Machine: EM_RISCV
+Sections:
+  - Name: .dynamic
+    Type: SHT_DYNAMIC
+    Entries:
+      - Tag:   DT_RISCV_VARIANT_CC
+        Value: 1
+      - Tag:   DT_NULL
+        Value: 0
+ProgramHeaders:
+  - Type:     PT_LOAD
+    FirstSec: .dynamic
+    LastSec:  .dynamic
+  - Type:     PT_DYNAMIC
+    FirstSec: .dynamic
+    LastSec:  .dynamic

@@ -20,17 +20,29 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Bitstream/BitCodes.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <vector>
 
 namespace llvm {
 
 class BitstreamWriter {
+  /// Out - The buffer that keeps unflushed bytes.
   SmallVectorImpl<char> &Out;
+
+  /// FS - The file stream that Out flushes to. If FS is nullptr, it does not
+  /// support read or seek, Out cannot be flushed until all data are written.
+  raw_fd_stream *FS;
+
+  /// FlushThreshold - If FS is valid, this is the threshold (unit B) to flush
+  /// FS.
+  const uint64_t FlushThreshold;
 
   /// CurBit - Always between 0 and 31 inclusive, specifies the next bit to use.
   unsigned CurBit;
 
-  /// CurValue - The current value.  Only bits < CurBit are valid.
+  /// CurValue - The current value. Only bits < CurBit are valid.
   uint32_t CurValue;
 
   /// CurCodeSize - This is the declared size of code values used for the
@@ -62,17 +74,15 @@ class BitstreamWriter {
   };
   std::vector<BlockInfo> BlockInfoRecords;
 
-  void WriteByte(unsigned char Value) {
-    Out.push_back(Value);
-  }
-
   void WriteWord(unsigned Value) {
     Value = support::endian::byte_swap<uint32_t, support::little>(Value);
     Out.append(reinterpret_cast<const char *>(&Value),
                reinterpret_cast<const char *>(&Value + 1));
   }
 
-  size_t GetBufferOffset() const { return Out.size(); }
+  uint64_t GetNumOfFlushedBytes() const { return FS ? FS->tell() : 0; }
+
+  size_t GetBufferOffset() const { return Out.size() + GetNumOfFlushedBytes(); }
 
   size_t GetWordIndex() const {
     size_t Offset = GetBufferOffset();
@@ -80,9 +90,29 @@ class BitstreamWriter {
     return Offset / 4;
   }
 
+  /// If the related file stream supports reading, seeking and writing, flush
+  /// the buffer if its size is above a threshold.
+  void FlushToFile() {
+    if (!FS)
+      return;
+    if (Out.size() < FlushThreshold)
+      return;
+    FS->write((char *)&Out.front(), Out.size());
+    Out.clear();
+  }
+
 public:
-  explicit BitstreamWriter(SmallVectorImpl<char> &O)
-    : Out(O), CurBit(0), CurValue(0), CurCodeSize(2) {}
+  /// Create a BitstreamWriter that writes to Buffer \p O.
+  ///
+  /// \p FS is the file stream that \p O flushes to incrementally. If \p FS is
+  /// null, \p O does not flush incrementially, but writes to disk at the end.
+  ///
+  /// \p FlushThreshold is the threshold (unit M) to flush \p O if \p FS is
+  /// valid. Flushing only occurs at (sub)block boundaries.
+  BitstreamWriter(SmallVectorImpl<char> &O, raw_fd_stream *FS = nullptr,
+                  uint32_t FlushThreshold = 512)
+      : Out(O), FS(FS), FlushThreshold(FlushThreshold << 20), CurBit(0),
+        CurValue(0), CurCodeSize(2) {}
 
   ~BitstreamWriter() {
     assert(CurBit == 0 && "Unflushed data remaining");
@@ -103,12 +133,60 @@ public:
   /// with the specified value.
   void BackpatchWord(uint64_t BitNo, unsigned NewWord) {
     using namespace llvm::support;
-    unsigned ByteNo = BitNo / 8;
-    assert((!endian::readAtBitAlignment<uint32_t, little, unaligned>(
-               &Out[ByteNo], BitNo & 7)) &&
-           "Expected to be patching over 0-value placeholders");
-    endian::writeAtBitAlignment<uint32_t, little, unaligned>(
-        &Out[ByteNo], NewWord, BitNo & 7);
+    uint64_t ByteNo = BitNo / 8;
+    uint64_t StartBit = BitNo & 7;
+    uint64_t NumOfFlushedBytes = GetNumOfFlushedBytes();
+
+    if (ByteNo >= NumOfFlushedBytes) {
+      assert((!endian::readAtBitAlignment<uint32_t, little, unaligned>(
+                 &Out[ByteNo - NumOfFlushedBytes], StartBit)) &&
+             "Expected to be patching over 0-value placeholders");
+      endian::writeAtBitAlignment<uint32_t, little, unaligned>(
+          &Out[ByteNo - NumOfFlushedBytes], NewWord, StartBit);
+      return;
+    }
+
+    // If the byte offset to backpatch is flushed, use seek to backfill data.
+    // First, save the file position to restore later.
+    uint64_t CurPos = FS->tell();
+
+    // Copy data to update into Bytes from the file FS and the buffer Out.
+    char Bytes[9]; // Use one more byte to silence a warning from Visual C++.
+    size_t BytesNum = StartBit ? 8 : 4;
+    size_t BytesFromDisk = std::min(static_cast<uint64_t>(BytesNum), NumOfFlushedBytes - ByteNo);
+    size_t BytesFromBuffer = BytesNum - BytesFromDisk;
+
+    // When unaligned, copy existing data into Bytes from the file FS and the
+    // buffer Out so that it can be updated before writing. For debug builds
+    // read bytes unconditionally in order to check that the existing value is 0
+    // as expected.
+#ifdef NDEBUG
+    if (StartBit)
+#endif
+    {
+      FS->seek(ByteNo);
+      ssize_t BytesRead = FS->read(Bytes, BytesFromDisk);
+      (void)BytesRead; // silence warning
+      assert(BytesRead >= 0 && static_cast<size_t>(BytesRead) == BytesFromDisk);
+      for (size_t i = 0; i < BytesFromBuffer; ++i)
+        Bytes[BytesFromDisk + i] = Out[i];
+      assert((!endian::readAtBitAlignment<uint32_t, little, unaligned>(
+                 Bytes, StartBit)) &&
+             "Expected to be patching over 0-value placeholders");
+    }
+
+    // Update Bytes in terms of bit offset and value.
+    endian::writeAtBitAlignment<uint32_t, little, unaligned>(Bytes, NewWord,
+                                                             StartBit);
+
+    // Copy updated data back to the file FS and the buffer Out.
+    FS->seek(ByteNo);
+    FS->write(Bytes, BytesFromDisk);
+    for (size_t i = 0; i < BytesFromBuffer; ++i)
+      Out[i] = Bytes[BytesFromDisk + i];
+
+    // Restore the file position.
+    FS->seek(CurPos);
   }
 
   void BackpatchWord64(uint64_t BitNo, uint64_t Val) {
@@ -165,8 +243,8 @@ public:
 
     // Emit the bits with VBR encoding, NumBits-1 bits at a time.
     while (Val >= Threshold) {
-      Emit(((uint32_t)Val & ((1 << (NumBits-1))-1)) |
-           (1 << (NumBits-1)), NumBits);
+      Emit(((uint32_t)Val & ((1 << (NumBits - 1)) - 1)) | (1 << (NumBits - 1)),
+           NumBits);
       Val >>= NumBits-1;
     }
 
@@ -189,10 +267,9 @@ public:
     if (!BlockInfoRecords.empty() && BlockInfoRecords.back().BlockID == BlockID)
       return &BlockInfoRecords.back();
 
-    for (unsigned i = 0, e = static_cast<unsigned>(BlockInfoRecords.size());
-         i != e; ++i)
-      if (BlockInfoRecords[i].BlockID == BlockID)
-        return &BlockInfoRecords[i];
+    for (BlockInfo &BI : BlockInfoRecords)
+      if (BI.BlockID == BlockID)
+        return &BI;
     return nullptr;
   }
 
@@ -219,10 +296,8 @@ public:
 
     // If there is a blockinfo for this BlockID, add all the predefined abbrevs
     // to the abbrev list.
-    if (BlockInfo *Info = getBlockInfo(BlockID)) {
-      CurAbbrevs.insert(CurAbbrevs.end(), Info->Abbrevs.begin(),
-                        Info->Abbrevs.end());
-    }
+    if (BlockInfo *Info = getBlockInfo(BlockID))
+      append_range(CurAbbrevs, Info->Abbrevs);
   }
 
   void ExitBlock() {
@@ -245,6 +320,7 @@ public:
     CurCodeSize = B.PrevCodeSize;
     CurAbbrevs = std::move(B.PrevAbbrevs);
     BlockScope.pop_back();
+    FlushToFile();
   }
 
   //===--------------------------------------------------------------------===//
@@ -309,12 +385,12 @@ private:
       const BitCodeAbbrevOp &Op = Abbv->getOperandInfo(i++);
 
       if (Op.isLiteral())
-        EmitAbbreviatedLiteral(Op, Code.getValue());
+        EmitAbbreviatedLiteral(Op, Code.value());
       else {
         assert(Op.getEncoding() != BitCodeAbbrevOp::Array &&
                Op.getEncoding() != BitCodeAbbrevOp::Blob &&
                "Expected literal or scalar");
-        EmitAbbreviatedField(Op, Code.getValue());
+        EmitAbbreviatedField(Op, Code.value());
       }
     }
 
@@ -390,14 +466,12 @@ public:
     FlushToWord();
 
     // Emit literal bytes.
-    for (const auto &B : Bytes) {
-      assert(isUInt<8>(B) && "Value too large to emit as byte");
-      WriteByte((unsigned char)B);
-    }
+    assert(llvm::all_of(Bytes, [](UIntTy B) { return isUInt<8>(B); }));
+    Out.append(Bytes.begin(), Bytes.end());
 
     // Align end to 32-bits.
     while (GetBufferOffset() & 3)
-      WriteByte(0);
+      Out.push_back(0);
   }
   void emitBlob(StringRef Bytes, bool ShouldEmitSize = true) {
     emitBlob(makeArrayRef((const uint8_t *)Bytes.data(), Bytes.size()),

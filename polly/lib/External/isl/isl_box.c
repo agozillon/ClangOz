@@ -324,6 +324,13 @@ static isl_stat compute_size_in_direction(__isl_take isl_constraint *c,
  * Initialize the size with infinity and if no better size is found
  * then invalidate the box.  Otherwise, set the offset and size
  * in the given direction by those that correspond to the smallest size.
+ *
+ * Note that while evaluating the size corresponding to a lower bound,
+ * an affine expression is constructed from the lower bound.
+ * This lower bound may therefore not have any unknown local variables.
+ * Eliminate any unknown local variables up front.
+ * No such restriction needs to be imposed on the set over which
+ * the size is computed.
  */
 static __isl_give isl_fixed_box *set_dim_extent(__isl_take isl_fixed_box *box,
 	__isl_keep isl_map *map, int pos)
@@ -331,6 +338,7 @@ static __isl_give isl_fixed_box *set_dim_extent(__isl_take isl_fixed_box *box,
 	struct isl_size_info info;
 	isl_bool valid;
 	isl_ctx *ctx;
+	isl_basic_set *bset;
 
 	if (!box || !map)
 		return isl_fixed_box_free(box);
@@ -338,16 +346,18 @@ static __isl_give isl_fixed_box *set_dim_extent(__isl_take isl_fixed_box *box,
 	ctx = isl_map_get_ctx(map);
 	map = isl_map_copy(map);
 	map = isl_map_project_onto(map, isl_dim_out, pos, 1);
-	map = isl_map_compute_divs(map);
 	info.size = isl_val_infty(ctx);
 	info.offset = NULL;
 	info.pos = isl_map_dim(map, isl_dim_in);
 	info.bset = isl_basic_map_wrap(isl_map_simple_hull(map));
+	bset = isl_basic_set_copy(info.bset);
+	bset = isl_basic_set_remove_unknown_divs(bset);
 	if (info.pos < 0)
-		info.bset = isl_basic_set_free(info.bset);
-	if (isl_basic_set_foreach_constraint(info.bset,
+		bset = isl_basic_set_free(bset);
+	if (isl_basic_set_foreach_constraint(bset,
 					&compute_size_in_direction, &info) < 0)
 		box = isl_fixed_box_free(box);
+	isl_basic_set_free(bset);
 	valid = isl_val_is_int(info.size);
 	if (valid < 0)
 		box = isl_fixed_box_free(box);
@@ -418,6 +428,48 @@ __isl_give isl_fixed_box *isl_set_get_simple_fixed_box_hull(
 	box = isl_map_get_range_simple_fixed_box_hull(map);
 	isl_map_free(map);
 	box = isl_fixed_box_project_domain_on_params(box);
+
+	return box;
+}
+
+/* Check whether the output elements lie on a rectangular lattice,
+ * possibly depending on the parameters and the input dimensions.
+ * Return a tile in this lattice.
+ * If no stride information can be found, then return a tile of size 1
+ * (and offset 0).
+ *
+ * Obtain stride information in each output dimension separately and
+ * combine the results.
+ */
+__isl_give isl_fixed_box *isl_map_get_range_lattice_tile(
+	__isl_keep isl_map *map)
+{
+	int i;
+	isl_size n;
+	isl_space *space;
+	isl_fixed_box *box;
+
+	n = isl_map_dim(map, isl_dim_out);
+	if (n < 0)
+		return NULL;
+	space = isl_map_get_space(map);
+	box = isl_fixed_box_init(space);
+
+	for (i = 0; i < n; ++i) {
+		isl_val *stride;
+		isl_aff *offset;
+		isl_stride_info *si;
+
+		si = isl_map_get_range_stride_info(map, i);
+		stride = isl_stride_info_get_stride(si);
+		offset = isl_stride_info_get_offset(si);
+		isl_stride_info_free(si);
+
+		box = isl_fixed_box_set_valid_extent(box, i, offset, stride);
+
+		isl_aff_free(offset);
+		isl_val_free(stride);
+	}
 
 	return box;
 }

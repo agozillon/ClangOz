@@ -1,4 +1,4 @@
-//===-- GCNNSAReassign.cpp - Reassign registers in NSA unstructions -------===//
+//===-- GCNNSAReassign.cpp - Reassign registers in NSA instructions -------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -8,24 +8,21 @@
 //
 /// \file
 /// \brief Try to reassign registers on GFX10+ from non-sequential to sequential
-/// in NSA image instructions. Later SIShrinkInstructions pass will relace NSA
+/// in NSA image instructions. Later SIShrinkInstructions pass will replace NSA
 /// with sequential versions where possible.
 ///
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPU.h"
-#include "AMDGPUSubtarget.h"
-#include "SIInstrInfo.h"
+#include "GCNSubtarget.h"
 #include "SIMachineFunctionInfo.h"
+#include "SIRegisterInfo.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/CodeGen/LiveInterval.h"
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/LiveRegMatrix.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/VirtRegMap.h"
 #include "llvm/InitializePasses.h"
-#include "llvm/Support/MathExtras.h"
-#include <algorithm>
 
 using namespace llvm;
 
@@ -114,15 +111,15 @@ GCNNSAReassign::tryAssignRegisters(SmallVectorImpl<LiveInterval *> &Intervals,
   unsigned NumRegs = Intervals.size();
 
   for (unsigned N = 0; N < NumRegs; ++N)
-    if (VRM->hasPhys(Intervals[N]->reg))
+    if (VRM->hasPhys(Intervals[N]->reg()))
       LRM->unassign(*Intervals[N]);
 
   for (unsigned N = 0; N < NumRegs; ++N)
-    if (LRM->checkInterference(*Intervals[N], StartReg + N))
+    if (LRM->checkInterference(*Intervals[N], MCRegister::from(StartReg + N)))
       return false;
 
   for (unsigned N = 0; N < NumRegs; ++N)
-    LRM->assign(*Intervals[N], StartReg + N);
+    LRM->assign(*Intervals[N], MCRegister::from(StartReg + N));
 
   return true;
 }
@@ -164,18 +161,26 @@ GCNNSAReassign::scavengeRegs(SmallVectorImpl<LiveInterval *> &Intervals) const {
 GCNNSAReassign::NSA_Status
 GCNNSAReassign::CheckNSA(const MachineInstr &MI, bool Fast) const {
   const AMDGPU::MIMGInfo *Info = AMDGPU::getMIMGInfo(MI.getOpcode());
-  if (!Info || Info->MIMGEncoding != AMDGPU::MIMGEncGfx10NSA)
+  if (!Info)
     return NSA_Status::NOT_NSA;
+
+  switch (Info->MIMGEncoding) {
+  case AMDGPU::MIMGEncGfx10NSA:
+  case AMDGPU::MIMGEncGfx11NSA:
+    break;
+  default:
+    return NSA_Status::NOT_NSA;
+  }
 
   int VAddr0Idx =
     AMDGPU::getNamedOperandIdx(MI.getOpcode(), AMDGPU::OpName::vaddr0);
 
   unsigned VgprBase = 0;
   bool NSA = false;
-  for (unsigned I = 0; I < Info->VAddrDwords; ++I) {
+  for (unsigned I = 0; I < Info->VAddrOperands; ++I) {
     const MachineOperand &Op = MI.getOperand(VAddr0Idx + I);
     Register Reg = Op.getReg();
-    if (Register::isPhysicalRegister(Reg) || !VRM->isAssignedReg(Reg))
+    if (Reg.isPhysical() || !VRM->isAssignedReg(Reg))
       return NSA_Status::FIXED;
 
     Register PhysReg = VRM->getPhys(Reg);
@@ -184,15 +189,24 @@ GCNNSAReassign::CheckNSA(const MachineInstr &MI, bool Fast) const {
       if (!PhysReg)
         return NSA_Status::FIXED;
 
+      // TODO: address the below limitation to handle GFX11 BVH instructions
       // Bail if address is not a VGPR32. That should be possible to extend the
       // optimization to work with subregs of a wider register tuples, but the
       // logic to find free registers will be much more complicated with much
       // less chances for success. That seems reasonable to assume that in most
       // cases a tuple is used because a vector variable contains different
-      // parts of an address and it is either already consequitive or cannot
+      // parts of an address and it is either already consecutive or cannot
       // be reassigned if not. If needed it is better to rely on register
       // coalescer to process such address tuples.
-      if (MRI->getRegClass(Reg) != &AMDGPU::VGPR_32RegClass || Op.getSubReg())
+      if (TRI->getRegSizeInBits(*MRI->getRegClass(Reg)) != 32 || Op.getSubReg())
+        return NSA_Status::FIXED;
+
+      // InlineSpiller does not call LRM::assign() after an LI split leaving
+      // it in an inconsistent state, so we cannot call LRM::unassign().
+      // See llvm bug #48911.
+      // Skip reassign if a register has originated from such split.
+      // FIXME: Remove the workaround when bug #48911 is fixed.
+      if (VRM->getPreSplitReg(Reg))
         return NSA_Status::FIXED;
 
       const MachineInstr *Def = MRI->getUniqueVRegDef(Reg);
@@ -273,13 +287,13 @@ bool GCNNSAReassign::runOnMachineFunction(MachineFunction &MF) {
       AMDGPU::getNamedOperandIdx(MI->getOpcode(), AMDGPU::OpName::vaddr0);
 
     SmallVector<LiveInterval *, 16> Intervals;
-    SmallVector<unsigned, 16> OrigRegs;
+    SmallVector<MCRegister, 16> OrigRegs;
     SlotIndex MinInd, MaxInd;
-    for (unsigned I = 0; I < Info->VAddrDwords; ++I) {
+    for (unsigned I = 0; I < Info->VAddrOperands; ++I) {
       const MachineOperand &Op = MI->getOperand(VAddr0Idx + I);
       Register Reg = Op.getReg();
       LiveInterval *LI = &LIS->getInterval(Reg);
-      if (llvm::find(Intervals, LI) != Intervals.end()) {
+      if (llvm::is_contained(Intervals, LI)) {
         // Same register used, unable to make sequential
         Intervals.clear();
         break;
@@ -302,14 +316,15 @@ bool GCNNSAReassign::runOnMachineFunction(MachineFunction &MF) {
 
     LLVM_DEBUG(dbgs() << "Attempting to reassign NSA: " << *MI
                       << "\tOriginal allocation:\t";
-               for(auto *LI : Intervals)
-                 dbgs() << " " << llvm::printReg((VRM->getPhys(LI->reg)), TRI);
+               for (auto *LI
+                    : Intervals) dbgs()
+               << " " << llvm::printReg((VRM->getPhys(LI->reg())), TRI);
                dbgs() << '\n');
 
     bool Success = scavengeRegs(Intervals);
     if (!Success) {
       LLVM_DEBUG(dbgs() << "\tCannot reallocate.\n");
-      if (VRM->hasPhys(Intervals.back()->reg)) // Did not change allocation.
+      if (VRM->hasPhys(Intervals.back()->reg())) // Did not change allocation.
         continue;
     } else {
       // Check we did not make it worse for other instructions.
@@ -327,11 +342,11 @@ bool GCNNSAReassign::runOnMachineFunction(MachineFunction &MF) {
     }
 
     if (!Success) {
-      for (unsigned I = 0; I < Info->VAddrDwords; ++I)
-        if (VRM->hasPhys(Intervals[I]->reg))
+      for (unsigned I = 0; I < Info->VAddrOperands; ++I)
+        if (VRM->hasPhys(Intervals[I]->reg()))
           LRM->unassign(*Intervals[I]);
 
-      for (unsigned I = 0; I < Info->VAddrDwords; ++I)
+      for (unsigned I = 0; I < Info->VAddrOperands; ++I)
         LRM->assign(*Intervals[I], OrigRegs[I]);
 
       continue;
@@ -339,11 +354,12 @@ bool GCNNSAReassign::runOnMachineFunction(MachineFunction &MF) {
 
     C.second = true;
     ++NumNSAConverted;
-    LLVM_DEBUG(dbgs() << "\tNew allocation:\t\t ["
-                 << llvm::printReg((VRM->getPhys(Intervals.front()->reg)), TRI)
-                 << " : "
-                 << llvm::printReg((VRM->getPhys(Intervals.back()->reg)), TRI)
-                 << "]\n");
+    LLVM_DEBUG(
+        dbgs() << "\tNew allocation:\t\t ["
+               << llvm::printReg((VRM->getPhys(Intervals.front()->reg())), TRI)
+               << " : "
+               << llvm::printReg((VRM->getPhys(Intervals.back()->reg())), TRI)
+               << "]\n");
     Changed = true;
   }
 

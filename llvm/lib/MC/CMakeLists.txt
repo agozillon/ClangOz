@@ -6,6 +6,7 @@ add_llvm_component_library(LLVMMC
   MCAsmInfoCOFF.cpp
   MCAsmInfoDarwin.cpp
   MCAsmInfoELF.cpp
+  MCAsmInfoGOFF.cpp
   MCAsmInfoWasm.cpp
   MCAsmInfoXCOFF.cpp
   MCAsmMacro.cpp
@@ -15,6 +16,8 @@ add_llvm_component_library(LLVMMC
   MCCodeView.cpp
   MCContext.cpp
   MCDwarf.cpp
+  MCDXContainerStreamer.cpp
+  MCDXContainerWriter.cpp
   MCELFObjectTargetWriter.cpp
   MCELFStreamer.cpp
   MCExpr.cpp
@@ -32,15 +35,18 @@ add_llvm_component_library(LLVMMC
   MCObjectFileInfo.cpp
   MCObjectStreamer.cpp
   MCObjectWriter.cpp
+  MCPseudoProbe.cpp
   MCRegisterInfo.cpp
   MCSchedule.cpp
   MCSection.cpp
   MCSectionCOFF.cpp
+  MCSectionDXContainer.cpp
   MCSectionELF.cpp
   MCSectionMachO.cpp
   MCSectionWasm.cpp
   MCSectionXCOFF.cpp
   MCStreamer.cpp
+  MCSPIRVStreamer.cpp
   MCSubtargetInfo.cpp
   MCSymbol.cpp
   MCSymbolELF.cpp
@@ -56,14 +62,21 @@ add_llvm_component_library(LLVMMC
   MCXCOFFObjectTargetWriter.cpp
   MCXCOFFStreamer.cpp
   MachObjectWriter.cpp
+  SPIRVObjectWriter.cpp
   StringTableBuilder.cpp
   SubtargetFeature.cpp
+  TargetRegistry.cpp
   WasmObjectWriter.cpp
   WinCOFFObjectWriter.cpp
   XCOFFObjectWriter.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/MC
+
+  LINK_COMPONENTS
+  Support
+  BinaryFormat
+  DebugInfoCodeView
   )
 
 add_subdirectory(MCParser)

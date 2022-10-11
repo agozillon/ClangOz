@@ -10,8 +10,10 @@
 #include "ClangTidyTest.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Tooling/Transformer/RangeSelector.h"
+#include "clang/Tooling/Transformer/RewriteRule.h"
 #include "clang/Tooling/Transformer/Stencil.h"
 #include "clang/Tooling/Transformer/Transformer.h"
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
 namespace clang {
@@ -23,20 +25,23 @@ using namespace ::clang::ast_matchers;
 using transformer::cat;
 using transformer::change;
 using transformer::IncludeFormat;
+using transformer::makeRule;
 using transformer::node;
-using transformer::RewriteRule;
+using transformer::noopEdit;
+using transformer::note;
+using transformer::RewriteRuleWith;
+using transformer::RootID;
 using transformer::statement;
 
 // Invert the code of an if-statement, while maintaining its semantics.
-RewriteRule invertIf() {
+RewriteRuleWith<std::string> invertIf() {
   StringRef C = "C", T = "T", E = "E";
-  RewriteRule Rule = tooling::makeRule(
+  RewriteRuleWith<std::string> Rule = makeRule(
       ifStmt(hasCondition(expr().bind(C)), hasThen(stmt().bind(T)),
              hasElse(stmt().bind(E))),
-      change(statement(std::string(RewriteRule::RootID)),
-             cat("if(!(", node(std::string(C)), ")) ",
-                 statement(std::string(E)), " else ",
-                 statement(std::string(T)))),
+      change(statement(RootID), cat("if(!(", node(std::string(C)), ")) ",
+                                    statement(std::string(E)), " else ",
+                                    statement(std::string(T)))),
       cat("negate condition and reverse `then` and `else` branches"));
   return Rule;
 }
@@ -67,13 +72,100 @@ TEST(TransformerClangTidyCheckTest, Basic) {
   EXPECT_EQ(Expected, test::runCheckOnCode<IfInverterCheck>(Input));
 }
 
+TEST(TransformerClangTidyCheckTest, DiagnosticsCorrectlyGenerated) {
+  class DiagOnlyCheck : public TransformerClangTidyCheck {
+  public:
+    DiagOnlyCheck(StringRef Name, ClangTidyContext *Context)
+        : TransformerClangTidyCheck(
+              makeRule(returnStmt(), noopEdit(node(RootID)), cat("message")),
+              Name, Context) {}
+  };
+  std::string Input = "int h() { return 5; }";
+  std::vector<ClangTidyError> Errors;
+  EXPECT_EQ(Input, test::runCheckOnCode<DiagOnlyCheck>(Input, &Errors));
+  EXPECT_EQ(Errors.size(), 1U);
+  EXPECT_EQ(Errors[0].Message.Message, "message");
+  EXPECT_THAT(Errors[0].Message.Ranges, testing::IsEmpty());
+  EXPECT_THAT(Errors[0].Notes, testing::IsEmpty());
+
+  // The diagnostic is anchored to the match, "return 5".
+  EXPECT_EQ(Errors[0].Message.FileOffset, 10U);
+}
+
+transformer::ASTEdit noReplacementEdit(transformer::RangeSelector Target) {
+  transformer::ASTEdit E;
+  E.TargetRange = std::move(Target);
+  return E;
+}
+
+TEST(TransformerClangTidyCheckTest, EmptyReplacement) {
+  class DiagOnlyCheck : public TransformerClangTidyCheck {
+  public:
+    DiagOnlyCheck(StringRef Name, ClangTidyContext *Context)
+        : TransformerClangTidyCheck(
+              makeRule(returnStmt(), edit(noReplacementEdit(node(RootID))),
+                       cat("message")),
+              Name, Context) {}
+  };
+  std::string Input = "int h() { return 5; }";
+  std::vector<ClangTidyError> Errors;
+  EXPECT_EQ("int h() { }", test::runCheckOnCode<DiagOnlyCheck>(Input, &Errors));
+  EXPECT_EQ(Errors.size(), 1U);
+  EXPECT_EQ(Errors[0].Message.Message, "message");
+  EXPECT_THAT(Errors[0].Message.Ranges, testing::IsEmpty());
+
+  // The diagnostic is anchored to the match, "return 5".
+  EXPECT_EQ(Errors[0].Message.FileOffset, 10U);
+}
+
+TEST(TransformerClangTidyCheckTest, NotesCorrectlyGenerated) {
+  class DiagAndNoteCheck : public TransformerClangTidyCheck {
+  public:
+    DiagAndNoteCheck(StringRef Name, ClangTidyContext *Context)
+        : TransformerClangTidyCheck(
+              makeRule(returnStmt(),
+                       note(node(RootID), cat("some note")),
+                       cat("message")),
+              Name, Context) {}
+  };
+  std::string Input = "int h() { return 5; }";
+  std::vector<ClangTidyError> Errors;
+  EXPECT_EQ(Input, test::runCheckOnCode<DiagAndNoteCheck>(Input, &Errors));
+  EXPECT_EQ(Errors.size(), 1U);
+  EXPECT_EQ(Errors[0].Notes.size(), 1U);
+  EXPECT_EQ(Errors[0].Notes[0].Message, "some note");
+
+  // The note is anchored to the match, "return 5".
+  EXPECT_EQ(Errors[0].Notes[0].FileOffset, 10U);
+}
+
+TEST(TransformerClangTidyCheckTest, DiagnosticMessageEscaped) {
+  class GiveDiagWithPercentSymbol : public TransformerClangTidyCheck {
+  public:
+    GiveDiagWithPercentSymbol(StringRef Name, ClangTidyContext *Context)
+        : TransformerClangTidyCheck(makeRule(returnStmt(),
+                                             noopEdit(node(RootID)),
+                                             cat("bad code: x % y % z")),
+                                    Name, Context) {}
+  };
+  std::string Input = "int somecode() { return 0; }";
+  std::vector<ClangTidyError> Errors;
+  EXPECT_EQ(Input,
+            test::runCheckOnCode<GiveDiagWithPercentSymbol>(Input, &Errors));
+  ASSERT_EQ(Errors.size(), 1U);
+  // The message stored in this field shouldn't include escaped percent signs,
+  // because the diagnostic printer should have _unescaped_ them when processing
+  // the diagnostic. The only behavior observable/verifiable by the test is that
+  // the presence of the '%' doesn't crash Clang.
+  EXPECT_EQ(Errors[0].Message.Message, "bad code: x % y % z");
+}
+
 class IntLitCheck : public TransformerClangTidyCheck {
 public:
   IntLitCheck(StringRef Name, ClangTidyContext *Context)
-      : TransformerClangTidyCheck(tooling::makeRule(integerLiteral(),
-                                                    change(cat("LIT")),
-                                                    cat("no message")),
-                                  Name, Context) {}
+      : TransformerClangTidyCheck(
+            makeRule(integerLiteral(), change(cat("LIT")), cat("no message")),
+            Name, Context) {}
 };
 
 // Tests that two changes in a single macro expansion do not lead to conflicts
@@ -95,7 +187,7 @@ class BinOpCheck : public TransformerClangTidyCheck {
 public:
   BinOpCheck(StringRef Name, ClangTidyContext *Context)
       : TransformerClangTidyCheck(
-            tooling::makeRule(
+            makeRule(
                 binaryOperator(hasOperatorName("+"), hasRHS(expr().bind("r"))),
                 change(node("r"), cat("RIGHT")), cat("no message")),
             Name, Context) {}
@@ -118,12 +210,13 @@ TEST(TransformerClangTidyCheckTest, TwoMatchesInMacroExpansion) {
 }
 
 // A trivial rewrite-rule generator that requires Objective-C code.
-Optional<RewriteRule> needsObjC(const LangOptions &LangOpts,
-                                const ClangTidyCheck::OptionsView &Options) {
+Optional<RewriteRuleWith<std::string>>
+needsObjC(const LangOptions &LangOpts,
+          const ClangTidyCheck::OptionsView &Options) {
   if (!LangOpts.ObjC)
     return None;
-  return tooling::makeRule(clang::ast_matchers::functionDecl(),
-                           change(cat("void changed() {}")), cat("no message"));
+  return makeRule(clang::ast_matchers::functionDecl(),
+                  change(cat("void changed() {}")), cat("no message"));
 }
 
 class NeedsObjCCheck : public TransformerClangTidyCheck {
@@ -143,12 +236,13 @@ TEST(TransformerClangTidyCheckTest, DisableByLang) {
 }
 
 // A trivial rewrite rule generator that checks config options.
-Optional<RewriteRule> noSkip(const LangOptions &LangOpts,
-                             const ClangTidyCheck::OptionsView &Options) {
+Optional<RewriteRuleWith<std::string>>
+noSkip(const LangOptions &LangOpts,
+       const ClangTidyCheck::OptionsView &Options) {
   if (Options.get("Skip", "false") == "true")
     return None;
-  return tooling::makeRule(clang::ast_matchers::functionDecl(),
-                           change(cat("void nothing()")), cat("no message"));
+  return makeRule(clang::ast_matchers::functionDecl(),
+                  changeTo(cat("void nothing();")), cat("no message"));
 }
 
 class ConfigurableCheck : public TransformerClangTidyCheck {
@@ -172,11 +266,11 @@ TEST(TransformerClangTidyCheckTest, DisableByConfig) {
                           Input, nullptr, "input.cc", None, Options));
 }
 
-RewriteRule replaceCall(IncludeFormat Format) {
+RewriteRuleWith<std::string> replaceCall(IncludeFormat Format) {
   using namespace ::clang::ast_matchers;
-  RewriteRule Rule =
-      tooling::makeRule(callExpr(callee(functionDecl(hasName("f")))),
-                        change(cat("other()")), cat("no message"));
+  RewriteRuleWith<std::string> Rule =
+      makeRule(callExpr(callee(functionDecl(hasName("f")))),
+               change(cat("other()")), cat("no message"));
   addInclude(Rule, "clang/OtherLib.h", Format);
   return Rule;
 }
@@ -222,10 +316,10 @@ TEST(TransformerClangTidyCheckTest, AddIncludeAngled) {
 }
 
 class IncludeOrderCheck : public TransformerClangTidyCheck {
-  static RewriteRule rule() {
+  static RewriteRuleWith<std::string> rule() {
     using namespace ::clang::ast_matchers;
-    RewriteRule Rule = transformer::makeRule(integerLiteral(), change(cat("5")),
-                                             cat("no message"));
+    RewriteRuleWith<std::string> Rule = transformer::makeRule(
+        integerLiteral(), change(cat("5")), cat("no message"));
     addInclude(Rule, "bar.h", IncludeFormat::Quoted);
     return Rule;
   }

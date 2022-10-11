@@ -29,6 +29,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
@@ -73,7 +74,7 @@ INITIALIZE_PASS(NVVMReflect, "nvvm-reflect",
                 "Replace occurrences of __nvvm_reflect() calls with 0/1", false,
                 false)
 
-bool NVVMReflect::runOnFunction(Function &F) {
+static bool runNVVMReflect(Function &F, unsigned SmVersion) {
   if (!NVVMReflectEnabled)
     return false;
 
@@ -132,15 +133,13 @@ bool NVVMReflect::runOnFunction(Function &F) {
       // FIXME: Add assertions about ConvCall.
       Str = ConvCall->getArgOperand(0);
     }
-    assert(isa<ConstantExpr>(Str) &&
-           "Format of __nvvm__reflect function not recognized");
-    const ConstantExpr *GEP = cast<ConstantExpr>(Str);
-
-    const Value *Sym = GEP->getOperand(0);
-    assert(isa<Constant>(Sym) &&
+    // Pre opaque pointers we have a constant expression wrapping the constant
+    // string.
+    Str = Str->stripPointerCasts();
+    assert(isa<Constant>(Str) &&
            "Format of __nvvm_reflect function not recognized");
 
-    const Value *Operand = cast<Constant>(Sym)->getOperand(0);
+    const Value *Operand = cast<Constant>(Str)->getOperand(0);
     if (const GlobalVariable *GV = dyn_cast<GlobalVariable>(Operand)) {
       // For CUDA-7.0 style __nvvm_reflect calls, we need to find the operand's
       // initializer.
@@ -178,4 +177,16 @@ bool NVVMReflect::runOnFunction(Function &F) {
     I->eraseFromParent();
 
   return ToRemove.size() > 0;
+}
+
+bool NVVMReflect::runOnFunction(Function &F) {
+  return runNVVMReflect(F, SmVersion);
+}
+
+NVVMReflectPass::NVVMReflectPass() : NVVMReflectPass(0) {}
+
+PreservedAnalyses NVVMReflectPass::run(Function &F,
+                                       FunctionAnalysisManager &AM) {
+  return runNVVMReflect(F, SmVersion) ? PreservedAnalyses::none()
+                                      : PreservedAnalyses::all();
 }

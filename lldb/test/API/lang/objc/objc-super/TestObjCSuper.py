@@ -10,8 +10,6 @@ from lldbsuite.test import lldbutil
 
 class TestObjCSuperMethod(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
@@ -20,7 +18,6 @@ class TestObjCSuperMethod(TestBase):
         self.break_line = line_number(
             self.main_source, '// Set breakpoint here.')
 
-    @skipUnlessDarwin
     @add_test_categories(['pyapi'])
     def test_with_python_api(self):
         """Test calling methods on super."""

@@ -17,6 +17,9 @@ include "mlir/IR/OpBase.td"
 
 def Quantization_Dialect : Dialect {
   let name = "quant";
+  let cppNamespace = "::mlir::quant";
+
+  let useDefaultTypePrinterParser = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -27,7 +30,7 @@ class quant_TypedPrimitiveOrContainer<Type etype> :
     Type<Or<[etype.predicate,
                 TensorOf<[etype]>.predicate,
                 VectorOf<[etype]>.predicate]>,
-         "primitive/tensor/vector of " # etype.description>;
+         "primitive/tensor/vector of " # etype.summary>;
 
 // An implementation of QuantizedType.
 def quant_QuantizedType :

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple x86_64-apple-darwin -std=c++11 -emit-llvm -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-apple-darwin -std=c++11 -emit-llvm -o - %s | FileCheck %s
 
 // Verify that the outer loop has the inner loop's access in its
 // llvm.loop.parallel_accesses property.
@@ -18,5 +18,5 @@ void vectorize_outer_test(int *List, int Length) {
 
 // CHECK: ![[ACCESS_GROUP_2]] = distinct !{}
 // CHECK: ![[INNER_LOOPID]] = distinct !{![[INNER_LOOPID]],
-// CHECK: ![[OUTER_LOOPID]] = distinct !{![[OUTER_LOOPID]], ![[PARALLEL_ACCESSES_9:[0-9]+]]
+// CHECK: ![[OUTER_LOOPID]] = distinct !{![[OUTER_LOOPID]], [[MP:![0-9]+]], ![[PARALLEL_ACCESSES_9:[0-9]+]]
 // CHECK: ![[PARALLEL_ACCESSES_9]] = !{!"llvm.loop.parallel_accesses", ![[ACCESS_GROUP_2]]}

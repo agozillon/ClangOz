@@ -3,12 +3,12 @@
 
 ; This test asserted in MachineBlockPlacement during asm-goto bring up.
 
-%struct.wibble = type { %struct.pluto, i32, i8* }
+%struct.wibble = type { %struct.pluto, i32, ptr }
 %struct.pluto = type { i32, i32, i32 }
 
-@global = external global [0 x %struct.wibble]
+@global = external dso_local global [0 x %struct.wibble]
 
-define i32 @foo(i32 %arg, i32 (i8*)* %arg3) nounwind {
+define i32 @foo(i32 %arg, ptr %arg3) nounwind {
 ; CHECK-LABEL: foo:
 ; CHECK:       # %bb.0: # %bb
 ; CHECK-NEXT:    pushq %rbp
@@ -32,14 +32,14 @@ define i32 @foo(i32 %arg, i32 (i8*)* %arg3) nounwind {
 ; CHECK-NEXT:    .p2align 4, 0x90
 ; CHECK-NEXT:  .LBB0_2: # %bb8
 ; CHECK-NEXT:    # =>This Inner Loop Header: Depth=1
-; CHECK-NEXT:    callq bar
+; CHECK-NEXT:    callq bar@PLT
 ; CHECK-NEXT:    movq %rax, %rbx
 ; CHECK-NEXT:    movq %rax, %rdi
 ; CHECK-NEXT:    callq *%r14
 ; CHECK-NEXT:    movq %r15, %rdi
-; CHECK-NEXT:    callq hoge
+; CHECK-NEXT:    callq hoge@PLT
 ; CHECK-NEXT:    movq %r12, %rdi
-; CHECK-NEXT:    callq hoge
+; CHECK-NEXT:    callq hoge@PLT
 ; CHECK-NEXT:    testb %r13b, %r13b
 ; CHECK-NEXT:    jne .LBB0_2
 ; CHECK-NEXT:  # %bb.3: # %bb15
@@ -49,9 +49,10 @@ define i32 @foo(i32 %arg, i32 (i8*)* %arg3) nounwind {
 ; CHECK-NEXT:    #APP
 ; CHECK-NEXT:    #NO_APP
 ; CHECK-NEXT:  # %bb.4: # %bb17
-; CHECK-NEXT:    callq widget
-; CHECK-NEXT:  .Ltmp0: # Block address taken
-; CHECK-NEXT:  .LBB0_5: # %bb18
+; CHECK-NEXT:    callq widget@PLT
+; CHECK-NEXT:  .LBB0_5: # Block address taken
+; CHECK-NEXT:    # %bb18
+; CHECK-NEXT:    # Label of block must be emitted
 ; CHECK-NEXT:    movw $0, 14(%rbx)
 ; CHECK-NEXT:    addq $8, %rsp
 ; CHECK-NEXT:    popq %rbx
@@ -67,25 +68,25 @@ bb:
   br i1 undef, label %bb18, label %bb5
 
 bb5:                                              ; preds = %bb
-  %tmp6 = getelementptr [0 x %struct.wibble], [0 x %struct.wibble]* @global, i64 0, i64 %tmp4, i32 0, i32 0
-  %tmp7 = getelementptr [0 x %struct.wibble], [0 x %struct.wibble]* @global, i64 0, i64 %tmp4, i32 0, i32 1
+  %tmp6 = getelementptr [0 x %struct.wibble], ptr @global, i64 0, i64 %tmp4, i32 0, i32 0
+  %tmp7 = getelementptr [0 x %struct.wibble], ptr @global, i64 0, i64 %tmp4, i32 0, i32 1
   br label %bb8
 
 bb8:                                              ; preds = %bb8, %bb5
-  %tmp9 = call i8* @bar(i64 undef)
-  %tmp10 = call i32 %arg3(i8* nonnull %tmp9)
-  %tmp11 = ptrtoint i32* %tmp6 to i64
+  %tmp9 = call ptr @bar(i64 undef)
+  %tmp10 = call i32 %arg3(ptr nonnull %tmp9)
+  %tmp11 = ptrtoint ptr %tmp6 to i64
   call void @hoge(i64 %tmp11)
-  %tmp12 = ptrtoint i32* %tmp7 to i64
+  %tmp12 = ptrtoint ptr %tmp7 to i64
   %tmp13 = add i64 undef, -2305847407260205056
   call void @hoge(i64 %tmp12)
   %tmp14 = icmp eq i32 0, 0
   br i1 %tmp14, label %bb15, label %bb8
 
 bb15:                                             ; preds = %bb8
-  %tmp16 = getelementptr [0 x %struct.wibble], [0 x %struct.wibble]* @global, i64 0, i64 %tmp4, i32 2
-  store i8* %tmp9, i8** %tmp16
-  callbr void asm sideeffect "", "X"(i8* blockaddress(@foo, %bb18))
+  %tmp16 = getelementptr [0 x %struct.wibble], ptr @global, i64 0, i64 %tmp4, i32 2
+  store ptr %tmp9, ptr %tmp16
+  callbr void asm sideeffect "", "!i"()
           to label %bb17 [label %bb18]
 
 bb17:                                             ; preds = %bb15
@@ -94,12 +95,12 @@ bb17:                                             ; preds = %bb15
 
 bb18:                                             ; preds = %bb17, %bb15, %bb
   %tmp19 = add i64 %tmp, 14
-  %tmp20 = inttoptr i64 %tmp19 to i16*
-  store i16 0, i16* %tmp20
+  %tmp20 = inttoptr i64 %tmp19 to ptr
+  store i16 0, ptr %tmp20
   ret i32 undef
 }
 
-declare i8* @bar(i64)
+declare ptr @bar(i64)
 
 declare void @widget()
 

@@ -14,6 +14,7 @@
 #include "clang/Tooling/Inclusions/IncludeStyle.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Regex.h"
+#include <list>
 #include <unordered_map>
 
 namespace clang {
@@ -40,8 +41,6 @@ private:
   const IncludeStyle Style;
   bool IsMainFile;
   std::string FileName;
-  // This refers to a substring in FileName.
-  StringRef FileStem;
   SmallVector<llvm::Regex, 4> CategoryRegexs;
 };
 
@@ -86,7 +85,7 @@ private:
 
     // An include header quoted with either <> or "".
     std::string Name;
-    // The range of the whole line of include directive including any eading
+    // The range of the whole line of include directive including any leading
     // whitespaces and trailing comment.
     tooling::Range R;
   };
@@ -99,7 +98,8 @@ private:
   // Map from include name (quotation trimmed) to a list of existing includes
   // (in case there are more than one) with the name in the current file. <x>
   // and "x" will be treated as the same header when deleting #includes.
-  llvm::StringMap<llvm::SmallVector<Include, 1>> ExistingIncludes;
+  // std::list is used for pointers stability (see IncludesByPriority)
+  llvm::StringMap<std::list<Include>> ExistingIncludes;
 
   /// Map from priorities of #include categories to all #includes in the same
   /// category. This is used to find #includes of the same category when
@@ -128,7 +128,6 @@ private:
   // Matches a whole #include directive.
   llvm::Regex IncludeRegex;
 };
-
 
 } // namespace tooling
 } // namespace clang

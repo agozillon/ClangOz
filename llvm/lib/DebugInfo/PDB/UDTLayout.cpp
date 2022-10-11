@@ -10,6 +10,8 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/DebugInfo/PDB/IPDBEnumChildren.h"
+#include "llvm/DebugInfo/PDB/IPDBLineNumber.h"
 #include "llvm/DebugInfo/PDB/IPDBRawSymbol.h"
 #include "llvm/DebugInfo/PDB/IPDBSession.h"
 #include "llvm/DebugInfo/PDB/PDBSymbol.h"
@@ -17,6 +19,7 @@
 #include "llvm/DebugInfo/PDB/PDBSymbolFunc.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypeBaseClass.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypeBuiltin.h"
+#include "llvm/DebugInfo/PDB/PDBSymbolTypeFunctionSig.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypePointer.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypeUDT.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypeVTable.h"
@@ -289,10 +292,10 @@ void UDTLayoutBase::addChildToLayout(std::unique_ptr<LayoutItemBase> Child) {
     UsedBytes |= ChildBytes;
 
     if (ChildBytes.count() > 0) {
-      auto Loc = std::upper_bound(LayoutItems.begin(), LayoutItems.end(), Begin,
-                                  [](uint32_t Off, const LayoutItemBase *Item) {
-                                    return (Off < Item->getOffsetInParent());
-                                  });
+      auto Loc = llvm::upper_bound(
+          LayoutItems, Begin, [](uint32_t Off, const LayoutItemBase *Item) {
+            return (Off < Item->getOffsetInParent());
+          });
 
       LayoutItems.insert(Loc, Child.get());
     }

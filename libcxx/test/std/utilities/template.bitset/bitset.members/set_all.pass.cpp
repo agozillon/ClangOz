@@ -6,39 +6,41 @@
 //
 //===----------------------------------------------------------------------===//
 
-// test bitset<N>& set();
+// bitset<N>& set(); // constexpr since C++23
 
 #include <bitset>
 #include <cassert>
+#include <cstddef>
 
 #include "test_macros.h"
 
-#if defined(TEST_COMPILER_CLANG)
-#pragma clang diagnostic ignored "-Wtautological-compare"
-#elif defined(TEST_COMPILER_C1XX)
-#pragma warning(disable: 6294) // Ill-defined for-loop:  initial condition does not satisfy test.  Loop body not executed.
-#endif
-
 template <std::size_t N>
-void test_set_all()
-{
+TEST_CONSTEXPR_CXX23 void test_set_all() {
     std::bitset<N> v;
     v.set();
-    for (std::size_t i = 0; i < N; ++i)
+    for (std::size_t i = 0; i < v.size(); ++i)
         assert(v[i]);
 }
 
-int main(int, char**)
-{
-    test_set_all<0>();
-    test_set_all<1>();
-    test_set_all<31>();
-    test_set_all<32>();
-    test_set_all<33>();
-    test_set_all<63>();
-    test_set_all<64>();
-    test_set_all<65>();
-    test_set_all<1000>();
+TEST_CONSTEXPR_CXX23 bool test() {
+  test_set_all<0>();
+  test_set_all<1>();
+  test_set_all<31>();
+  test_set_all<32>();
+  test_set_all<33>();
+  test_set_all<63>();
+  test_set_all<64>();
+  test_set_all<65>();
+  test_set_all<1000>();
+
+  return true;
+}
+
+int main(int, char**) {
+  test();
+#if TEST_STD_VER > 20
+  static_assert(test());
+#endif
 
   return 0;
 }

@@ -89,7 +89,7 @@ void NonnullGlobalConstantsChecker::checkLocation(SVal location, bool isLoad,
 }
 
 /// \param V loaded lvalue.
-/// \return whether {@code val} is a string-like const global.
+/// \return whether @c val is a string-like const global.
 bool NonnullGlobalConstantsChecker::isGlobalConstString(SVal V) const {
   Optional<loc::MemRegionVal> RegionVal = V.getAs<loc::MemRegionVal>();
   if (!RegionVal)
@@ -109,17 +109,20 @@ bool NonnullGlobalConstantsChecker::isGlobalConstString(SVal V) const {
 
   // Look through the typedefs.
   while (const Type *T = Ty.getTypePtr()) {
-    if (const auto *TT = dyn_cast<TypedefType>(T)) {
+    if (const auto *AT = dyn_cast<AttributedType>(T)) {
+      if (AT->getAttrKind() == attr::TypeNonNull)
+        return true;
+      Ty = AT->getModifiedType();
+    } else if (const auto *ET = dyn_cast<ElaboratedType>(T)) {
+      const auto *TT = dyn_cast<TypedefType>(ET->getNamedType());
+      if (!TT)
+        return false;
       Ty = TT->getDecl()->getUnderlyingType();
       // It is sufficient for any intermediate typedef
       // to be classified const.
       HasConst = HasConst || Ty.isConstQualified();
       if (isNonnullType(Ty) && HasConst)
         return true;
-    } else if (const auto *AT = dyn_cast<AttributedType>(T)) {
-      if (AT->getAttrKind() == attr::TypeNonNull)
-        return true;
-      Ty = AT->getModifiedType();
     } else {
       return false;
     }
@@ -127,7 +130,7 @@ bool NonnullGlobalConstantsChecker::isGlobalConstString(SVal V) const {
   return false;
 }
 
-/// \return whether {@code type} is extremely unlikely to be null
+/// \return whether @c type is extremely unlikely to be null
 bool NonnullGlobalConstantsChecker::isNonnullType(QualType Ty) const {
 
   if (Ty->isPointerType() && Ty->getPointeeType()->isCharType())
@@ -136,7 +139,7 @@ bool NonnullGlobalConstantsChecker::isNonnullType(QualType Ty) const {
   if (auto *T = dyn_cast<ObjCObjectPointerType>(Ty)) {
     return T->getInterfaceDecl() &&
       T->getInterfaceDecl()->getIdentifier() == NSStringII;
-  } else if (auto *T = dyn_cast<TypedefType>(Ty)) {
+  } else if (auto *T = Ty->getAs<TypedefType>()) {
     IdentifierInfo* II = T->getDecl()->getIdentifier();
     return II == CFStringRefII || II == CFBooleanRefII || II == CFNullRefII;
   }

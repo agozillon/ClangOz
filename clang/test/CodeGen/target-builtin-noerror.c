@@ -6,24 +6,24 @@
 
 // No warnings.
 extern __m256i a;
-int __attribute__((target("avx"))) bar() {
+int __attribute__((target("avx"))) bar(void) {
   return _mm256_extract_epi32(a, 3);
 }
 
-int baz() {
+int baz(void) {
   return bar();
 }
 
-int __attribute__((target("avx"))) qq_avx() {
+int __attribute__((target("avx"))) qq_avx(void) {
   return _mm256_extract_epi32(a, 3);
 }
 
-int qq_noavx() {
+int qq_noavx(void) {
   return 0;
 }
 
 extern __m256i a;
-int qq() {
+int qq(void) {
   if (__builtin_cpu_supports("avx"))
     return qq_avx();
   else
@@ -43,7 +43,7 @@ __m128 __attribute__((target("fma,fma4"))) fma_3(__m128 a, __m128 b, __m128 c) {
   return __builtin_ia32_vfmaddps(a, b, c);
 }
 
-void verifyfeaturestrings() {
+void verifyfeaturestrings(void) {
   (void)__builtin_cpu_supports("cmov");
   (void)__builtin_cpu_supports("mmx");
   (void)__builtin_cpu_supports("popcnt");
@@ -84,7 +84,8 @@ void verifyfeaturestrings() {
   (void)__builtin_cpu_supports("avx512vp2intersect");
 }
 
-void verifycpustrings() {
+void verifycpustrings(void) {
+  (void)__builtin_cpu_is("alderlake");
   (void)__builtin_cpu_is("amd");
   (void)__builtin_cpu_is("amdfam10h");
   (void)__builtin_cpu_is("amdfam15h");
@@ -115,6 +116,7 @@ void verifycpustrings() {
   (void)__builtin_cpu_is("knl");
   (void)__builtin_cpu_is("knm");
   (void)__builtin_cpu_is("nehalem");
+  (void)__builtin_cpu_is("rocketlake");
   (void)__builtin_cpu_is("sandybridge");
   (void)__builtin_cpu_is("shanghai");
   (void)__builtin_cpu_is("silvermont");
@@ -122,8 +124,10 @@ void verifycpustrings() {
   (void)__builtin_cpu_is("skylake-avx512");
   (void)__builtin_cpu_is("slm");
   (void)__builtin_cpu_is("tigerlake");
+  (void)__builtin_cpu_is("sapphirerapids");
   (void)__builtin_cpu_is("tremont");
   (void)__builtin_cpu_is("westmere");
   (void)__builtin_cpu_is("znver1");
   (void)__builtin_cpu_is("znver2");
+  (void)__builtin_cpu_is("znver3");
 }

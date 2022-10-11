@@ -65,9 +65,14 @@ public:
   NODE(parser, AccBlockDirective)
   NODE(parser, AccClause)
 #define GEN_FLANG_DUMP_PARSE_TREE_CLAUSES
-#include "llvm/Frontend/OpenACC/ACC.cpp.inc"
+#include "llvm/Frontend/OpenACC/ACC.inc"
+  NODE(parser, AccBindClause)
   NODE(parser, AccDefaultClause)
-  NODE_ENUM(parser::AccDefaultClause, Arg)
+  static std::string GetNodeName(const llvm::acc::DefaultValue &x) {
+    return llvm::Twine(
+        "llvm::acc::DefaultValue = ", llvm::acc::getOpenACCDefaultValueName(x))
+        .str();
+  }
   NODE(parser, AccClauseList)
   NODE(parser, AccCombinedDirective)
   NODE(parser, AccDataModifier)
@@ -82,9 +87,15 @@ public:
   NODE(parser, AccObjectListWithModifier)
   NODE(parser, AccObjectListWithReduction)
   NODE(parser, AccReductionOperator)
+  NODE_ENUM(parser::AccReductionOperator, Operator)
   NODE(parser, AccSizeExpr)
   NODE(parser, AccSizeExprList)
+  NODE(parser, AccSelfClause)
   NODE(parser, AccStandaloneDirective)
+  NODE(parser, AccDeviceTypeExpr)
+  NODE(parser, AccDeviceTypeExprList)
+  NODE(parser, AccTileExpr)
+  NODE(parser, AccTileExprList)
   NODE(parser, AccLoopDirective)
   NODE(parser, AccWaitArgument)
   static std::string GetNodeName(const llvm::acc::Directive &x) {
@@ -186,6 +197,8 @@ public:
   NODE(parser, ComponentAttrSpec)
   NODE(parser, ComponentDataSource)
   NODE(parser, ComponentDecl)
+  NODE(parser, FillDecl)
+  NODE(parser, ComponentOrFill)
   NODE(parser, ComponentDefStmt)
   NODE(parser, ComponentSpec)
   NODE(parser, ComputedGotoStmt)
@@ -196,7 +209,6 @@ public:
   NODE_ENUM(ConnectSpec::CharExpr, Kind)
   NODE(ConnectSpec, Newunit)
   NODE(ConnectSpec, Recl)
-  NODE(parser, ConstantValue)
   NODE(parser, ContainsStmt)
   NODE(parser, Contiguous)
   NODE(parser, ContiguousStmt)
@@ -458,10 +470,9 @@ public:
   NODE_ENUM(OmpCancelType, Type)
   NODE(parser, OmpClause)
 #define GEN_FLANG_DUMP_PARSE_TREE_CLAUSES
-#include "llvm/Frontend/OpenMP/OMP.cpp.inc"
+#include "llvm/Frontend/OpenMP/OMP.inc"
   NODE(parser, OmpClauseList)
   NODE(parser, OmpCriticalDirective)
-  NODE(OmpCriticalDirective, Hint)
   NODE(parser, OmpDeclareTargetSpecifier)
   NODE(parser, OmpDeclareTargetWithClause)
   NODE(parser, OmpDeclareTargetWithList)
@@ -478,7 +489,6 @@ public:
   NODE_ENUM(OmpDependenceType, Type)
   NODE(parser, OmpDependSinkVec)
   NODE(parser, OmpDependSinkVecLength)
-  NODE(parser, OmpDistScheduleClause)
   NODE(parser, OmpEndAtomic)
   NODE(parser, OmpEndBlockDirective)
   NODE(parser, OmpEndCriticalDirective)
@@ -496,16 +506,17 @@ public:
   NODE(parser, OmpMapType)
   NODE(OmpMapType, Always)
   NODE_ENUM(OmpMapType, Type)
-  NODE(parser, OmpMemoryClause)
-  NODE_ENUM(OmpMemoryClause, MemoryOrder)
-  NODE(parser, OmpMemoryClauseList)
-  NODE(parser, OmpMemoryClausePostList)
-  NODE(parser, OmpNowait)
+  static std::string GetNodeName(const llvm::omp::Clause &x) {
+    return llvm::Twine(
+        "llvm::omp::Clause = ", llvm::omp::getOpenMPClauseName(x))
+        .str();
+  }
   NODE(parser, OmpObject)
   NODE(parser, OmpObjectList)
   NODE(parser, OmpProcBindClause)
   NODE_ENUM(OmpProcBindClause, Type)
   NODE(parser, OmpReductionClause)
+  NODE(parser, OmpInReductionClause)
   NODE(parser, OmpReductionCombiner)
   NODE(OmpReductionCombiner, FunctionCombiner)
   NODE(parser, OmpReductionInitializerClause)
@@ -514,6 +525,8 @@ public:
   NODE(OmpAllocateClause, Allocator)
   NODE(parser, OmpScheduleClause)
   NODE_ENUM(OmpScheduleClause, ScheduleType)
+  NODE(parser, OmpDeviceClause)
+  NODE_ENUM(OmpDeviceClause, DeviceModifier)
   NODE(parser, OmpScheduleModifier)
   NODE(OmpScheduleModifier, Modifier1)
   NODE(OmpScheduleModifier, Modifier2)
@@ -541,16 +554,20 @@ public:
   NODE(parser, OpenMPCancellationPointConstruct)
   NODE(parser, OpenMPConstruct)
   NODE(parser, OpenMPCriticalConstruct)
+  NODE(parser, OpenMPDeclarativeAllocate)
   NODE(parser, OpenMPDeclarativeConstruct)
   NODE(parser, OpenMPDeclareReductionConstruct)
   NODE(parser, OpenMPDeclareSimdConstruct)
   NODE(parser, OpenMPDeclareTargetConstruct)
-  NODE(parser, OmpFlushMemoryClause)
-  NODE_ENUM(OmpFlushMemoryClause, FlushMemoryOrder)
+  NODE(parser, OmpMemoryOrderClause)
+  NODE(parser, OmpAtomicClause)
+  NODE(parser, OmpAtomicClauseList)
   NODE(parser, OpenMPFlushConstruct)
   NODE(parser, OpenMPLoopConstruct)
+  NODE(parser, OpenMPExecutableAllocate)
   NODE(parser, OpenMPSimpleStandaloneConstruct)
   NODE(parser, OpenMPStandaloneConstruct)
+  NODE(parser, OpenMPSectionConstruct)
   NODE(parser, OpenMPSectionsConstruct)
   NODE(parser, OpenMPThreadprivate)
   NODE(parser, OpenStmt)
@@ -649,6 +666,7 @@ public:
   NODE(parser, SubroutineSubprogram)
   NODE(parser, SubscriptTriplet)
   NODE(parser, Substring)
+  NODE(parser, SubstringInquiry)
   NODE(parser, SubstringRange)
   NODE(parser, Suffix)
   NODE(parser, SyncAllStmt)
@@ -784,7 +802,7 @@ protected:
   template <typename T> std::string AsFortran(const T &x) {
     std::string buf;
     llvm::raw_string_ostream ss{buf};
-    if constexpr (std::is_same_v<T, Expr>) {
+    if constexpr (HasTypedExpr<T>::value) {
       if (asFortran_ && x.typedExpr) {
         asFortran_->expr(ss, *x.typedExpr);
       }

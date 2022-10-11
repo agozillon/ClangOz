@@ -3,9 +3,6 @@ Test that stepping works even when the OS Plugin doesn't report
 all threads at every stop.
 """
 
-from __future__ import print_function
-
-
 import os
 import lldb
 from lldbsuite.test.decorators import *
@@ -14,11 +11,10 @@ import lldbsuite.test.lldbutil as lldbutil
 
 
 class TestOSPluginStepping(TestBase):
-
-    mydir = TestBase.compute_mydir(__file__)
     NO_DEBUG_INFO_TESTCASE = True
 
     @skipIfWindows
+    @skipIf(oslist=["freebsd"], bugnumber="llvm.org/pr48352")
     def test_python_os_plugin(self):
         """Test that stepping works when the OS Plugin doesn't report all
            threads at every stop"""
@@ -27,6 +23,7 @@ class TestOSPluginStepping(TestBase):
         self.run_python_os_step_missing_thread(False)
 
     @skipIfWindows
+    @skipIf(oslist=["freebsd"], bugnumber="llvm.org/pr48352")
     def test_python_os_plugin_prune(self):
         """Test that pruning the unreported PlanStacks works"""
         self.build()
@@ -103,7 +100,7 @@ class TestOSPluginStepping(TestBase):
             self.assertFalse(result.Succeeded(), "We still found plans for the unreported thread.")
             
             self.process.Continue()
-            self.assertEqual(self.process.GetState(), lldb.eStateExited, "We exited.")
+            self.assertState(self.process.GetState(), lldb.eStateExited, "We exited.")
         else:
             # Now we are going to continue, and when we hit the step-out breakpoint, we will
             # put the OS plugin thread back, lldb will recover its ThreadPlanStack, and
@@ -111,6 +108,4 @@ class TestOSPluginStepping(TestBase):
             self.process.Continue()
             os_thread = self.get_os_thread()
             self.assertTrue(os_thread.IsValid(), "The OS thread is back after continue")
-            self.assertTrue("step out" in os_thread.GetStopDescription(100), "Completed step out plan")
-        
-        
+            self.assertIn("step out", os_thread.GetStopDescription(100), "Completed step out plan")

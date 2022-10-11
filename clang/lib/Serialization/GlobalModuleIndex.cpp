@@ -277,7 +277,7 @@ GlobalModuleIndex::readIndex(StringRef Path) {
       return std::make_pair(nullptr, Res.takeError());
   }
 
-  return std::make_pair(new GlobalModuleIndex(std::move(Buffer), Cursor),
+  return std::make_pair(new GlobalModuleIndex(std::move(Buffer), std::move(Cursor)),
                         llvm::Error::success());
 }
 
@@ -905,7 +905,7 @@ GlobalModuleIndex::writeIndex(FileManager &FileMgr,
   }
 
   // The output buffer, into which the global index will be written.
-  SmallVector<char, 16> OutputBuffer;
+  SmallString<16> OutputBuffer;
   {
     llvm::BitstreamWriter OutputStream(OutputBuffer);
     if (Builder.writeIndex(OutputStream))
@@ -913,9 +913,8 @@ GlobalModuleIndex::writeIndex(FileManager &FileMgr,
                                      "failed writing index");
   }
 
-  return llvm::writeFileAtomically(
-      (IndexPath + "-%%%%%%%%").str(), IndexPath,
-      llvm::StringRef(OutputBuffer.data(), OutputBuffer.size()));
+  return llvm::writeFileAtomically((IndexPath + "-%%%%%%%%").str(), IndexPath,
+                                   OutputBuffer);
 }
 
 namespace {

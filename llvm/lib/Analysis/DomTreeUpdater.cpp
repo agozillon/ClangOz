@@ -14,6 +14,7 @@
 #include "llvm/Analysis/DomTreeUpdater.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Analysis/PostDominators.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/GenericDomTree.h"
 #include <algorithm>
@@ -32,8 +33,7 @@ bool DomTreeUpdater::isUpdateValid(
   // Since isUpdateValid() must be called *after* the Terminator of From is
   // altered we can determine if the update is unnecessary for batch updates
   // or invalid for a single update.
-  const bool HasEdge = llvm::any_of(
-      successors(From), [To](const BasicBlock *B) { return B == To; });
+  const bool HasEdge = llvm::is_contained(successors(From), To);
 
   // If the IR does not match the update,
   // 1. In batch updates, this update is unnecessary.
@@ -167,7 +167,7 @@ bool DomTreeUpdater::hasPendingPostDomTreeUpdates() const {
 bool DomTreeUpdater::isBBPendingDeletion(llvm::BasicBlock *DelBB) const {
   if (Strategy == UpdateStrategy::Eager || DeletedBBs.empty())
     return false;
-  return DeletedBBs.count(DelBB) != 0;
+  return DeletedBBs.contains(DelBB);
 }
 
 // The DT and PDT require the nodes related to updates
@@ -218,9 +218,9 @@ void DomTreeUpdater::validateDeleteBB(BasicBlock *DelBB) {
   // DelBB is unreachable and all its instructions are dead.
   while (!DelBB->empty()) {
     Instruction &I = DelBB->back();
-    // Replace used instructions with an arbitrary value (undef).
+    // Replace used instructions with an arbitrary value (poison).
     if (!I.use_empty())
-      I.replaceAllUsesWith(llvm::UndefValue::get(I.getType()));
+      I.replaceAllUsesWith(PoisonValue::get(I.getType()));
     DelBB->getInstList().pop_back();
   }
   // Make sure DelBB has a valid terminator instruction. As long as DelBB is a
@@ -233,6 +233,7 @@ void DomTreeUpdater::applyUpdates(ArrayRef<DominatorTree::UpdateType> Updates) {
     return;
 
   if (Strategy == UpdateStrategy::Lazy) {
+    PendUpdates.reserve(PendUpdates.size() + Updates.size());
     for (const auto &U : Updates)
       if (!isSelfDominance(U))
         PendUpdates.push_back(U);
@@ -312,98 +313,6 @@ PostDominatorTree &DomTreeUpdater::getPostDomTree() {
   applyPostDomTreeUpdates();
   dropOutOfDateUpdates();
   return *PDT;
-}
-
-void DomTreeUpdater::insertEdge(BasicBlock *From, BasicBlock *To) {
-
-#ifndef NDEBUG
-  assert(isUpdateValid({DominatorTree::Insert, From, To}) &&
-         "Inserted edge does not appear in the CFG");
-#endif
-
-  if (!DT && !PDT)
-    return;
-
-  // Won't affect DomTree and PostDomTree; discard update.
-  if (From == To)
-    return;
-
-  if (Strategy == UpdateStrategy::Eager) {
-    if (DT)
-      DT->insertEdge(From, To);
-    if (PDT)
-      PDT->insertEdge(From, To);
-    return;
-  }
-
-  PendUpdates.push_back({DominatorTree::Insert, From, To});
-}
-
-void DomTreeUpdater::insertEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
-  if (From == To)
-    return;
-
-  if (!DT && !PDT)
-    return;
-
-  if (!isUpdateValid({DominatorTree::Insert, From, To}))
-    return;
-
-  if (Strategy == UpdateStrategy::Eager) {
-    if (DT)
-      DT->insertEdge(From, To);
-    if (PDT)
-      PDT->insertEdge(From, To);
-    return;
-  }
-
-  PendUpdates.push_back({DominatorTree::Insert, From, To});
-}
-
-void DomTreeUpdater::deleteEdge(BasicBlock *From, BasicBlock *To) {
-
-#ifndef NDEBUG
-  assert(isUpdateValid({DominatorTree::Delete, From, To}) &&
-         "Deleted edge still exists in the CFG!");
-#endif
-
-  if (!DT && !PDT)
-    return;
-
-  // Won't affect DomTree and PostDomTree; discard update.
-  if (From == To)
-    return;
-
-  if (Strategy == UpdateStrategy::Eager) {
-    if (DT)
-      DT->deleteEdge(From, To);
-    if (PDT)
-      PDT->deleteEdge(From, To);
-    return;
-  }
-
-  PendUpdates.push_back({DominatorTree::Delete, From, To});
-}
-
-void DomTreeUpdater::deleteEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
-  if (From == To)
-    return;
-
-  if (!DT && !PDT)
-    return;
-
-  if (!isUpdateValid({DominatorTree::Delete, From, To}))
-    return;
-
-  if (Strategy == UpdateStrategy::Eager) {
-    if (DT)
-      DT->deleteEdge(From, To);
-    if (PDT)
-      PDT->deleteEdge(From, To);
-    return;
-  }
-
-  PendUpdates.push_back({DominatorTree::Delete, From, To});
 }
 
 void DomTreeUpdater::dropOutOfDateUpdates() {

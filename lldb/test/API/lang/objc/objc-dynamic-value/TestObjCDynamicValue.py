@@ -12,8 +12,6 @@ from lldbsuite.test import lldbutil
 
 class ObjCDynamicValueTestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
@@ -29,7 +27,6 @@ class ObjCDynamicValueTestCase(TestBase):
         self.main_before_setProperty_line = line_number(
             self.source_name, '// Break here to see if we can step into real method.')
 
-    @skipUnlessDarwin
     @add_test_categories(['pyapi'])
     @expectedFailureDarwin("llvm.org/pr20271 rdar://18684107")
     def test_get_objc_dynamic_vals(self):
@@ -64,8 +61,8 @@ class ObjCDynamicValueTestCase(TestBase):
         process = target.LaunchSimple(
             None, None, self.get_process_working_directory())
 
-        self.assertEquals(process.GetState(), lldb.eStateStopped,
-                        PROCESS_STOPPED)
+        self.assertState(process.GetState(), lldb.eStateStopped,
+                         PROCESS_STOPPED)
 
         threads = lldbutil.get_threads_stopped_at_breakpoint(
             process, main_before_setProperty_bkpt)

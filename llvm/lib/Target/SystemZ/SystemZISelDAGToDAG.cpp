@@ -62,8 +62,7 @@ struct SystemZAddressingMode {
   bool IncludesDynAlloc;
 
   SystemZAddressingMode(AddrForm form, DispRange dr)
-    : Form(form), DR(dr), Base(), Disp(0), Index(),
-      IncludesDynAlloc(false) {}
+      : Form(form), DR(dr), Disp(0), IncludesDynAlloc(false) {}
 
   // True if the address can have an index register.
   bool hasIndexField() { return Form != FormBD; }
@@ -337,6 +336,10 @@ class SystemZDAGToDAGISel : public SelectionDAGISel {
   // if A[1 - I] == X and if N can use a block operation like NC from A[I]
   // to X.
   bool storeLoadCanUseBlockBinary(SDNode *N, unsigned I) const;
+
+  // Return true if N (a load or a store) fullfills the alignment
+  // requirements for a PC-relative access.
+  bool storeLoadIsAligned(SDNode *N) const;
 
   // Try to expand a boolean SELECT_CCMASK using an IPM sequence.
   SDValue expandSelectBoolean(SDNode *Node);
@@ -857,7 +860,7 @@ bool SystemZDAGToDAGISel::expandRxSBG(RxSBGOperands &RxSBG) const {
       RxSBG.Input = N.getOperand(0);
       return true;
     }
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
 
   case ISD::SIGN_EXTEND: {
     // Check that the extension bits are don't-care (i.e. are masked out
@@ -965,7 +968,7 @@ bool SystemZDAGToDAGISel::tryRISBGZero(SDNode *N) {
     if (RISBG.Input.getOpcode() != ISD::ANY_EXTEND &&
         RISBG.Input.getOpcode() != ISD::TRUNCATE)
       Count += 1;
-  if (Count == 0)
+  if (Count == 0 || isa<ConstantSDNode>(RISBG.Input))
     return false;
 
   // Prefer to use normal shift instructions over RISBG, since they can handle
@@ -1346,7 +1349,7 @@ bool SystemZDAGToDAGISel::tryFoldLoadStoreIntoMemOperand(SDNode *Node) {
     return false;
   case SystemZISD::SSUBO:
     NegateOperand = true;
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case SystemZISD::SADDO:
     if (MemVT == MVT::i32)
       NewOpc = SystemZ::ASI;
@@ -1357,7 +1360,7 @@ bool SystemZDAGToDAGISel::tryFoldLoadStoreIntoMemOperand(SDNode *Node) {
     break;
   case SystemZISD::USUBO:
     NegateOperand = true;
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case SystemZISD::UADDO:
     if (MemVT == MVT::i32)
       NewOpc = SystemZ::ALSI;
@@ -1428,8 +1431,8 @@ bool SystemZDAGToDAGISel::canUseBlockOperation(StoreSDNode *Store,
   if (V1 == V2 && End1 == End2)
     return false;
 
-  return !AA->alias(MemoryLocation(V1, End1, Load->getAAInfo()),
-                    MemoryLocation(V2, End2, Store->getAAInfo()));
+  return AA->isNoAlias(MemoryLocation(V1, End1, Load->getAAInfo()),
+                       MemoryLocation(V2, End2, Store->getAAInfo()));
 }
 
 bool SystemZDAGToDAGISel::storeLoadCanUseMVC(SDNode *N) const {
@@ -1458,6 +1461,46 @@ bool SystemZDAGToDAGISel::storeLoadCanUseBlockBinary(SDNode *N,
   auto *LoadB = cast<LoadSDNode>(StoreA->getValue().getOperand(I));
   return !LoadA->isVolatile() && LoadA->getMemoryVT() == LoadB->getMemoryVT() &&
          canUseBlockOperation(StoreA, LoadB);
+}
+
+bool SystemZDAGToDAGISel::storeLoadIsAligned(SDNode *N) const {
+
+  auto *MemAccess = cast<LSBaseSDNode>(N);
+  TypeSize StoreSize = MemAccess->getMemoryVT().getStoreSize();
+  SDValue BasePtr = MemAccess->getBasePtr();
+  MachineMemOperand *MMO = MemAccess->getMemOperand();
+  assert(MMO && "Expected a memory operand.");
+
+  // The memory access must have a proper alignment and no index register.
+  if (MemAccess->getAlign().value() < StoreSize ||
+      !MemAccess->getOffset().isUndef())
+    return false;
+
+  // The MMO must not have an unaligned offset.
+  if (MMO->getOffset() % StoreSize != 0)
+    return false;
+
+  // An access to GOT or the Constant Pool is aligned.
+  if (const PseudoSourceValue *PSV = MMO->getPseudoValue())
+    if ((PSV->isGOT() || PSV->isConstantPool()))
+      return true;
+
+  // Check the alignment of a Global Address.
+  if (BasePtr.getNumOperands())
+    if (GlobalAddressSDNode *GA =
+        dyn_cast<GlobalAddressSDNode>(BasePtr.getOperand(0))) {
+      // The immediate offset must be aligned.
+      if (GA->getOffset() % StoreSize != 0)
+        return false;
+
+      // The alignment of the symbol itself must be at least the store size.
+      const GlobalValue *GV = GA->getGlobal();
+      const DataLayout &DL = GV->getParent()->getDataLayout();
+      if (GV->getPointerAlignment(DL).value() < StoreSize)
+        return false;
+    }
+
+  return true;
 }
 
 void SystemZDAGToDAGISel::Select(SDNode *Node) {
@@ -1519,7 +1562,7 @@ void SystemZDAGToDAGISel::Select(SDNode *Node) {
     if (Node->getOperand(1).getOpcode() != ISD::Constant)
       if (tryRxSBG(Node, SystemZ::RNSBG))
         return;
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case ISD::ROTL:
   case ISD::SHL:
   case ISD::SRL:
@@ -1640,16 +1683,19 @@ SelectInlineAsmMemoryOperand(const SDValue &Op,
     llvm_unreachable("Unexpected asm memory constraint");
   case InlineAsm::Constraint_i:
   case InlineAsm::Constraint_Q:
+  case InlineAsm::Constraint_ZQ:
     // Accept an address with a short displacement, but no index.
     Form = SystemZAddressingMode::FormBD;
     DispRange = SystemZAddressingMode::Disp12Only;
     break;
   case InlineAsm::Constraint_R:
+  case InlineAsm::Constraint_ZR:
     // Accept an address with a short displacement and an index.
     Form = SystemZAddressingMode::FormBDXNormal;
     DispRange = SystemZAddressingMode::Disp12Only;
     break;
   case InlineAsm::Constraint_S:
+  case InlineAsm::Constraint_ZS:
     // Accept an address with a long displacement, but no index.
     Form = SystemZAddressingMode::FormBD;
     DispRange = SystemZAddressingMode::Disp20Only;
@@ -1657,6 +1703,8 @@ SelectInlineAsmMemoryOperand(const SDValue &Op,
   case InlineAsm::Constraint_T:
   case InlineAsm::Constraint_m:
   case InlineAsm::Constraint_o:
+  case InlineAsm::Constraint_p:
+  case InlineAsm::Constraint_ZT:
     // Accept an address with a long displacement and an index.
     // m works the same as T, as this is the most general case.
     // We don't really have any special handling of "offsettable"

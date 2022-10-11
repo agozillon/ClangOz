@@ -8,7 +8,7 @@ define void @test1() nounwind {
 ; CHECK:       bb:
 ; CHECK-NEXT:    [[IV_INT:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[DOTINT:%.*]], [[BB]] ]
 ; CHECK-NEXT:    [[INDVAR_CONV:%.*]] = sitofp i32 [[IV_INT]] to double
-; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[INDVAR_CONV]]) #0
+; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[INDVAR_CONV]]) #[[ATTR0:[0-9]+]]
 ; CHECK-NEXT:    [[DOTINT]] = add nuw nsw i32 [[IV_INT]], 1
 ; CHECK-NEXT:    [[TMP1:%.*]] = icmp ult i32 [[DOTINT]], 10000
 ; CHECK-NEXT:    br i1 [[TMP1]], label [[BB]], label [[RETURN:%.*]]
@@ -38,7 +38,7 @@ define void @test2() nounwind {
 ; CHECK:       bb:
 ; CHECK-NEXT:    [[IV_INT:%.*]] = phi i32 [ -10, [[ENTRY:%.*]] ], [ [[DOTINT:%.*]], [[BB]] ]
 ; CHECK-NEXT:    [[INDVAR_CONV:%.*]] = sitofp i32 [[IV_INT]] to double
-; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[INDVAR_CONV]]) #0
+; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[INDVAR_CONV]]) #[[ATTR0]]
 ; CHECK-NEXT:    [[DOTINT]] = add nsw i32 [[IV_INT]], 2
 ; CHECK-NEXT:    [[TMP1:%.*]] = icmp slt i32 [[DOTINT]], -1
 ; CHECK-NEXT:    br i1 [[TMP1]], label [[BB]], label [[RETURN:%.*]]
@@ -65,9 +65,7 @@ define void @test3() nounwind {
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    br label [[BB:%.*]]
 ; CHECK:       bb:
-; CHECK-NEXT:    [[IV:%.*]] = phi double [ 0.000000e+00, [[ENTRY:%.*]] ], [ [[TMP1:%.*]], [[BB]] ]
-; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[IV]]) #0
-; CHECK-NEXT:    [[TMP1]] = fadd double [[IV]], 1.000000e+00
+; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double 0.000000e+00) #[[ATTR0]]
 ; CHECK-NEXT:    br i1 false, label [[BB]], label [[RETURN:%.*]]
 ; CHECK:       return:
 ; CHECK-NEXT:    ret void
@@ -91,10 +89,7 @@ define void @test4() nounwind {
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    br label [[BB:%.*]]
 ; CHECK:       bb:
-; CHECK-NEXT:    [[IV_INT:%.*]] = phi i32 [ 40, [[ENTRY:%.*]] ], [ [[DOTINT:%.*]], [[BB]] ]
-; CHECK-NEXT:    [[INDVAR_CONV:%.*]] = sitofp i32 [[IV_INT]] to double
-; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[INDVAR_CONV]]) #0
-; CHECK-NEXT:    [[DOTINT]] = add nsw i32 [[IV_INT]], -1
+; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double 4.000000e+01) #[[ATTR0]]
 ; CHECK-NEXT:    br i1 false, label [[BB]], label [[RETURN:%.*]]
 ; CHECK:       return:
 ; CHECK-NEXT:    ret void
@@ -150,7 +145,7 @@ define double @test_max_be() {
 ; CHECK-NEXT:    [[INDVAR_CONV:%.*]] = sitofp i32 [[TMP11_INT]] to double
 ; CHECK-NEXT:    [[TMP12]] = fadd double [[TMP10]], [[INDVAR_CONV]]
 ; CHECK-NEXT:    [[TMP13_INT]] = add nuw nsw i32 [[TMP11_INT]], 1
-; CHECK-NEXT:    [[TMP14:%.*]] = icmp slt i32 [[TMP13_INT]], 99999
+; CHECK-NEXT:    [[TMP14:%.*]] = icmp ult i32 [[TMP13_INT]], 99999
 ; CHECK-NEXT:    br i1 [[TMP14]], label [[BB22]], label [[BB6:%.*]]
 ; CHECK:       bb22:
 ; CHECK-NEXT:    br i1 true, label [[BB8]], label [[BB6]]
@@ -189,7 +184,7 @@ define float @test_max_be2() {
 ; CHECK-NEXT:    [[INDVAR_CONV:%.*]] = sitofp i32 [[TMP11_INT]] to float
 ; CHECK-NEXT:    [[TMP12]] = fadd float [[TMP10]], [[INDVAR_CONV]]
 ; CHECK-NEXT:    [[TMP13_INT]] = add nuw nsw i32 [[TMP11_INT]], 1
-; CHECK-NEXT:    [[TMP14:%.*]] = icmp slt i32 [[TMP13_INT]], 99999
+; CHECK-NEXT:    [[TMP14:%.*]] = icmp ult i32 [[TMP13_INT]], 99999
 ; CHECK-NEXT:    br i1 [[TMP14]], label [[BB22]], label [[BB6:%.*]]
 ; CHECK:       bb22:
 ; CHECK-NEXT:    br i1 true, label [[BB8]], label [[BB6]]
@@ -229,7 +224,7 @@ define float @test_max_be3() {
 ; CHECK-NEXT:    [[INDVAR_CONV:%.*]] = sitofp i32 [[TMP11_INT]] to float
 ; CHECK-NEXT:    [[TMP12]] = fadd float [[TMP10]], [[INDVAR_CONV]]
 ; CHECK-NEXT:    [[TMP13_INT]] = add nuw nsw i32 [[TMP11_INT]], 1
-; CHECK-NEXT:    [[TMP14:%.*]] = icmp slt i32 [[TMP13_INT]], 99999
+; CHECK-NEXT:    [[TMP14:%.*]] = icmp ult i32 [[TMP13_INT]], 99999
 ; CHECK-NEXT:    br i1 [[TMP14]], label [[BB22]], label [[BB6:%.*]]
 ; CHECK:       bb22:
 ; CHECK-NEXT:    br i1 true, label [[BB8]], label [[BB6]]
@@ -272,7 +267,7 @@ define void @fcmp1() nounwind {
 ; CHECK-NEXT:    br i1 [[CMP1]], label [[BACKEDGE]], label [[RETURN:%.*]]
 ; CHECK:       backedge:
 ; CHECK-NEXT:    [[IV_FP:%.*]] = sitofp i64 [[IV]] to double
-; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[IV_FP]]) #0
+; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[IV_FP]]) #[[ATTR0]]
 ; CHECK-NEXT:    [[IV_NEXT]] = add nuw nsw i64 [[IV]], 1
 ; CHECK-NEXT:    [[CMP2:%.*]] = fcmp olt double [[IV_FP]], 1.000000e+04
 ; CHECK-NEXT:    br i1 [[CMP2]], label [[BB]], label [[RETURN]]
@@ -308,7 +303,7 @@ define void @fcmp2() nounwind {
 ; CHECK-NEXT:    br i1 [[CMP1]], label [[BACKEDGE]], label [[RETURN:%.*]]
 ; CHECK:       backedge:
 ; CHECK-NEXT:    [[IV_FP:%.*]] = sitofp i64 [[IV]] to double
-; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[IV_FP]]) #0
+; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[IV_FP]]) #[[ATTR0]]
 ; CHECK-NEXT:    [[IV_NEXT]] = add nuw nsw i64 [[IV]], 1
 ; CHECK-NEXT:    [[CMP2:%.*]] = fcmp olt double [[IV_FP]], 1.000000e+04
 ; CHECK-NEXT:    br i1 [[CMP2]], label [[BB]], label [[RETURN]]
@@ -344,7 +339,7 @@ define void @fcmp_neg1() nounwind {
 ; CHECK-NEXT:    br i1 [[CMP1]], label [[BACKEDGE]], label [[RETURN:%.*]]
 ; CHECK:       backedge:
 ; CHECK-NEXT:    [[IV_FP:%.*]] = sitofp i64 [[IV]] to double
-; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[IV_FP]]) #0
+; CHECK-NEXT:    [[TMP0:%.*]] = tail call i32 @foo(double [[IV_FP]]) #[[ATTR0]]
 ; CHECK-NEXT:    [[IV_NEXT]] = add nuw i64 [[IV]], 1
 ; CHECK-NEXT:    [[CMP2:%.*]] = fcmp olt double [[IV_FP]], 1.000000e+04
 ; CHECK-NEXT:    br i1 [[CMP2]], label [[BB]], label [[RETURN]]
@@ -368,5 +363,57 @@ backedge:
   br i1 %cmp2, label %bb, label %return
 
 return:		; preds = %bb
+  ret void
+}
+
+declare void @use.i16(i16)
+declare void @use.i32(i32)
+declare void @use.i64(i64)
+declare void @use.float(float)
+
+define void @pr55505_remove_redundant_fptosi_for_float_iv(i32 %index, ptr %dst) {
+; CHECK-LABEL: @pr55505_remove_redundant_fptosi_for_float_iv(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[FLOAT_IV_INT:%.*]] = phi i32 [ 1000, [[ENTRY:%.*]] ], [ [[FLOAT_IV_NEXT_INT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[INDVAR_CONV:%.*]] = sitofp i32 [[FLOAT_IV_INT]] to float
+; CHECK-NEXT:    call void @use.float(float [[INDVAR_CONV]])
+; CHECK-NEXT:    call void @use.i32(i32 [[FLOAT_IV_INT]])
+; CHECK-NEXT:    [[FLOAT_IV_INT_TRUNC:%.*]] = trunc i32 [[FLOAT_IV_INT]] to i16
+; CHECK-NEXT:    [[FLOAT_IV_INT_SEXT:%.*]] = sext i32 [[FLOAT_IV_INT]] to i64
+; CHECK-NEXT:    call void @use.i16(i16 [[FLOAT_IV_INT_TRUNC]])
+; CHECK-NEXT:    call void @use.i64(i64 [[FLOAT_IV_INT_SEXT]])
+; CHECK-NEXT:    [[FLOAT_IV_INT_TRUNC2:%.*]] = trunc i32 [[FLOAT_IV_INT]] to i16
+; CHECK-NEXT:    [[FLOAT_IV_INT_ZEXT:%.*]] = zext i32 [[FLOAT_IV_INT]] to i64
+; CHECK-NEXT:    call void @use.i16(i16 [[FLOAT_IV_INT_TRUNC2]])
+; CHECK-NEXT:    call void @use.i64(i64 [[FLOAT_IV_INT_ZEXT]])
+; CHECK-NEXT:    [[FLOAT_IV_NEXT_INT]] = add nsw i32 [[FLOAT_IV_INT]], -1
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ugt i32 [[FLOAT_IV_NEXT_INT]], 0
+; CHECK-NEXT:    br i1 [[CMP]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret void
+;
+entry:
+  br label %loop
+
+loop:
+  %float.iv = phi float [ 1.000000e+03, %entry ], [ %float.iv.next, %loop ]
+  call void @use.float(float %float.iv)
+  %conv.i32 = fptosi float %float.iv to i32
+  call void @use.i32(i32 %conv.i32)
+  %conv.i16 = fptosi float %float.iv to i16
+  %conv.i64 = fptosi float %float.iv to i64
+  call void @use.i16(i16 %conv.i16)
+  call void @use.i64(i64 %conv.i64)
+  %uconv.i16 = fptoui float %float.iv to i16
+  %uconv.i64 = fptoui float %float.iv to i64
+  call void @use.i16(i16 %uconv.i16)
+  call void @use.i64(i64 %uconv.i64)
+  %float.iv.next = fadd float %float.iv, -1.000000e+00
+  %cmp = fcmp ogt float %float.iv.next, 0.000000e+00
+  br i1 %cmp, label %loop, label %exit
+
+exit:
   ret void
 }

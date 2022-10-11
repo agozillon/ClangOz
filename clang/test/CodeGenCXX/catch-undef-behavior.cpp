@@ -1,8 +1,8 @@
-// RUN: %clang_cc1 -std=c++11 -fsanitize=signed-integer-overflow,integer-divide-by-zero,float-divide-by-zero,shift-base,shift-exponent,unreachable,return,vla-bound,alignment,null,vptr,object-size,float-cast-overflow,bool,enum,array-bounds,function -fsanitize-recover=signed-integer-overflow,integer-divide-by-zero,float-divide-by-zero,shift-base,shift-exponent,vla-bound,alignment,null,vptr,object-size,float-cast-overflow,bool,enum,array-bounds,function -emit-llvm %s -o - -triple x86_64-linux-gnu | opt -instnamer -S | FileCheck %s
-// RUN: %clang_cc1 -std=c++11 -fsanitize=vptr,address -fsanitize-recover=vptr,address -emit-llvm %s -o - -triple x86_64-linux-gnu | FileCheck %s --check-prefix=CHECK-ASAN
-// RUN: %clang_cc1 -std=c++11 -fsanitize=vptr -fsanitize-recover=vptr -emit-llvm %s -o - -triple x86_64-linux-gnu | FileCheck %s --check-prefix=DOWNCAST-NULL
-// RUN: %clang_cc1 -std=c++11 -fsanitize=function -emit-llvm %s -o - -triple x86_64-linux-gnux32 | FileCheck %s --check-prefix=CHECK-X32
-// RUN: %clang_cc1 -std=c++11 -fsanitize=function -emit-llvm %s -o - -triple i386-linux-gnu | FileCheck %s --check-prefix=CHECK-X86
+// RUN: %clang_cc1 -no-opaque-pointers -no-enable-noundef-analysis -std=c++11 -fsanitize=signed-integer-overflow,integer-divide-by-zero,float-divide-by-zero,shift-base,shift-exponent,unreachable,return,vla-bound,alignment,null,vptr,object-size,float-cast-overflow,bool,enum,array-bounds,function -fsanitize-recover=signed-integer-overflow,integer-divide-by-zero,float-divide-by-zero,shift-base,shift-exponent,vla-bound,alignment,null,vptr,object-size,float-cast-overflow,bool,enum,array-bounds,function -emit-llvm %s -o - -triple x86_64-linux-gnu | opt -instnamer -S | FileCheck %s --check-prefixes=CHECK,CHECK-FUNCSAN
+// RUN: %clang_cc1 -no-opaque-pointers -no-enable-noundef-analysis -std=c++11 -fsanitize=vptr,address -fsanitize-recover=vptr,address -emit-llvm %s -o - -triple x86_64-linux-gnu | FileCheck %s --check-prefix=CHECK-ASAN
+// RUN: %clang_cc1 -no-opaque-pointers -no-enable-noundef-analysis -std=c++11 -fsanitize=vptr -fsanitize-recover=vptr -emit-llvm %s -o - -triple x86_64-linux-gnu | FileCheck %s --check-prefix=DOWNCAST-NULL
+// RUN: %clang_cc1 -no-opaque-pointers -no-enable-noundef-analysis -std=c++11 -fsanitize=function -emit-llvm %s -o - -triple x86_64-linux-gnux32 | FileCheck %s --check-prefix=CHECK-FUNCSAN
+// RUN: %clang_cc1 -no-opaque-pointers -no-enable-noundef-analysis -std=c++11 -fsanitize=function -emit-llvm %s -o - -triple i386-linux-gnu | FileCheck %s --check-prefix=CHECK-FUNCSAN
 
 struct S {
   double d;
@@ -16,9 +16,7 @@ struct S {
 // Check that type mismatch handler is not modified by ASan.
 // CHECK-ASAN: private unnamed_addr global { { [{{.*}} x i8]*, i32, i32 }, { i16, i16, [4 x i8] }*, i8*, i8 } { {{.*}}, { i16, i16, [4 x i8] }* [[TYPE_DESCR]], {{.*}} }
 
-// CHECK: [[IndirectRTTI_ZTIFvPFviEE:@.+]] = private constant i8* bitcast ({ i8*, i8* }* @_ZTIFvPFviEE to i8*)
-// CHECK-X86: [[IndirectRTTI_ZTIFvPFviEE:@.+]] = private constant i8* bitcast ({ i8*, i8* }* @_ZTIFvPFviEE to i8*)
-// CHECK-X32: [[IndirectRTTI_ZTIFvPFviEE:@.+]] = private constant i8* bitcast ({ i8*, i8* }* @_ZTIFvPFviEE to i8*)
+// CHECK-FUNCSAN: [[PROXY:@.+]] = private unnamed_addr constant i8* bitcast ({ i8*, i8* }* @_ZTIFvPFviEE to i8*)
 
 struct T : S {};
 
@@ -367,7 +365,7 @@ class C : public A, public B // align=16
 // offset. The pointer before subtraction doesn't need to be aligned for
 // the destination type.
 
-// CHECK-LABEL: define void @_Z16downcast_pointerP1B(%class.B* %b)
+// CHECK-LABEL: define{{.*}} void @_Z16downcast_pointerP1B(%class.B* %b)
 void downcast_pointer(B *b) {
   (void) static_cast<C*>(b);
   // Alignment check from EmitTypeCheck(TCK_DowncastPointer, ...)
@@ -384,7 +382,7 @@ void downcast_pointer(B *b) {
   // CHECK-NEXT: br i1 [[AND]]
 }
 
-// CHECK-LABEL: define void @_Z18downcast_referenceR1B(%class.B* nonnull align {{[0-9]+}} dereferenceable({{[0-9]+}}) %b)
+// CHECK-LABEL: define{{.*}} void @_Z18downcast_referenceR1B(%class.B* nonnull align {{[0-9]+}} dereferenceable({{[0-9]+}}) %b)
 void downcast_reference(B &b) {
   (void) static_cast<C&>(b);
   // Alignment check from EmitTypeCheck(TCK_DowncastReference, ...)
@@ -399,10 +397,7 @@ void downcast_reference(B &b) {
   // CHECK-NEXT: br i1 [[AND]]
 }
 
-//
-// CHECK-LABEL: @_Z22indirect_function_callPFviE({{.*}} prologue <{ i32, i32 }> <{ i32 846595819, i32 trunc (i64 sub (i64 ptrtoint (i8** {{.*}} to i64), i64 ptrtoint (void (void (i32)*)* @_Z22indirect_function_callPFviE to i64)) to i32) }>
-// CHECK-X32: @_Z22indirect_function_callPFviE({{.*}} prologue <{ i32, i32 }> <{ i32 846595819, i32 sub (i32 ptrtoint (i8** [[IndirectRTTI_ZTIFvPFviEE]] to i32), i32 ptrtoint (void (void (i32)*)* @_Z22indirect_function_callPFviE to i32)) }>
-// CHECK-X86: @_Z22indirect_function_callPFviE({{.*}} prologue <{ i32, i32 }> <{ i32 846595819, i32 sub (i32 ptrtoint (i8** [[IndirectRTTI_ZTIFvPFviEE]] to i32), i32 ptrtoint (void (void (i32)*)* @_Z22indirect_function_callPFviE to i32)) }>
+// CHECK-FUNCSAN: @_Z22indirect_function_callPFviE({{.*}} !func_sanitize ![[FUNCSAN:.*]] {
 void indirect_function_call(void (*p)(int)) {
   // CHECK: [[PTR:%.+]] = bitcast void (i32)* {{.*}} to <{ i32, i32 }>*
 
@@ -430,8 +425,8 @@ namespace VBaseObjectSize {
   // Note: C is laid out such that offsetof(C, B) + sizeof(B) extends outside
   // the C object.
   struct alignas(16) A { void *a1, *a2; };
-  struct B : virtual A { void *b; };
-  struct C : virtual A, virtual B {};
+  struct B : virtual A { void *b; void* g(); };
+  struct C : virtual A, virtual B { };
   // CHECK-LABEL: define {{.*}} @_ZN15VBaseObjectSize1fERNS_1BE(
   B &f(B &b) {
     // Size check: check for nvsize(B) == 16 (do not require size(B) == 32)
@@ -442,6 +437,15 @@ namespace VBaseObjectSize {
     // CHECK: [[PTRTOINT:%.+]] = ptrtoint {{.*}} to i64,
     // CHECK: and i64 [[PTRTOINT]], 7,
     return b;
+  }
+
+  // CHECK-LABEL: define {{.*}} @_ZN15VBaseObjectSize1B1gEv(
+  void *B::g() {
+    // Ensure that the check on the "this" pointer also uses the proper
+    // alignment. We should be using nvalign(B) == 8, not 16.
+    // CHECK: [[PTRTOINT:%.+]] = ptrtoint {{.*}} to i64,
+    // CHECK: and i64 [[PTRTOINT]], 7
+    return nullptr;
   }
 }
 
@@ -473,35 +477,35 @@ void force_irgen() {
   B::q();
 }
 
-// CHECK-LABEL: define void @_ZN29FunctionSanitizerVirtualCalls1B1fEv
-// CHECK-NOT: prologue
+// CHECK-LABEL: define{{.*}} void @_ZN29FunctionSanitizerVirtualCalls1B1fEv
+// CHECK-NOT: !func_sanitize
 //
-// CHECK-LABEL: define void @_ZTv0_n24_N29FunctionSanitizerVirtualCalls1B1fEv
-// CHECK-NOT: prologue
+// CHECK-LABEL: define{{.*}} void @_ZTv0_n24_N29FunctionSanitizerVirtualCalls1B1fEv
+// CHECK-NOT: !func_sanitize
 //
-// CHECK-LABEL: define void @_ZN29FunctionSanitizerVirtualCalls11force_irgenEv()
-// CHECK: prologue
+// CHECK-LABEL: define{{.*}} void @_ZN29FunctionSanitizerVirtualCalls11force_irgenEv()
+// CHECK: !func_sanitize
 //
 // CHECK-LABEL: define linkonce_odr void @_ZN29FunctionSanitizerVirtualCalls1AC1Ev
-// CHECK-NOT: prologue
+// CHECK-NOT: !func_sanitize
 //
 // CHECK-LABEL: define linkonce_odr void @_ZN29FunctionSanitizerVirtualCalls1A1gEv
-// CHECK-NOT: prologue
+// CHECK-NOT: !func_sanitize
 //
 // CHECK-LABEL: define linkonce_odr void @_ZN29FunctionSanitizerVirtualCalls1A1hEv
-// CHECK-NOT: prologue
+// CHECK-NOT: !func_sanitize
 //
 // CHECK-LABEL: define linkonce_odr void @_ZN29FunctionSanitizerVirtualCalls1BC1Ev
-// CHECK-NOT: prologue
+// CHECK-NOT: !func_sanitize
 //
 // CHECK-LABEL: define linkonce_odr void @_ZN29FunctionSanitizerVirtualCalls1B1bEv
-// CHECK-NOT: prologue
+// CHECK-NOT: !func_sanitize
 //
 // CHECK-LABEL: define linkonce_odr void @_ZN29FunctionSanitizerVirtualCalls1B1gEv
-// CHECK-NOT: prologue
+// CHECK-NOT: !func_sanitize
 //
 // CHECK-LABEL: define linkonce_odr void @_ZN29FunctionSanitizerVirtualCalls1B1qEv
-// CHECK: prologue
+// CHECK: !func_sanitize
 
 }
 
@@ -631,7 +635,7 @@ struct ThisAlign {
 };
 void ThisAlign::this_align_lambda() {
   // CHECK-LABEL: define internal %struct.ThisAlign* @"_ZZN9ThisAlign17this_align_lambdaEvENK3$_0clEv"
-  // CHECK-SAME: (%{{.*}}* %[[this:[^)]*]])
+  // CHECK-SAME: (%{{.*}}* {{[^,]*}} %[[this:[^)]*]])
   // CHECK: %[[this_addr:.*]] = alloca
   // CHECK: store %{{.*}}* %[[this]], %{{.*}}** %[[this_addr]],
   // CHECK: %[[this_inner:.*]] = load %{{.*}}*, %{{.*}}** %[[this_addr]],
@@ -732,7 +736,7 @@ namespace CopyValueRepresentation {
 
 void ThisAlign::this_align_lambda_2() {
   // CHECK-LABEL: define internal void @"_ZZN9ThisAlign19this_align_lambda_2EvENK3$_1clEv"
-  // CHECK-SAME: (%{{.*}}* %[[this:[^)]*]])
+  // CHECK-SAME: (%{{.*}}* {{[^,]*}} %[[this:[^)]*]])
   // CHECK: %[[this_addr:.*]] = alloca
   // CHECK: store %{{.*}}* %[[this]], %{{.*}}** %[[this_addr]],
   // CHECK: %[[this_inner:.*]] = load %{{.*}}*, %{{.*}}** %[[this_addr]],
@@ -745,3 +749,5 @@ void ThisAlign::this_align_lambda_2() {
 }
 
 // CHECK: attributes [[NR_NUW]] = { noreturn nounwind }
+
+// CHECK-FUNCSAN: ![[FUNCSAN]] = !{i32 846595819, i8** [[PROXY]]}

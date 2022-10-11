@@ -1,5 +1,7 @@
 set(LLVM_LINK_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
+  MC
+  Option
   FrontendOpenMP
   Support
   )
@@ -15,12 +17,17 @@ add_clang_unittest(ToolingTests
   ExecutionTest.cpp
   FixItTest.cpp
   HeaderIncludesTest.cpp
+  StandardLibraryTest.cpp
   LexicallyOrderedRecursiveASTVisitorTest.cpp
   LookupTest.cpp
   QualTypeNamesTest.cpp
   RangeSelectorTest.cpp
   RecursiveASTVisitorTests/Attr.cpp
-  RecursiveASTVisitorTests/Callbacks.cpp
+  RecursiveASTVisitorTests/CallbacksLeaf.cpp
+  RecursiveASTVisitorTests/CallbacksUnaryOperator.cpp
+  RecursiveASTVisitorTests/CallbacksBinaryOperator.cpp
+  RecursiveASTVisitorTests/CallbacksCompoundAssignOperator.cpp
+  RecursiveASTVisitorTests/CallbacksCallExpr.cpp
   RecursiveASTVisitorTests/Class.cpp
   RecursiveASTVisitorTests/Concept.cpp
   RecursiveASTVisitorTests/ConstructExpr.cpp
@@ -64,6 +71,8 @@ clang_target_link_libraries(ToolingTests
   clangAST
   clangASTMatchers
   clangBasic
+  clangDependencyScanning
+  clangDriver
   clangFormat
   clangFrontend
   clangLex
@@ -79,6 +88,7 @@ clang_target_link_libraries(ToolingTests
 target_link_libraries(ToolingTests
   PRIVATE
   LLVMTestingSupport
+  clangTesting
 )
 
 add_subdirectory(Syntax)

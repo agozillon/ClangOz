@@ -2,6 +2,8 @@
 
 **Current status: Under development, API unstable, built by default.**
 
+[TOC]
+
 ## Design
 
 Many languages can interoperate with C but have a harder time with C++ due to
@@ -45,8 +47,8 @@ for creation functions). For example, `mlirOperationGetNumOperands` inspects an
 
 The *ownership* model is encoded in the naming convention as follows.
 
--   By default, the ownership is not transerred.
--   Functions that tranfer the ownership of the result to the caller can be in
+-   By default, the ownership is not transferred.
+-   Functions that transfer the ownership of the result to the caller can be in
     one of two forms:
     *   functions that create a new object have the name `mlirXCreate<...>`, for
         example, `mlirOperationCreate`;
@@ -97,20 +99,32 @@ as follows.
     its first argument is `Y`, and it is the responsibility of the caller to
     ensure it is indeed the case.
 
-### Conversion To String and Printing
+### Auxiliary Types
 
-IR objects can be converted to a string representation, for example for
-printing, using `mlirXPrint(MlirX, MlirPrintCallback, void *)` functions. These
-functions accept take arguments a callback with signature `void (*)(const char
-*, intptr_t, void *)` and a pointer to user-defined data. They call the callback
-and supply it with chunks of the string representation, provided as a pointer to
-the first character and a length, and forward the user-defined data unmodified.
-It is up to the caller to allocate memory if the string representation must be
-stored and perform the copy. There is no guarantee that the pointer supplied to
-the callback points to a null-terminated string, the size argument should be
-used to find the end of the string. The callback may be called multiple times
-with consecutive chunks of the string representation (the printing itself is
-bufferred).
+#### `StringRef`
+
+Numerous MLIR functions return instances of `StringRef` to refer to a non-owning
+segment of a string. This segment may or may not be null-terminated. In C API,
+these are represented as instances of `MlirStringRef` structure that contains a
+pointer to the first character of the string fragment (`str`) and the fragment
+length (`length`). Note that the fragment is _not necessarily_ null-terminated,
+the `length` field must be used to identify the last character. `MlirStringRef`
+is a non-owning pointer, the caller is in charge of performing the copy or
+ensuring that the pointee outlives all uses of `MlirStringRef`.
+
+### Printing
+
+IR objects can be printed using `mlirXPrint(MlirX, MlirStringCallback, void *)`
+functions. These functions accept take arguments a callback with signature `void
+(*)(const char *, intptr_t, void *)` and a pointer to user-defined data. They
+call the callback and supply it with chunks of the string representation,
+provided as a pointer to the first character and a length, and forward the
+user-defined data unmodified. It is up to the caller to allocate memory if the
+string representation must be stored and perform the copy. There is no guarantee
+that the pointer supplied to the callback points to a null-terminated string,
+the size argument should be used to find the end of the string. The callback may
+be called multiple times with consecutive chunks of the string representation
+(the printing itself is buffered).
 
 *Rationale*: this approach allows the caller to have full control of the
 allocation and avoid unnecessary allocation and copying inside the printer.
@@ -126,9 +140,9 @@ The API adopts the following patterns for recurrent functionality in MLIR.
 
 An object has an _indexed component_ if it has fields accessible using a
 zero-based contiguous integer index, typically arrays. For example, an
-`MlirBlock` has its arguments as a indexed component. An object may have several
-such components. For example, an `MlirOperation` has attributes, operands,
-regions, results and successors.
+`MlirBlock` has its arguments as an indexed component. An object may have
+several such components. For example, an `MlirOperation` has attributes,
+operands, regions, results and successors.
 
 For indexed components, the following pair of functions is provided.
 
@@ -136,10 +150,10 @@ For indexed components, the following pair of functions is provided.
 -   `MlirY mlirXGet<Y>(MlirX, intptr_t pos)` returns 'pos'-th subobject.
 
 The sizes are accepted and returned as signed pointer-sized integers, i.e.
-`intptr_t`. This typedef is avalable in C99.
+`intptr_t`. This typedef is available in C99.
 
 Note that the name of subobject in the function does not necessarily match the
-type of the subobject. For example, `mlirOperationGetOperand` returns a
+type of the subobject. For example, `mlirOperationGetOperand` returns an
 `MlirValue`.
 
 ### Iterable Components
@@ -173,12 +187,32 @@ for (iter = mlirXGetFirst<Y>(x); !mlirYIsNull(iter);
 
 ### Extensions for Dialect Attributes and Types
 
-Dialect attributes and types can follow the example of standard attrbutes and
+Dialect attributes and types can follow the example of builtin attributes and
 types, provided that implementations live in separate directories, i.e.
 `include/mlir-c/<...>Dialect/` and `lib/CAPI/<...>Dialect/`. The core APIs
 provide implementation-private headers in `include/mlir/CAPI/IR` that allow one
 to convert between opaque C structures for core IR components and their C++
 counterparts. `wrap` converts a C++ class into a C structure and `unwrap` does
-the inverse conversion. Once the a C++ object is available, the API
-implementation should rely on `isa` to implement `mlirXIsAY` and is expected to
-use `cast` inside other API calls.
+the inverse conversion. Once the C++ object is available, the API implementation
+should rely on `isa` to implement `mlirXIsAY` and is expected to use `cast`
+inside other API calls.
+
+### Extensions for Interfaces
+
+Interfaces can follow the example of IR interfaces and should be placed in the
+appropriate library (e.g., common interfaces in `mlir-c/Interfaces` and
+dialect-specific interfaces in their dialect library). Similarly to other type
+hierarchies, interfaces are not expected to have objects of their own type and
+instead operate on top-level objects: `MlirAttribute`, `MlirOperation` and
+`MlirType`. Static interface methods are expected to take as leading argument a
+canonical identifier of the class, `MlirStringRef` with the name for operations
+and `MlirTypeID` for attributes and types, followed by `MlirContext` in which
+the interfaces are registered.
+
+Individual interfaces are expected provide a `mlir<InterfaceName>TypeID()`
+function that can be used to check whether an object or a class implements this
+interface using `mlir<Attribute/Operation/Type>ImplementsInterface` or
+`mlir<Attribute/Operation?Type>ImplementsInterfaceStatic` functions,
+respectively. Rationale: C++ `isa` only works when an object exists, static
+methods are usually dispatched to using templates; lookup by `TypeID` in
+`MLIRContext` works even without an object.

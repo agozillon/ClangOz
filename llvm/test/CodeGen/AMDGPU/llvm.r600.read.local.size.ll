@@ -1,6 +1,6 @@
-; RUN: llc -march=amdgcn -verify-machineinstrs < %s | FileCheck -check-prefix=SI -check-prefix=GCN -check-prefix=SI-NOHSA -check-prefix=GCN-NOHSA -check-prefix=FUNC %s
-; RUN: llc -march=amdgcn -mcpu=tonga -mattr=-flat-for-global -verify-machineinstrs < %s | FileCheck -check-prefix=VI  -check-prefix=VI-NOHSA -check-prefix=GCN -check-prefix=GCN-NOHSA -check-prefix=FUNC %s
-; RUN: llc -march=r600 -mcpu=redwood < %s | FileCheck -check-prefix=EG -check-prefix=FUNC %s
+; RUN: llc -march=amdgcn -verify-machineinstrs < %s | FileCheck --check-prefixes=SI,GCN,SI-NOHSA,FUNC %s
+; RUN: llc -march=amdgcn -mcpu=tonga -mattr=-flat-for-global -verify-machineinstrs < %s | FileCheck --check-prefixes=VI,VI-NOHSA,GCN,FUNC %s
+; RUN: llc -march=r600 -mcpu=redwood < %s | FileCheck --check-prefixes=EG,FUNC %s
 
 
 ; FUNC-LABEL: {{^}}local_size_x:
@@ -52,13 +52,11 @@ entry:
 }
 
 ; FUNC-LABEL: {{^}}local_size_xy:
-; SI-NOHSA-DAG: s_load_dword [[X:s[0-9]+]], s[0:1], 0x6
-; SI-NOHSA-DAG: s_load_dword [[Y:s[0-9]+]], s[0:1], 0x7
-; VI-NOHSA-DAG: s_load_dword [[X:s[0-9]+]], s[0:1], 0x18
-; VI-NOHSA-DAG: s_load_dword [[Y:s[0-9]+]], s[0:1], 0x1c
-; GCN-DAG: v_mov_b32_e32 [[VY:v[0-9]+]], [[Y]]
-; GCN: v_mul_u32_u24_e32 [[VAL:v[0-9]+]], [[X]], [[VY]]
-; GCN: buffer_store_dword [[VAL]]
+; SI-NOHSA-DAG: s_load_dwordx2 s[[[X:[0-9]+]]:[[Y:[0-9+]]]], s[0:1], 0x6
+; VI-NOHSA-DAG: s_load_dwordx2 s[[[X:[0-9]+]]:[[Y:[0-9+]]]], s[0:1], 0x18
+; GCN: s_mul_i32 [[VAL:s[0-9]+]], s[[X]], s[[Y]]
+; GCN: v_mov_b32_e32 [[VVAL:v[0-9]+]], [[VAL]]
+; GCN: buffer_store_dword [[VVAL]]
 define amdgpu_kernel void @local_size_xy(i32 addrspace(1)* %out) {
 entry:
   %x = call i32 @llvm.r600.read.local.size.x() #0
@@ -75,9 +73,9 @@ entry:
 ; VI-NOHSA-DAG: s_load_dword [[X:s[0-9]+]], s[0:1], 0x18
 ; VI-NOHSA-DAG: s_load_dword [[Z:s[0-9]+]], s[0:1], 0x20
 ; HSA-DAG: s_and_b32 [[X:s[0-9]+]], [[XY]], 0xffff
-; GCN-DAG: v_mov_b32_e32 [[VZ:v[0-9]+]], [[Z]]
-; GCN: v_mul_u32_u24_e32 [[VAL:v[0-9]+]], [[X]], [[VZ]]
-; GCN: buffer_store_dword [[VAL]]
+; GCN: s_mul_i32 [[VAL:s[0-9]+]], [[X]], [[Z]]
+; GCN: v_mov_b32_e32 [[VVAL:v[0-9]+]], [[VAL]]
+; GCN: buffer_store_dword [[VVAL]]
 define amdgpu_kernel void @local_size_xz(i32 addrspace(1)* %out) {
 entry:
   %x = call i32 @llvm.r600.read.local.size.x() #0
@@ -91,13 +89,11 @@ entry:
 ; HSA: enable_sgpr_private_segment_buffer = 1
 ; HSA: enable_sgpr_dispatch_ptr = 1
 
-; SI-NOHSA-DAG: s_load_dword [[Y:s[0-9]+]], s[0:1], 0x7
-; SI-NOHSA-DAG: s_load_dword [[Z:s[0-9]+]], s[0:1], 0x8
-; VI-NOHSA-DAG: s_load_dword [[Y:s[0-9]+]], s[0:1], 0x1c
-; VI-NOHSA-DAG: s_load_dword [[Z:s[0-9]+]], s[0:1], 0x20
-; GCN-DAG: v_mov_b32_e32 [[VZ:v[0-9]+]], [[Z]]
-; GCN: v_mul_u32_u24_e32 [[VAL:v[0-9]+]], [[Y]], [[VZ]]
-; GCN: buffer_store_dword [[VAL]]
+; SI-NOHSA-DAG: s_load_dwordx4 s[[[#LOAD:]]:{{[0-9]+}}], s[0:1], 0x7
+; VI-NOHSA-DAG: s_load_dwordx4 s[[[#LOAD:]]:{{[0-9]+}}], s[0:1], 0x1c
+; GCN: s_mul_i32 [[VAL:s[0-9]+]], s[[#LOAD + 0]], s[[#LOAD + 1]]
+; GCN: v_mov_b32_e32 [[VVAL:v[0-9]+]], [[VAL]]
+; GCN: buffer_store_dword [[VVAL]]
 define amdgpu_kernel void @local_size_yz(i32 addrspace(1)* %out) {
 entry:
   %y = call i32 @llvm.r600.read.local.size.y() #0
@@ -111,16 +107,14 @@ entry:
 ; HSA: enable_sgpr_private_segment_buffer = 1
 ; HSA: enable_sgpr_dispatch_ptr = 1
 
-; SI-NOHSA-DAG: s_load_dword [[X:s[0-9]+]], s[0:1], 0x6
-; SI-NOHSA-DAG: s_load_dword [[Y:s[0-9]+]], s[0:1], 0x7
-; SI-NOHSA-DAG: s_load_dword [[Z:s[0-9]+]], s[0:1], 0x8
-; VI-NOHSA-DAG: s_load_dword [[X:s[0-9]+]], s[0:1], 0x18
-; VI-NOHSA-DAG: s_load_dword [[Y:s[0-9]+]], s[0:1], 0x1c
-; VI-NOHSA-DAG: s_load_dword [[Z:s[0-9]+]], s[0:1], 0x20
-; GCN-DAG: v_mov_b32_e32 [[VY:v[0-9]+]], [[Y]]
-; GCN-DAG: v_mov_b32_e32 [[VZ:v[0-9]+]], [[Z]]
-; GCN: v_mad_u32_u24 [[VAL:v[0-9]+]], [[X]], [[VY]], [[VZ]]
-; GCN: buffer_store_dword [[VAL]]
+; SI-NOHSA-DAG: s_load_dwordx2 s[[[X:[0-9]+]]:[[Y:[0-9]+]]], s[0:1], 0x6
+; SI-NOHSA-DAG: s_load_dword s[[Z:[0-9]+]], s[0:1], 0x8
+; VI-NOHSA-DAG: s_load_dwordx2 s[[[X:[0-9]+]]:[[Y:[0-9]+]]], s[0:1], 0x18
+; VI-NOHSA-DAG: s_load_dword s[[Z:[0-9]+]], s[0:1], 0x20
+; GCN: s_mul_i32 [[M:s[0-9]+]], s[[X]], s[[Y]]
+; GCN: s_add_i32 [[VAL:s[0-9]+]], [[M]], s[[Z]]
+; GCN-DAG: v_mov_b32_e32 [[VVAL:v[0-9]+]], [[VAL]]
+; GCN: buffer_store_dword [[VVAL]]
 define amdgpu_kernel void @local_size_xyz(i32 addrspace(1)* %out) {
 entry:
   %x = call i32 @llvm.r600.read.local.size.x() #0

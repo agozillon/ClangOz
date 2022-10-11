@@ -20,8 +20,8 @@
 define void @foo(i1 zeroext) nounwind {
   %2 = alloca i8, align 1
   %3 = zext i1 %0 to i8
-  store i8 %3, i8* %2, align 1
-  %4 = load i8, i8* %2, align 1
+  store i8 %3, ptr %2, align 1
+  %4 = load i8, ptr %2, align 1
   %5 = trunc i8 %4 to i1
   br i1 %5, label %6, label %8
 
@@ -43,23 +43,23 @@ declare i32 @baz() #1
 
 ; LINUX-SECTIONS1:	   	.section	.text.foo,"ax",@progbits
 ; LINUX-SECTIONS1-LABEL:	foo:
-; LINUX-SECTIONS1:		jne foo.1
+; LINUX-SECTIONS1:		jne foo.__part.1
 ; LINUX-SECTIONS1-NOT:		{{jne|je|jmp}}
 ; LINUX-SECTIONS1-LABEL:	# %bb.2:
 ; LINUX-SECTIONS1:		jmp foo.cold
 ; LINUX-SECTIONS1:		.section        .text.foo,"ax",@progbits,unique,1
-; LINUX-SECTIONS1-LABEL:	foo.1:
+; LINUX-SECTIONS1-LABEL:	foo.__part.1:
 ; LINUX-SECTIONS1:		jmp foo.cold
-; LINUX-SECTIONS1:		.section        .text.unlikely.foo,"ax",@progbits
+; LINUX-SECTIONS1:		.section        .text.split.foo,"ax",@progbits
 ; LINUX-SECTIONS1-LABEL:	foo.cold:
 
 ; LINUX-SECTIONS2:		.section        .text.foo,"ax",@progbits
 ; LINUX-SECTIONS2-LABEL:	foo:
-; LINUX-SECTIONS2:		jne foo.0
+; LINUX-SECTIONS2:		jne foo.__part.0
 ; LINUX-SECTIONS2-NOT:		{{jne|je|jmp}}
 ; LINUX-SECTIONS2-LABEL:	# %bb.2:
 ; LINUX-SECTIONS2:		jmp .LBB0_3
 ; LINUX-SECTIONS2:		.section        .text.foo,"ax",@progbits,unique,1
-; LINUX-SECTIONS2:		foo.0:
+; LINUX-SECTIONS2:		foo.__part.0:
 ; LINUX-SECTIONS2-NOT:		{{jne|je|jmp}}
 ; LINUX-SECTIONS2:		.LBB0_3:

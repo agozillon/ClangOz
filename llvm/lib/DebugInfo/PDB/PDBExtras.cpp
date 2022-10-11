@@ -7,7 +7,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/DebugInfo/PDB/PDBExtras.h"
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -64,6 +63,7 @@ raw_ostream &llvm::pdb::operator<<(raw_ostream &OS,
     CASE_OUTPUT_ENUM_CLASS_NAME(PDB_BuiltinType, HResult, OS)
     CASE_OUTPUT_ENUM_CLASS_NAME(PDB_BuiltinType, Char16, OS)
     CASE_OUTPUT_ENUM_CLASS_NAME(PDB_BuiltinType, Char32, OS)
+    CASE_OUTPUT_ENUM_CLASS_NAME(PDB_BuiltinType, Char8, OS)
   }
   return OS;
 }
@@ -118,7 +118,21 @@ raw_ostream &llvm::pdb::operator<<(raw_ostream &OS, const PDB_DataKind &Data) {
 
 raw_ostream &llvm::pdb::operator<<(raw_ostream &OS,
                                    const llvm::codeview::CPURegister &CpuReg) {
-  if (CpuReg.Cpu == llvm::codeview::CPUType::ARM64) {
+  if (CpuReg.Cpu == llvm::codeview::CPUType::ARMNT) {
+    switch (CpuReg.Reg) {
+#define CV_REGISTERS_ARM
+#define CV_REGISTER(name, val)                                                 \
+  case codeview::RegisterId::name:                                             \
+    OS << #name;                                                               \
+    return OS;
+#include "llvm/DebugInfo/CodeView/CodeViewRegisters.def"
+#undef CV_REGISTER
+#undef CV_REGISTERS_ARM
+
+    default:
+      break;
+    }
+  } else if (CpuReg.Cpu == llvm::codeview::CPUType::ARM64) {
     switch (CpuReg.Reg) {
 #define CV_REGISTERS_ARM64
 #define CV_REGISTER(name, val)                                                 \
@@ -217,6 +231,7 @@ raw_ostream &llvm::pdb::operator<<(raw_ostream &OS, const PDB_Lang &Lang) {
     CASE_OUTPUT_ENUM_CLASS_NAME(PDB_Lang, HLSL, OS)
     CASE_OUTPUT_ENUM_CLASS_NAME(PDB_Lang, D, OS)
     CASE_OUTPUT_ENUM_CLASS_NAME(PDB_Lang, Swift, OS)
+    CASE_OUTPUT_ENUM_CLASS_NAME(PDB_Lang, Rust, OS)
   }
   return OS;
 }

@@ -18,6 +18,21 @@
 using namespace clang;
 using namespace clang::interp;
 
+unsigned Program::getOrCreateNativePointer(const void *Ptr) {
+  auto It = NativePointerIndices.find(Ptr);
+  if (It != NativePointerIndices.end())
+    return It->second;
+
+  unsigned Idx = NativePointers.size();
+  NativePointers.push_back(Ptr);
+  NativePointerIndices[Ptr] = Idx;
+  return Idx;
+}
+
+const void *Program::getNativePointer(unsigned Idx) {
+  return NativePointers[Idx];
+}
+
 unsigned Program::createGlobalString(const StringLiteral *S) {
   const size_t CharWidth = S->getCharByteWidth();
   const size_t BitWidth = CharWidth * Ctx.getCharBit();
@@ -89,7 +104,7 @@ llvm::Optional<unsigned> Program::getGlobal(const ValueDecl *VD) {
   if (It != GlobalIndices.end())
     return It->second;
 
-  // Find any previous declarations which were aleady evaluated.
+  // Find any previous declarations which were already evaluated.
   llvm::Optional<unsigned> Index;
   for (const Decl *P = VD; P; P = P->getPreviousDecl()) {
     auto It = GlobalIndices.find(P);
@@ -319,14 +334,15 @@ Descriptor *Program::createDescriptor(const DeclTy &D, const Type *Ty,
       } else {
         // Arrays of composites. In this case, the array is a list of pointers,
         // followed by the actual elements.
-        Descriptor *Desc =
+        Descriptor *ElemDesc =
             createDescriptor(D, ElemTy.getTypePtr(), IsConst, IsTemporary);
-        if (!Desc)
+        if (!ElemDesc)
           return nullptr;
-        InterpSize ElemSize = Desc->getAllocSize() + sizeof(InlineDescriptor);
+        InterpSize ElemSize =
+            ElemDesc->getAllocSize() + sizeof(InlineDescriptor);
         if (std::numeric_limits<unsigned>::max() / ElemSize <= NumElems)
           return {};
-        return allocateDescriptor(D, Desc, NumElems, IsConst, IsTemporary,
+        return allocateDescriptor(D, ElemDesc, NumElems, IsConst, IsTemporary,
                                   IsMutable);
       }
     }

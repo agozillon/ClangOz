@@ -80,6 +80,19 @@ define amdgpu_kernel void @v_test_smed3_r_i_i_i64(i64 addrspace(1)* %out, i64 ad
   ret void
 }
 
+; Regression test for performIntMed3ImmCombine extending arguments to 32 bit
+; which failed for 64 bit arguments. Previously asserted / crashed.
+; GCN-LABEL: {{^}}test_intMed3ImmCombine_no_32bit_extend:
+; GCN: v_cmp_lt_i64
+; GCN: v_cmp_gt_i64
+define i64 @test_intMed3ImmCombine_no_32bit_extend(i64 %x) {
+  %smax = call i64 @llvm.smax.i64(i64 %x, i64 -2)
+  %smin = call i64 @llvm.smin.i64(i64 %smax, i64 2)
+  ret i64 %smin
+}
+declare i64 @llvm.smax.i64(i64, i64)
+declare i64 @llvm.smin.i64(i64, i64)
+
 ; GCN-LABEL: {{^}}v_test_smed3_r_i_i_i16:
 ; SICIVI: v_med3_i32 v{{[0-9]+}}, v{{[0-9]+}}, 12, 17
 ; GFX9: v_med3_i16 v{{[0-9]+}}, v{{[0-9]+}}, 12, 17
@@ -582,7 +595,9 @@ bb:
 }
 
 ; GCN-LABEL: {{^}}s_test_smed3_i32_pat_0_multi_use_0:
-; GCN-NOT: v_med3_i32
+; GCN: s_min_i32
+; GCN-NOT: {{s_min_i32|s_max_i32}}
+; GCN: v_med3_i32
 define amdgpu_kernel void @s_test_smed3_i32_pat_0_multi_use_0(i32 addrspace(1)* %arg, i32 %x, i32 %y, i32 %z) #1 {
 bb:
   %tmp0 = call i32 @smin(i32 %x, i32 %y)
@@ -595,7 +610,9 @@ bb:
 }
 
 ; GCN-LABEL: {{^}}s_test_smed3_i32_pat_0_multi_use_1:
-; GCN-NOT: v_med3_i32
+; GCN: s_max_i32
+; GCN-NOT: {{s_min_i32|s_max_i32}}
+; GCN: v_med3_i32
 define amdgpu_kernel void @s_test_smed3_i32_pat_0_multi_use_1(i32 addrspace(1)* %arg, i32 %x, i32 %y, i32 %z) #1 {
 bb:
   %tmp0 = call i32 @smin(i32 %x, i32 %y)
@@ -608,7 +625,10 @@ bb:
 }
 
 ; GCN-LABEL: {{^}}s_test_smed3_i32_pat_0_multi_use_2:
-; GCN-NOT: v_med3_i32
+; GCN: s_max_i32
+; GCN: s_min_i32
+; GCN-NOT: {{s_min_i32|s_max_i32}}
+; GCN: v_med3_i32
 define amdgpu_kernel void @s_test_smed3_i32_pat_0_multi_use_2(i32 addrspace(1)* %arg, i32 %x, i32 %y, i32 %z) #1 {
 bb:
   %tmp0 = call i32 @smin(i32 %x, i32 %y)
@@ -621,6 +641,7 @@ bb:
 }
 
 ; GCN-LABEL: {{^}}s_test_smed3_i32_pat_0_multi_use_result:
+; GCN-NOT: {{s_min_i32|s_max_i32}}
 ; GCN: v_med3_i32 v{{[0-9]+}}, s{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
 define amdgpu_kernel void @s_test_smed3_i32_pat_0_multi_use_result(i32 addrspace(1)* %arg, i32 %x, i32 %y, i32 %z) #1 {
 bb:
@@ -630,6 +651,26 @@ bb:
   %tmp3 = call i32 @smax(i32 %tmp0, i32 %tmp2)
   store volatile i32 %tmp3, i32 addrspace(1)* %arg
   store volatile i32 %tmp3, i32 addrspace(1)* %arg
+  ret void
+}
+
+; GCN-LABEL: {{^}}s_test_smed3_reuse_bounds
+; GCN-NOT: {{s_min_i32|s_max_i32}}
+; GCN: v_med3_i32 v{{[0-9]+}}, [[B0:s[0-9]+]], [[B1:v[0-9]+]], v{{[0-9]+}}
+; GCN: v_med3_i32 v{{[0-9]+}}, [[B0]], [[B1]], v{{[0-9]+}}
+define amdgpu_kernel void @s_test_smed3_reuse_bounds(i32 addrspace(1)* %arg, i32 %b0, i32 %b1, i32 %x, i32 %y) #1 {
+bb:
+  %lo = call i32 @smin(i32 %b0, i32 %b1)
+  %hi = call i32 @smax(i32 %b0, i32 %b1)
+
+  %tmp0 = call i32 @smin(i32 %x, i32 %hi)
+  %z0 = call i32 @smax(i32 %tmp0, i32 %lo)
+
+  %tmp1 = call i32 @smin(i32 %y, i32 %hi)
+  %z1 = call i32 @smax(i32 %tmp1, i32 %lo)
+
+  store volatile i32 %z0, i32 addrspace(1)* %arg
+  store volatile i32 %z1, i32 addrspace(1)* %arg
   ret void
 }
 

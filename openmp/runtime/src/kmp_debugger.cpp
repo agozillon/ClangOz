@@ -226,16 +226,16 @@ kmp_omp_struct_info_t __kmp_omp_debug_struct_info = {
   when 64-bit value is assigned to 32-bit pointer. Use this function
   to suppress the warning. */
 static inline void *__kmp_convert_to_ptr(kmp_uint64 addr) {
-#if KMP_COMPILER_ICC
+#if KMP_COMPILER_ICC || KMP_COMPILER_ICX
 #pragma warning(push)
 #pragma warning(disable : 810) // conversion from "unsigned long long" to "char
 // *" may lose significant bits
 #pragma warning(disable : 1195) // conversion from integer to smaller pointer
-#endif // KMP_COMPILER_ICC
+#endif // KMP_COMPILER_ICC || KMP_COMPILER_ICX
   return (void *)addr;
-#if KMP_COMPILER_ICC
+#if KMP_COMPILER_ICC || KMP_COMPILER_ICX
 #pragma warning(pop)
-#endif // KMP_COMPILER_ICC
+#endif // KMP_COMPILER_ICC || KMP_COMPILER_ICX
 } // __kmp_convert_to_ptr
 
 static int kmp_location_match(kmp_str_loc_t *loc, kmp_omp_nthr_item_t *item) {
@@ -269,7 +269,7 @@ int __kmp_omp_num_threads(ident_t const *ident) {
   if (info->num > 0 && info->array != 0) {
     kmp_omp_nthr_item_t *items =
         (kmp_omp_nthr_item_t *)__kmp_convert_to_ptr(info->array);
-    kmp_str_loc_t loc = __kmp_str_loc_init(ident->psource, 1);
+    kmp_str_loc_t loc = __kmp_str_loc_init(ident->psource, true);
     int i;
     for (i = 0; i < info->num; ++i) {
       if (kmp_location_match(&loc, &items[i])) {

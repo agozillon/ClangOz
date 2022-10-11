@@ -11,8 +11,6 @@ import json
 
 class TsanMultipleTestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     @expectedFailureAll(
         oslist=["linux"],
         bugnumber="non-core functionality, need to reenable and fix later (DES 2014.11.07)")
@@ -20,6 +18,7 @@ class TsanMultipleTestCase(TestBase):
     @skipIfFreeBSD  # llvm.org/pr21136 runtimes not yet available by default
     @skipIfRemote
     @skipUnlessThreadSanitizer
+    @add_test_categories(["objc"])
     def test(self):
         self.build()
         self.tsan_tests()

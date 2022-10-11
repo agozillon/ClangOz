@@ -10,9 +10,8 @@
 #define LLVM_DEBUGINFO_CODEVIEW_TYPECOLLECTION_H
 
 #include "llvm/ADT/StringRef.h"
-
+#include "llvm/DebugInfo/CodeView/CVRecord.h"
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
-#include "llvm/DebugInfo/CodeView/TypeRecord.h"
 
 namespace llvm {
 namespace codeview {
@@ -35,7 +34,7 @@ public:
   template <typename TFunc> void ForEachRecord(TFunc Func) {
     Optional<TypeIndex> Next = getFirst();
 
-    while (Next.hasValue()) {
+    while (Next) {
       TypeIndex N = *Next;
       Func(N, getType(N));
       Next = getNext(N);

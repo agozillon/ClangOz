@@ -12,11 +12,18 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "PassDetail.h"
-#include "mlir/Dialect/SPIRV/Passes.h"
-#include "mlir/Dialect/SPIRV/SPIRVOps.h"
+#include "mlir/Dialect/SPIRV/Transforms/Passes.h"
+
+#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/Module.h"
+#include "mlir/IR/BuiltinOps.h"
+
+namespace mlir {
+namespace spirv {
+#define GEN_PASS_DEF_SPIRVREWRITEINSERTSPASS
+#include "mlir/Dialect/SPIRV/Transforms/Passes.h.inc"
+} // namespace spirv
+} // namespace mlir
 
 using namespace mlir;
 
@@ -25,7 +32,7 @@ namespace {
 /// Replaces sequential chains of `spirv::CompositeInsertOp` operation into
 /// `spirv::CompositeConstructOp` operation if possible.
 class RewriteInsertsPass
-    : public SPIRVRewriteInsertsPassBase<RewriteInsertsPass> {
+    : public spirv::impl::SPIRVRewriteInsertsPassBase<RewriteInsertsPass> {
 public:
   void runOnOperation() override;
 
@@ -38,7 +45,7 @@ private:
                         SmallVectorImpl<spirv::CompositeInsertOp> &insertions);
 };
 
-} // anonymous namespace
+} // namespace
 
 void RewriteInsertsPass::runOnOperation() {
   SmallVector<SmallVector<spirv::CompositeInsertOp, 4>, 4> workList;
@@ -63,7 +70,7 @@ void RewriteInsertsPass::runOnOperation() {
         location, compositeType, operands);
 
     lastCompositeInsertOp.replaceAllUsesWith(
-        compositeConstructOp.getOperation()->getResult(0));
+        compositeConstructOp->getResult(0));
 
     // Erase ops.
     for (auto insertOp : llvm::reverse(insertions)) {

@@ -634,6 +634,14 @@ __isl_give isl_set *isl_set_from_point(__isl_take isl_point *pnt)
 	return isl_set_from_basic_set(bset);
 }
 
+/* This function performs the same operation as isl_set_from_point,
+ * but is considered as a function on an isl_point when exported.
+ */
+__isl_give isl_set *isl_point_to_set(__isl_take isl_point *pnt)
+{
+	return isl_set_from_point(pnt);
+}
+
 /* Construct a union set, containing the single element "pnt".
  * If "pnt" is void, then return an empty union set.
  */
@@ -670,11 +678,11 @@ __isl_give isl_basic_set *isl_basic_set_box_from_points(
 			isl_space_is_equal(pnt1->dim, pnt2->dim), goto error);
 
 	if (isl_point_is_void(pnt1) && isl_point_is_void(pnt2)) {
-		isl_space *dim = isl_space_copy(pnt1->dim);
+		isl_space *space = isl_space_copy(pnt1->dim);
 		isl_point_free(pnt1);
 		isl_point_free(pnt2);
 		isl_int_clear(t);
-		return isl_basic_set_empty(dim);
+		return isl_basic_set_empty(space);
 	}
 	if (isl_point_is_void(pnt1)) {
 		isl_point_free(pnt1);

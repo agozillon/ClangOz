@@ -19,7 +19,6 @@
 #include <algorithm>
 
 using namespace clang::ast_matchers;
-using namespace clang::ast_type_traits;
 
 namespace clang {
 
@@ -73,16 +72,20 @@ MagicNumbersCheck::MagicNumbersCheck(StringRef Name, ClangTidyContext *Context)
       RawIgnoredFloatingPointValues(Options.get(
           "IgnoredFloatingPointValues", DefaultIgnoredFloatingPointValues)) {
   // Process the set of ignored integer values.
-  const std::vector<std::string> IgnoredIntegerValuesInput =
+  const std::vector<StringRef> IgnoredIntegerValuesInput =
       utils::options::parseStringList(RawIgnoredIntegerValues);
   IgnoredIntegerValues.resize(IgnoredIntegerValuesInput.size());
   llvm::transform(IgnoredIntegerValuesInput, IgnoredIntegerValues.begin(),
-                  [](const std::string &Value) { return std::stoll(Value); });
+                  [](StringRef Value) {
+                    int64_t Res;
+                    Value.getAsInteger(10, Res);
+                    return Res;
+                  });
   llvm::sort(IgnoredIntegerValues);
 
   if (!IgnoreAllFloatingPointValues) {
     // Process the set of ignored floating point values.
-    const std::vector<std::string> IgnoredFloatingPointValuesInput =
+    const std::vector<StringRef> IgnoredFloatingPointValuesInput =
         utils::options::parseStringList(RawIgnoredFloatingPointValues);
     IgnoredFloatingPointValues.reserve(IgnoredFloatingPointValuesInput.size());
     IgnoredDoublePointValues.reserve(IgnoredFloatingPointValuesInput.size());
@@ -101,10 +104,8 @@ MagicNumbersCheck::MagicNumbersCheck(StringRef Name, ClangTidyContext *Context)
       consumeError(StatusOrErr.takeError());
       IgnoredDoublePointValues.push_back(DoubleValue.convertToDouble());
     }
-    llvm::sort(IgnoredFloatingPointValues.begin(),
-               IgnoredFloatingPointValues.end());
-    llvm::sort(IgnoredDoublePointValues.begin(),
-               IgnoredDoublePointValues.end());
+    llvm::sort(IgnoredFloatingPointValues);
+    llvm::sort(IgnoredDoublePointValues);
   }
 }
 
@@ -127,7 +128,7 @@ void MagicNumbersCheck::registerMatchers(MatchFinder *Finder) {
 
 void MagicNumbersCheck::check(const MatchFinder::MatchResult &Result) {
 
-  TraversalKindScope RAII(*Result.Context, ast_type_traits::TK_AsIs);
+  TraversalKindScope RAII(*Result.Context, TK_AsIs);
 
   checkBoundMatch<IntegerLiteral>(Result, "integer");
   checkBoundMatch<FloatingLiteral>(Result, "float");
@@ -209,7 +210,7 @@ bool MagicNumbersCheck::isSyntheticValue(const SourceManager *SourceManager,
     return false;
 
   const StringRef BufferIdentifier =
-      SourceManager->getBuffer(FileOffset.first)->getBufferIdentifier();
+      SourceManager->getBufferOrFake(FileOffset.first).getBufferIdentifier();
 
   return BufferIdentifier.empty();
 }

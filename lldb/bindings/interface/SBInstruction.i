@@ -13,6 +13,9 @@
 
 namespace lldb {
 
+%feature("docstring",
+"Represents a (machine language) instruction."
+) SBInstruction;
 class SBInstruction
 {
 public:
@@ -40,6 +43,9 @@ public:
 
     const char *
     GetComment (lldb::SBTarget target);
+
+    lldb::InstructionControlFlowKind
+    GetControlFlowKind(lldb::SBTarget target);
 
     lldb::SBData
     GetData (lldb::SBTarget target);

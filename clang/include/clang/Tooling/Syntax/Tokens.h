@@ -27,13 +27,13 @@
 #ifndef LLVM_CLANG_TOOLING_SYNTAX_TOKENS_H
 #define LLVM_CLANG_TOOLING_SYNTAX_TOKENS_H
 
-#include "clang/Basic/FileManager.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TokenKinds.h"
 #include "clang/Lex/Token.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Compiler.h"
@@ -192,8 +192,13 @@ public:
     return ExpandedTokens;
   }
 
+  /// Builds a cache to make future calls to expandedToken(SourceRange) faster.
+  /// Creates an index only once. Further calls to it will be no-op.
+  void indexExpandedTokens();
+
   /// Returns the subrange of expandedTokens() corresponding to the closed
   /// token range R.
+  /// Consider calling indexExpandedTokens() before for faster lookups.
   llvm::ArrayRef<syntax::Token> expandedTokens(SourceRange R) const;
 
   /// Returns the subrange of spelled tokens corresponding to AST node spanning
@@ -366,6 +371,8 @@ private:
   /// same stream as 'clang -E' (excluding the preprocessor directives like
   /// #file, etc.).
   std::vector<syntax::Token> ExpandedTokens;
+  // Index of ExpandedTokens for faster lookups by SourceLocation.
+  llvm::DenseMap<SourceLocation, unsigned> ExpandedTokIndex;
   llvm::DenseMap<FileID, MarkedFile> Files;
   // The value is never null, pointer instead of reference to avoid disabling
   // implicit assignment operator.
@@ -418,7 +425,7 @@ public:
 
   /// Finalizes token collection. Should be called after preprocessing is
   /// finished, i.e. after running Execute().
-  LLVM_NODISCARD TokenBuffer consume() &&;
+  [[nodiscard]] TokenBuffer consume() &&;
 
 private:
   /// Maps from a start to an end spelling location of transformations
@@ -438,7 +445,7 @@ private:
   /// the stack) and not when they end (when we pop a macro from the stack).
   /// To workaround this limitation, we rely on source location information
   /// stored in this map.
-  using PPExpansions = llvm::DenseMap</*SourceLocation*/ int, SourceLocation>;
+  using PPExpansions = llvm::DenseMap<SourceLocation, SourceLocation>;
   class Builder;
   class CollectPPExpansions;
 

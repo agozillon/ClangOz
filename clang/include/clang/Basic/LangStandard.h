@@ -12,6 +12,10 @@
 #include "clang/Basic/LLVM.h"
 #include "llvm/ADT/StringRef.h"
 
+namespace llvm {
+class Triple;
+}
+
 namespace clang {
 
 /// The language for the input, used to select and validate the language
@@ -32,9 +36,11 @@ enum class Language : uint8_t {
   ObjC,
   ObjCXX,
   OpenCL,
+  OpenCLCXX,
   CUDA,
   RenderScript,
   HIP,
+  HLSL,
   ///@}
 };
 
@@ -49,11 +55,12 @@ enum LangFeatures {
   CPlusPlus14 = (1 << 7),
   CPlusPlus17 = (1 << 8),
   CPlusPlus20 = (1 << 9),
-  Digraphs = (1 << 10),
-  GNUMode = (1 << 11),
-  HexFloat = (1 << 12),
-  ImplicitInt = (1 << 13),
-  OpenCL = (1 << 14)
+  CPlusPlus2b = (1 << 10),
+  Digraphs = (1 << 11),
+  GNUMode = (1 << 12),
+  HexFloat = (1 << 13),
+  OpenCL = (1 << 14),
+  HLSL = (1 << 15)
 };
 
 /// LangStandard - Information about the properties of a particular language
@@ -111,6 +118,9 @@ public:
   /// isCPlusPlus20 - Language is a C++20 variant (or later).
   bool isCPlusPlus20() const { return Flags & CPlusPlus20; }
 
+  /// isCPlusPlus2b - Language is a post-C++20 variant (or later).
+  bool isCPlusPlus2b() const { return Flags & CPlusPlus2b; }
+
   /// hasDigraphs - Language supports digraphs.
   bool hasDigraphs() const { return Flags & Digraphs; }
 
@@ -120,9 +130,6 @@ public:
   /// hasHexFloats - Language supports hexadecimal float constants.
   bool hasHexFloats() const { return Flags & HexFloat; }
 
-  /// hasImplicitInt - Language allows variables to be typed as int implicitly.
-  bool hasImplicitInt() const { return Flags & ImplicitInt; }
-
   /// isOpenCL - Language is a OpenCL variant.
   bool isOpenCL() const { return Flags & OpenCL; }
 
@@ -130,6 +137,9 @@ public:
   static const LangStandard &getLangStandardForKind(Kind K);
   static const LangStandard *getLangStandardForName(StringRef Name);
 };
+
+LangStandard::Kind getDefaultLanguageStandard(clang::Language Lang,
+                                              const llvm::Triple &T);
 
 }  // end namespace clang
 

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -emit-llvm --std=c++17 -fcxx-exceptions -fexceptions -discard-value-names %s -o - | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-unknown-linux-gnu -emit-llvm --std=c++17 -fcxx-exceptions -fexceptions -discard-value-names %s -o - | FileCheck %s
 
 struct Q { Q(); };
 struct R { R(Q); ~R(); };
@@ -16,9 +16,9 @@ T t { R{q}, S{q} };
 // CHECK-NEXT: [[XPT:%[a-z0-9.]+]] = alloca i8*
 // CHECK-NEXT: [[SLOT:%[a-z0-9.]+]] = alloca i32
 // CHECK-NEXT: [[ACTIVE:%[a-z0-9.]+]] = alloca i1, align 1
-// CHECK-NEXT: call void @_ZN1RC1E1Q(%struct.R* [[TMP_R]])
+// CHECK-NEXT: call void @_ZN1RC1E1Q(%struct.R* {{[^,]*}} [[TMP_R]])
 // CHECK-NEXT: store i1 true, i1* [[ACTIVE]], align 1
-// CHECK-NEXT: invoke void @_ZN1SC1E1Q(%struct.S* [[TMP_S]])
+// CHECK-NEXT: invoke void @_ZN1SC1E1Q(%struct.S* {{[^,]*}} [[TMP_S]])
 // CHECK-NEXT:   to label %[[L1:[a-z0-9.]+]] unwind label %[[L2:[a-z0-9.]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: [[L1]]:
@@ -43,7 +43,7 @@ T t { R{q}, S{q} };
 // CHECK-NEXT: br label %[[L4]]
 // CHECK-EMPTY:
 // CHECK-NEXT: [[L4]]:
-// CHECK-NEXT: call void @_ZN1RD1Ev(%struct.R* [[TMP_R]])
+// CHECK-NEXT: call void @_ZN1RD1Ev(%struct.R* {{[^,]*}} [[TMP_R]])
 // CHECK-NEXT: br label %[[L5:[a-z0-9.]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: [[L5]]:

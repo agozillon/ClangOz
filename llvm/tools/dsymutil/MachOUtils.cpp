@@ -12,10 +12,12 @@
 #include "LinkUtils.h"
 #include "llvm/CodeGen/NonRelocatableStringpool.h"
 #include "llvm/MC/MCAsmLayout.h"
+#include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCMachObjectWriter.h"
 #include "llvm/MC/MCObjectStreamer.h"
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCStreamer.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/Program.h"
@@ -239,27 +241,36 @@ getSection(const object::MachOObjectFile &Obj,
 // Transfer \a Segment from \a Obj to the output file. This calls into \a Writer
 // to write these load commands directly in the output file at the current
 // position.
+//
 // The function also tries to find a hole in the address map to fit the __DWARF
 // segment of \a DwarfSegmentSize size. \a EndAddress is updated to point at the
 // highest segment address.
+//
 // When the __LINKEDIT segment is transferred, its offset and size are set resp.
 // to \a LinkeditOffset and \a LinkeditSize.
+//
+// When the eh_frame section is transferred, its offset and size are set resp.
+// to \a EHFrameOffset and \a EHFrameSize.
 template <typename SegmentTy>
 static void transferSegmentAndSections(
     const object::MachOObjectFile::LoadCommandInfo &LCI, SegmentTy Segment,
     const object::MachOObjectFile &Obj, MachObjectWriter &Writer,
-    uint64_t LinkeditOffset, uint64_t LinkeditSize, uint64_t DwarfSegmentSize,
-    uint64_t &GapForDwarf, uint64_t &EndAddress) {
+    uint64_t LinkeditOffset, uint64_t LinkeditSize, uint64_t EHFrameOffset,
+    uint64_t EHFrameSize, uint64_t DwarfSegmentSize, uint64_t &GapForDwarf,
+    uint64_t &EndAddress) {
   if (StringRef("__DWARF") == Segment.segname)
     return;
 
-  Segment.fileoff = Segment.filesize = 0;
-
-  if (StringRef("__LINKEDIT") == Segment.segname) {
+  if (StringRef("__TEXT") == Segment.segname && EHFrameSize > 0) {
+    Segment.fileoff = EHFrameOffset;
+    Segment.filesize = EHFrameSize;
+  } else if (StringRef("__LINKEDIT") == Segment.segname) {
     Segment.fileoff = LinkeditOffset;
     Segment.filesize = LinkeditSize;
     // Resize vmsize by rounding to the page size.
     Segment.vmsize = alignTo(LinkeditSize, 0x1000);
+  } else {
+    Segment.fileoff = Segment.filesize = 0;
   }
 
   // Check if the end address of the last segment and our current
@@ -280,7 +291,12 @@ static void transferSegmentAndSections(
   Writer.W.OS.write(reinterpret_cast<char *>(&Segment), sizeof(Segment));
   for (unsigned i = 0; i < nsects; ++i) {
     auto Sect = getSection(Obj, Segment, LCI, i);
-    Sect.offset = Sect.reloff = Sect.nreloc = 0;
+    if (StringRef("__eh_frame") == Sect.sectname) {
+      Sect.offset = EHFrameOffset;
+      Sect.reloff = Sect.nreloc = 0;
+    } else {
+      Sect.offset = Sect.reloff = Sect.nreloc = 0;
+    }
     if (Obj.isLittleEndian() != sys::IsLittleEndianHost)
       MachO::swapStruct(Sect);
     Writer.W.OS.write(reinterpret_cast<char *>(&Sect), sizeof(Sect));
@@ -288,7 +304,7 @@ static void transferSegmentAndSections(
 }
 
 // Write the __DWARF segment load command to the output file.
-static void createDwarfSegment(uint64_t VMAddr, uint64_t FileOffset,
+static bool createDwarfSegment(uint64_t VMAddr, uint64_t FileOffset,
                                uint64_t FileSize, unsigned NumSections,
                                MCAsmLayout &Layout, MachObjectWriter &Writer) {
   Writer.writeSegmentLoadCommand("__DWARF", NumSections, VMAddr,
@@ -305,12 +321,16 @@ static void createDwarfSegment(uint64_t VMAddr, uint64_t FileOffset,
     if (Align > 1) {
       VMAddr = alignTo(VMAddr, Align);
       FileOffset = alignTo(FileOffset, Align);
+      if (FileOffset > UINT32_MAX)
+        return error("section " + Sec->getName() + "'s file offset exceeds 4GB."
+            " Refusing to produce an invalid Mach-O file.");
     }
     Writer.writeSection(Layout, *Sec, VMAddr, FileOffset, 0, 0, 0);
 
     FileOffset += Layout.getSectionAddressSize(Sec);
     VMAddr += Layout.getSectionAddressSize(Sec);
   }
+  return true;
 }
 
 static bool isExecutable(const object::MachOObjectFile &Obj) {
@@ -318,15 +338,6 @@ static bool isExecutable(const object::MachOObjectFile &Obj) {
     return Obj.getHeader64().filetype != MachO::MH_OBJECT;
   else
     return Obj.getHeader().filetype != MachO::MH_OBJECT;
-}
-
-static bool hasLinkEditSegment(const object::MachOObjectFile &Obj) {
-  bool HasLinkEditSegment = false;
-  iterateOnSegments(Obj, [&](const MachO::segment_command_64 &Segment) {
-    if (StringRef("__LINKEDIT") == Segment.segname)
-      HasLinkEditSegment = true;
-  });
-  return HasLinkEditSegment;
 }
 
 static unsigned segmentLoadCommandSize(bool Is64Bit, unsigned NumSections) {
@@ -340,9 +351,11 @@ static unsigned segmentLoadCommandSize(bool Is64Bit, unsigned NumSections) {
 // Stream a dSYM companion binary file corresponding to the binary referenced
 // by \a DM to \a OutFile. The passed \a MS MCStreamer is setup to write to
 // \a OutFile and it must be using a MachObjectWriter object to do so.
-bool generateDsymCompanion(llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS,
-                           const DebugMap &DM, SymbolMapTranslator &Translator,
-                           MCStreamer &MS, raw_fd_ostream &OutFile) {
+bool generateDsymCompanion(
+    llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS, const DebugMap &DM,
+    SymbolMapTranslator &Translator, MCStreamer &MS, raw_fd_ostream &OutFile,
+    const std::vector<MachOUtils::DwarfRelocationApplicationInfo>
+        &RelocationsToApply) {
   auto &ObjectStreamer = static_cast<MCObjectStreamer &>(MS);
   MCAssembler &MCAsm = ObjectStreamer.getAssembler();
   auto &Writer = static_cast<MachObjectWriter &>(MCAsm.getWriter());
@@ -380,7 +393,9 @@ bool generateDsymCompanion(llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS,
   unsigned LoadCommandSize = 0;
   unsigned NumLoadCommands = 0;
 
-  // Get LC_UUID and LC_BUILD_VERSION.
+  bool HasSymtab = false;
+
+  // Check LC_SYMTAB and get LC_UUID and LC_BUILD_VERSION.
   MachO::uuid_command UUIDCmd;
   SmallVector<MachO::build_version_command, 2> BuildVersionCmd;
   memset(&UUIDCmd, 0, sizeof(UUIDCmd));
@@ -404,17 +419,40 @@ bool generateDsymCompanion(llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS,
       BuildVersionCmd.push_back(Cmd);
       break;
     }
+    case MachO::LC_SYMTAB:
+      HasSymtab = true;
+      break;
     default:
       break;
     }
   }
 
   // If we have a valid symtab to copy, do it.
-  bool ShouldEmitSymtab =
-      isExecutable(InputBinary) && hasLinkEditSegment(InputBinary);
+  bool ShouldEmitSymtab = HasSymtab && isExecutable(InputBinary);
   if (ShouldEmitSymtab) {
     LoadCommandSize += sizeof(MachO::symtab_command);
     ++NumLoadCommands;
+  }
+
+  // If we have a valid eh_frame to copy, do it.
+  uint64_t EHFrameSize = 0;
+  StringRef EHFrameData;
+  for (const object::SectionRef &Section : InputBinary.sections()) {
+    Expected<StringRef> NameOrErr = Section.getName();
+    if (!NameOrErr) {
+      consumeError(NameOrErr.takeError());
+      continue;
+    }
+    StringRef SectionName = *NameOrErr;
+    SectionName = SectionName.substr(SectionName.find_first_not_of("._"));
+    if (SectionName == "eh_frame") {
+      if (Expected<StringRef> ContentsOrErr = Section.getContents()) {
+        EHFrameData = *ContentsOrErr;
+        EHFrameSize = Section.getSize();
+      } else {
+        consumeError(ContentsOrErr.takeError());
+      }
+    }
   }
 
   unsigned HeaderSize =
@@ -496,7 +534,10 @@ bool generateDsymCompanion(llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS,
     Writer.writeSymtabLoadCommand(SymtabStart, NumSyms, StringStart,
                                   NewStringsSize);
 
-  uint64_t DwarfSegmentStart = StringStart + NewStringsSize;
+  uint64_t EHFrameStart = StringStart + NewStringsSize;
+  EHFrameStart = alignTo(EHFrameStart, 0x1000);
+
+  uint64_t DwarfSegmentStart = EHFrameStart + EHFrameSize;
   DwarfSegmentStart = alignTo(DwarfSegmentStart, 0x1000);
 
   // Write the load commands for the segments and sections we 'import' from
@@ -505,15 +546,15 @@ bool generateDsymCompanion(llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS,
   uint64_t GapForDwarf = UINT64_MAX;
   for (auto &LCI : InputBinary.load_commands()) {
     if (LCI.C.cmd == MachO::LC_SEGMENT)
-      transferSegmentAndSections(LCI, InputBinary.getSegmentLoadCommand(LCI),
-                                 InputBinary, Writer, SymtabStart,
-                                 StringStart + NewStringsSize - SymtabStart,
-                                 DwarfSegmentSize, GapForDwarf, EndAddress);
+      transferSegmentAndSections(
+          LCI, InputBinary.getSegmentLoadCommand(LCI), InputBinary, Writer,
+          SymtabStart, StringStart + NewStringsSize - SymtabStart, EHFrameStart,
+          EHFrameSize, DwarfSegmentSize, GapForDwarf, EndAddress);
     else if (LCI.C.cmd == MachO::LC_SEGMENT_64)
-      transferSegmentAndSections(LCI, InputBinary.getSegment64LoadCommand(LCI),
-                                 InputBinary, Writer, SymtabStart,
-                                 StringStart + NewStringsSize - SymtabStart,
-                                 DwarfSegmentSize, GapForDwarf, EndAddress);
+      transferSegmentAndSections(
+          LCI, InputBinary.getSegment64LoadCommand(LCI), InputBinary, Writer,
+          SymtabStart, StringStart + NewStringsSize - SymtabStart, EHFrameStart,
+          EHFrameSize, DwarfSegmentSize, GapForDwarf, EndAddress);
   }
 
   uint64_t DwarfVMAddr = alignTo(EndAddress, 0x1000);
@@ -529,8 +570,9 @@ bool generateDsymCompanion(llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS,
   }
 
   // Write the load command for the __DWARF segment.
-  createDwarfSegment(DwarfVMAddr, DwarfSegmentStart, DwarfSegmentSize,
-                     NumDwarfSections, Layout, Writer);
+  if (!createDwarfSegment(DwarfVMAddr, DwarfSegmentStart, DwarfSegmentSize,
+                          NumDwarfSections, Layout, Writer))
+    return false;
 
   assert(OutFile.tell() == LoadCommandSize + HeaderSize);
   OutFile.write_zeros(SymtabStart - (LoadCommandSize + HeaderSize));
@@ -554,11 +596,19 @@ bool generateDsymCompanion(llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS,
                     EntryRef.getString().size() + 1);
     }
   }
-
   assert(OutFile.tell() == StringStart + NewStringsSize);
 
+  // Pad till the EH frame start.
+  OutFile.write_zeros(EHFrameStart - (StringStart + NewStringsSize));
+  assert(OutFile.tell() == EHFrameStart);
+
+  // Transfer eh_frame.
+  if (EHFrameSize > 0)
+    OutFile << EHFrameData;
+  assert(OutFile.tell() == EHFrameStart + EHFrameSize);
+
   // Pad till the Dwarf segment start.
-  OutFile.write_zeros(DwarfSegmentStart - (StringStart + NewStringsSize));
+  OutFile.write_zeros(DwarfSegmentStart - (EHFrameStart + EHFrameSize));
   assert(OutFile.tell() == DwarfSegmentStart);
 
   // Emit the Dwarf sections contents.
@@ -569,6 +619,25 @@ bool generateDsymCompanion(llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS,
     uint64_t Pos = OutFile.tell();
     OutFile.write_zeros(alignTo(Pos, Sec.getAlignment()) - Pos);
     MCAsm.writeSectionData(OutFile, &Sec, Layout);
+  }
+
+  // Apply relocations to the contents of the DWARF segment.
+  // We do this here because the final value written depend on the DWARF vm
+  // addr, which is only calculated in this function.
+  if (!RelocationsToApply.empty()) {
+    if (!OutFile.supportsSeeking())
+      report_fatal_error(
+          "Cannot apply relocations to file that doesn't support seeking!");
+
+    uint64_t Pos = OutFile.tell();
+    for (auto &RelocationToApply : RelocationsToApply) {
+      OutFile.seek(DwarfSegmentStart + RelocationToApply.AddressFromDwarfStart);
+      int32_t Value = RelocationToApply.Value;
+      if (RelocationToApply.ShouldSubtractDwarfVM)
+        Value -= DwarfVMAddr;
+      OutFile.write((char *)&Value, sizeof(int32_t));
+    }
+    OutFile.seek(Pos);
   }
 
   return true;

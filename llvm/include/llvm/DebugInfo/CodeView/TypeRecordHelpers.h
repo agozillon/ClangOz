@@ -9,7 +9,8 @@
 #ifndef LLVM_DEBUGINFO_CODEVIEW_TYPERECORDHELPERS_H
 #define LLVM_DEBUGINFO_CODEVIEW_TYPERECORDHELPERS_H
 
-#include "llvm/DebugInfo/CodeView/TypeRecord.h"
+#include "llvm/DebugInfo/CodeView/CVRecord.h"
+#include "llvm/DebugInfo/CodeView/TypeIndex.h"
 
 namespace llvm {
 namespace codeview {
@@ -39,6 +40,27 @@ inline bool isIdRecord(TypeLeafKind K) {
     return false;
   }
 }
+
+/// Given an arbitrary codeview type, determine if it is an LF_STRUCTURE,
+/// LF_CLASS, LF_INTERFACE, LF_UNION.
+inline bool isAggregate(CVType CVT) {
+  switch (CVT.kind()) {
+  case LF_STRUCTURE:
+  case LF_CLASS:
+  case LF_INTERFACE:
+  case LF_UNION:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// Given an arbitrary codeview type index, determine its size.
+uint64_t getSizeInBytesForTypeIndex(TypeIndex TI);
+
+/// Given an arbitrary codeview type, return the type's size in the case
+/// of aggregate (LF_STRUCTURE, LF_CLASS, LF_INTERFACE, LF_UNION).
+uint64_t getSizeInBytesForTypeRecord(CVType CVT);
 
 } // namespace codeview
 } // namespace llvm

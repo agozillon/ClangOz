@@ -11,8 +11,8 @@
 // FIXME: not %run %t 8 2>&1 | FileCheck %s --check-prefix=CHECK-8
 // RUN: not %run %t 9 2>&1 | FileCheck %s --check-prefix=CHECK-9
 
-// Bug 42535
-// XFAIL: sparc-target-arch
+// Issue #41838
+// XFAIL: sparc-target-arch && solaris
 
 // This test assumes float and double are IEEE-754 single- and double-precision.
 

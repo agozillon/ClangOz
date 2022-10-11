@@ -11,23 +11,30 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "PassDetail.h"
 #include "mlir/Transforms/Passes.h"
+
+#include "mlir/IR/SymbolTable.h"
+
+namespace mlir {
+#define GEN_PASS_DEF_SYMBOLDCE
+#include "mlir/Transforms/Passes.h.inc"
+} // namespace mlir
 
 using namespace mlir;
 
 namespace {
-struct SymbolDCE : public SymbolDCEBase<SymbolDCE> {
+struct SymbolDCE : public impl::SymbolDCEBase<SymbolDCE> {
   void runOnOperation() override;
 
   /// Compute the liveness of the symbols within the given symbol table.
   /// `symbolTableIsHidden` is true if this symbol table is known to be
   /// unaccessible from operations in its parent regions.
   LogicalResult computeLiveness(Operation *symbolTableOp,
+                                SymbolTableCollection &symbolTable,
                                 bool symbolTableIsHidden,
                                 DenseSet<Operation *> &liveSymbols);
 };
-} // end anonymous namespace
+} // namespace
 
 void SymbolDCE::runOnOperation() {
   Operation *symbolTableOp = getOperation();
@@ -49,7 +56,9 @@ void SymbolDCE::runOnOperation() {
 
   // Compute the set of live symbols within the symbol table.
   DenseSet<Operation *> liveSymbols;
-  if (failed(computeLiveness(symbolTableOp, symbolTableIsHidden, liveSymbols)))
+  SymbolTableCollection symbolTable;
+  if (failed(computeLiveness(symbolTableOp, symbolTable, symbolTableIsHidden,
+                             liveSymbols)))
     return signalPassFailure();
 
   // After computing the liveness, delete all of the symbols that were found to
@@ -58,10 +67,11 @@ void SymbolDCE::runOnOperation() {
     if (!nestedSymbolTable->hasTrait<OpTrait::SymbolTable>())
       return;
     for (auto &block : nestedSymbolTable->getRegion(0)) {
-      for (Operation &op :
-           llvm::make_early_inc_range(block.without_terminator())) {
-        if (isa<SymbolOpInterface>(&op) && !liveSymbols.count(&op))
+      for (Operation &op : llvm::make_early_inc_range(block)) {
+        if (isa<SymbolOpInterface>(&op) && !liveSymbols.count(&op)) {
           op.erase();
+          ++numDCE;
+        }
       }
     }
   });
@@ -71,6 +81,7 @@ void SymbolDCE::runOnOperation() {
 /// `symbolTableIsHidden` is true if this symbol table is known to be
 /// unaccessible from operations in its parent regions.
 LogicalResult SymbolDCE::computeLiveness(Operation *symbolTableOp,
+                                         SymbolTableCollection &symbolTable,
                                          bool symbolTableIsHidden,
                                          DenseSet<Operation *> &liveSymbols) {
   // A worklist of live operations to propagate uses from.
@@ -80,7 +91,7 @@ LogicalResult SymbolDCE::computeLiveness(Operation *symbolTableOp,
   // are known to be live.
   for (auto &block : symbolTableOp->getRegion(0)) {
     // Add all non-symbols or symbols that can't be discarded.
-    for (Operation &op : block.without_terminator()) {
+    for (Operation &op : block) {
       SymbolOpInterface symbol = dyn_cast<SymbolOpInterface>(&op);
       if (!symbol) {
         worklist.push_back(&op);
@@ -104,7 +115,7 @@ LogicalResult SymbolDCE::computeLiveness(Operation *symbolTableOp,
       // symbol, or if it is a private symbol.
       SymbolOpInterface symbol = dyn_cast<SymbolOpInterface>(op);
       bool symIsHidden = symbolTableIsHidden || !symbol || symbol.isPrivate();
-      if (failed(computeLiveness(op, symIsHidden, liveSymbols)))
+      if (failed(computeLiveness(op, symbolTable, symIsHidden, liveSymbols)))
         return failure();
     }
 
@@ -120,12 +131,10 @@ LogicalResult SymbolDCE::computeLiveness(Operation *symbolTableOp,
     for (const SymbolTable::SymbolUse &use : *uses) {
       // Lookup the symbols referenced by this use.
       resolvedSymbols.clear();
-      if (failed(SymbolTable::lookupSymbolIn(
-              op->getParentOp(), use.getSymbolRef(), resolvedSymbols))) {
-        return use.getUser()->emitError()
-               << "unable to resolve reference to symbol "
-               << use.getSymbolRef();
-      }
+      if (failed(symbolTable.lookupSymbolIn(
+              op->getParentOp(), use.getSymbolRef(), resolvedSymbols)))
+        // Ignore references to unknown symbols.
+        continue;
 
       // Mark each of the resolved symbols as live.
       for (Operation *resolvedSymbol : resolvedSymbols)

@@ -1,5 +1,9 @@
+// RUN: %clang_cc1 %s -triple i686-pc-win32 -fsyntax-only -std=c++11 -Wmicrosoft -verify -fms-compatibility -fexceptions -fcxx-exceptions -fms-compatibility-version=19.28
+// RUN: %clang_cc1 %s -triple i686-pc-win32 -fsyntax-only -std=c++11 -Wmicrosoft -verify -fms-compatibility -fexceptions -fcxx-exceptions -fms-compatibility-version=19.27
 // RUN: %clang_cc1 %s -triple i686-pc-win32 -fsyntax-only -std=c++11 -Wmicrosoft -verify -fms-compatibility -fexceptions -fcxx-exceptions -fms-compatibility-version=19.00
 // RUN: %clang_cc1 %s -triple i686-pc-win32 -fsyntax-only -std=c++11 -Wmicrosoft -verify -fms-compatibility -fexceptions -fcxx-exceptions -fms-compatibility-version=18.00
+// RUN: %clang_cc1 %s -triple i686-pc-win32 -fsyntax-only -std=c++17 -Wmicrosoft -verify -fms-compatibility -fexceptions -fcxx-exceptions
+
 
 #if defined(_HAS_CHAR16_T_LANGUAGE_SUPPORT) && _HAS_CHAR16_T_LANGUAGE_SUPPORT
 char16_t x;
@@ -28,12 +32,20 @@ namespace ms_conversion_rules {
 
 void f(float a);
 void f(int a);
+#if _MSC_VER >= 1928
+// expected-note@-3 2 {{candidate function}}
+// expected-note@-3 2 {{candidate function}}
+#endif
 
 void test()
 {
     long a = 0;
     f((long)0);
-	f(a);
+    f(a);
+#if _MSC_VER >= 1928
+// expected-error@-3 {{call to 'f' is ambiguous}}
+// expected-error@-3 {{call to 'f' is ambiguous}}
+#endif
 }
 
 }
@@ -108,7 +120,7 @@ namespace PR11826 {
   void f() {
     pair p0(3);
 #if _MSC_VER >= 1900
-    pair p = p0; // expected-error {{call to implicitly-deleted copy constructor of 'PR11826::pair'}}
+    pair p = p0; // expected-error {{call to implicitly-deleted copy constructor of 'pair'}}
 #else
     pair p = p0;
 #endif
@@ -128,7 +140,7 @@ namespace PR11826_for_symmetry {
     pair p0(3);
     pair p(4);
 #if _MSC_VER >= 1900
-    p = p0; // expected-error {{object of type 'PR11826_for_symmetry::pair' cannot be assigned because its copy assignment operator is implicitly deleted}}
+    p = p0; // expected-error {{object of type 'pair' cannot be assigned because its copy assignment operator is implicitly deleted}}
 #else
     p = p0;
 #endif
@@ -227,14 +239,14 @@ template void function_missing_typename<D>(const D::Type param);
 //MSVC allows forward enum declaration
 enum ENUM; // expected-warning {{forward references to 'enum' types are a Microsoft extension}}
 ENUM *var = 0;     
-ENUM var2 = (ENUM)3;
+ENUM var2 = (ENUM)0;
 enum ENUM1* var3 = 0;// expected-warning {{forward references to 'enum' types are a Microsoft extension}}
 
 enum ENUM1 { kA };
 enum ENUM1;  // This way round is fine.
 
 enum ENUM2 {
-	ENUM2_a = (enum ENUM2) 4,
+	ENUM2_a = (enum ENUM2) 0,
 	ENUM2_b = 0x9FFFFFFF, // expected-warning {{enumerator value is not representable in the underlying type 'int'}}
 	ENUM2_c = 0x100000000 // expected-warning {{enumerator value is not representable in the underlying type 'int'}}
 };
@@ -275,6 +287,17 @@ namespace IntToNullPtrConv {
 
   template<int N> int *get_n() { return N; }   // expected-warning {{expression which evaluates to zero treated as a null pointer constant}}
   int *g_nullptr = get_n<0>();  // expected-note {{in instantiation of function template specialization}}
+
+  // FIXME: MSVC accepts this.
+  constexpr float k = 0;
+  int *p1 = (int)k; // expected-error {{cannot initialize}}
+
+  constexpr int n = 0;
+  const int &r = n;
+  int *p2 = (int)r; // expected-error {{cannot initialize}}
+
+  constexpr int f() { return 0; }
+  int *p = f(); // expected-error {{cannot initialize}}
 }
 
 namespace signed_hex_i64 {
@@ -329,6 +352,7 @@ namespace microsoft_exception_spec {
 void foo(); // expected-note {{previous declaration}}
 void foo() throw(); // expected-warning {{exception specification in declaration does not match previous declaration}}
 
+#if __cplusplus < 201703L
 void r6() throw(...); // expected-note {{previous declaration}}
 void r6() throw(int); // expected-warning {{exception specification in declaration does not match previous declaration}}
 
@@ -341,6 +365,7 @@ struct Derived : Base {
   virtual void f2() throw(...);
   virtual void f3();
 };
+#endif
 
 class A {
   virtual ~A() throw();
@@ -356,14 +381,14 @@ class B : public A {
 #endif
 };
 
-}
+void f4() throw(); // expected-note {{previous declaration is here}}
+void f4() {}       // expected-warning {{'f4' is missing exception specification 'throw()'}}
 
-namespace PR25265 {
-struct S {
-  int fn() throw(); // expected-note {{previous declaration is here}}
-};
+__declspec(nothrow) void f5();
+void f5() {}
 
-int S::fn() { return 0; } // expected-warning {{is missing exception specification}}
+void f6() noexcept; // expected-note {{previous declaration is here}}
+void f6() {}        // expected-error {{'f6' is missing exception specification 'noexcept'}}
 }
 
 namespace PR43265 {

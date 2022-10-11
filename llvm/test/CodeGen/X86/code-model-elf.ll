@@ -40,7 +40,7 @@ target triple = "x86_64--linux"
 @thread_data = external thread_local global i32, align 4
 
 
-define dso_local i32* @lea_static_data() #0 {
+define dso_local ptr @lea_static_data() #0 {
 ; SMALL-STATIC-LABEL: lea_static_data:
 ; SMALL-STATIC:       # %bb.0:
 ; SMALL-STATIC-NEXT:    movl $static_data, %eax
@@ -77,10 +77,10 @@ define dso_local i32* @lea_static_data() #0 {
 ; LARGE-PIC-NEXT:    movabsq $static_data@GOTOFF, %rax
 ; LARGE-PIC-NEXT:    addq %rcx, %rax
 ; LARGE-PIC-NEXT:    retq
-  ret i32* getelementptr inbounds ([10 x i32], [10 x i32]* @static_data, i64 0, i64 0)
+  ret ptr @static_data
 }
 
-define dso_local i32* @lea_global_data() #0 {
+define dso_local ptr @lea_global_data() #0 {
 ; SMALL-STATIC-LABEL: lea_global_data:
 ; SMALL-STATIC:       # %bb.0:
 ; SMALL-STATIC-NEXT:    movl $global_data, %eax
@@ -117,18 +117,18 @@ define dso_local i32* @lea_global_data() #0 {
 ; LARGE-PIC-NEXT:    movabsq $global_data@GOTOFF, %rax
 ; LARGE-PIC-NEXT:    addq %rcx, %rax
 ; LARGE-PIC-NEXT:    retq
-  ret i32* getelementptr inbounds ([10 x i32], [10 x i32]* @global_data, i64 0, i64 0)
+  ret ptr @global_data
 }
 
-define dso_local i32* @lea_extern_data() #0 {
+define dso_local ptr @lea_extern_data() #0 {
 ; SMALL-STATIC-LABEL: lea_extern_data:
 ; SMALL-STATIC:       # %bb.0:
-; SMALL-STATIC-NEXT:    movl $extern_data, %eax
+; SMALL-STATIC-NEXT:    movq extern_data@GOTPCREL(%rip), %rax
 ; SMALL-STATIC-NEXT:    retq
 ;
 ; MEDIUM-STATIC-LABEL: lea_extern_data:
 ; MEDIUM-STATIC:       # %bb.0:
-; MEDIUM-STATIC-NEXT:    movabsq $extern_data, %rax
+; MEDIUM-STATIC-NEXT:    movq extern_data@GOTPCREL(%rip), %rax
 ; MEDIUM-STATIC-NEXT:    retq
 ;
 ; LARGE-STATIC-LABEL: lea_extern_data:
@@ -155,7 +155,7 @@ define dso_local i32* @lea_extern_data() #0 {
 ; LARGE-PIC-NEXT:    movabsq $extern_data@GOT, %rax
 ; LARGE-PIC-NEXT:    movq (%rcx,%rax), %rax
 ; LARGE-PIC-NEXT:    retq
-  ret i32* getelementptr inbounds ([10 x i32], [10 x i32]* @extern_data, i64 0, i64 0)
+  ret ptr @extern_data
 }
 
 define dso_local i32 @load_global_data() #0 {
@@ -197,19 +197,20 @@ define dso_local i32 @load_global_data() #0 {
 ; LARGE-PIC-NEXT:    movabsq $global_data@GOTOFF, %rax
 ; LARGE-PIC-NEXT:    movl 8(%rcx,%rax), %eax
 ; LARGE-PIC-NEXT:    retq
-  %rv = load i32, i32* getelementptr inbounds ([10 x i32], [10 x i32]* @global_data, i64 0, i64 2)
+  %rv = load i32, ptr getelementptr inbounds ([10 x i32], ptr @global_data, i64 0, i64 2)
   ret i32 %rv
 }
 
 define dso_local i32 @load_extern_data() #0 {
 ; SMALL-STATIC-LABEL: load_extern_data:
 ; SMALL-STATIC:       # %bb.0:
-; SMALL-STATIC-NEXT:    movl extern_data+8(%rip), %eax
+; SMALL-STATIC-NEXT:    movq extern_data@GOTPCREL(%rip), %rax
+; SMALL-STATIC-NEXT:    movl 8(%rax), %eax
 ; SMALL-STATIC-NEXT:    retq
 ;
 ; MEDIUM-STATIC-LABEL: load_extern_data:
 ; MEDIUM-STATIC:       # %bb.0:
-; MEDIUM-STATIC-NEXT:    movabsq $extern_data, %rax
+; MEDIUM-STATIC-NEXT:    movq extern_data@GOTPCREL(%rip), %rax
 ; MEDIUM-STATIC-NEXT:    movl 8(%rax), %eax
 ; MEDIUM-STATIC-NEXT:    retq
 ;
@@ -241,7 +242,7 @@ define dso_local i32 @load_extern_data() #0 {
 ; LARGE-PIC-NEXT:    movq (%rcx,%rax), %rax
 ; LARGE-PIC-NEXT:    movl 8(%rax), %eax
 ; LARGE-PIC-NEXT:    retq
-  %rv = load i32, i32* getelementptr inbounds ([10 x i32], [10 x i32]* @extern_data, i64 0, i64 2)
+  %rv = load i32, ptr getelementptr inbounds ([10 x i32], ptr @extern_data, i64 0, i64 2)
   ret i32 %rv
 }
 
@@ -261,7 +262,7 @@ define internal void @static_fn() #0 {
 
 declare void @extern_fn()
 
-define dso_local void ()* @lea_static_fn() #0 {
+define dso_local ptr @lea_static_fn() #0 {
 ; SMALL-STATIC-LABEL: lea_static_fn:
 ; SMALL-STATIC:       # %bb.0:
 ; SMALL-STATIC-NEXT:    movl $static_fn, %eax
@@ -296,10 +297,10 @@ define dso_local void ()* @lea_static_fn() #0 {
 ; LARGE-PIC-NEXT:    movabsq $static_fn@GOTOFF, %rax
 ; LARGE-PIC-NEXT:    addq %rcx, %rax
 ; LARGE-PIC-NEXT:    retq
-  ret void ()* @static_fn
+  ret ptr @static_fn
 }
 
-define dso_local void ()* @lea_global_fn() #0 {
+define dso_local ptr @lea_global_fn() #0 {
 ; SMALL-STATIC-LABEL: lea_global_fn:
 ; SMALL-STATIC:       # %bb.0:
 ; SMALL-STATIC-NEXT:    movl $global_fn, %eax
@@ -334,18 +335,18 @@ define dso_local void ()* @lea_global_fn() #0 {
 ; LARGE-PIC-NEXT:    movabsq $global_fn@GOTOFF, %rax
 ; LARGE-PIC-NEXT:    addq %rcx, %rax
 ; LARGE-PIC-NEXT:    retq
-  ret void ()* @global_fn
+  ret ptr @global_fn
 }
 
-define dso_local void ()* @lea_extern_fn() #0 {
+define dso_local ptr @lea_extern_fn() #0 {
 ; SMALL-STATIC-LABEL: lea_extern_fn:
 ; SMALL-STATIC:       # %bb.0:
-; SMALL-STATIC-NEXT:    movl $extern_fn, %eax
+; SMALL-STATIC-NEXT:    movq extern_fn@GOTPCREL(%rip), %rax
 ; SMALL-STATIC-NEXT:    retq
 ;
 ; MEDIUM-STATIC-LABEL: lea_extern_fn:
 ; MEDIUM-STATIC:       # %bb.0:
-; MEDIUM-STATIC-NEXT:    movabsq $extern_fn, %rax
+; MEDIUM-STATIC-NEXT:    movq extern_fn@GOTPCREL(%rip), %rax
 ; MEDIUM-STATIC-NEXT:    retq
 ;
 ; LARGE-STATIC-LABEL: lea_extern_fn:
@@ -372,7 +373,7 @@ define dso_local void ()* @lea_extern_fn() #0 {
 ; LARGE-PIC-NEXT:    movabsq $extern_fn@GOT, %rax
 ; LARGE-PIC-NEXT:    movq (%rcx,%rax), %rax
 ; LARGE-PIC-NEXT:    retq
-  ret void ()* @extern_fn
+  ret ptr @extern_fn
 }
 
 ; FIXME: The result is same for small, medium and large model, because we
@@ -399,73 +400,42 @@ define dso_local void ()* @lea_extern_fn() #0 {
 ; movl	(%rax), %eax
 
 define dso_local i32 @load_thread_data() #0 {
-; SMALL-STATIC-LABEL: load_thread_data:
-; SMALL-STATIC:       # %bb.0:
-; SMALL-STATIC-NEXT:    movq    thread_data@GOTTPOFF(%rip), %rax
-; SMALL-STATIC-NEXT:    movl    %fs:(%rax), %eax
-; SMALL-STATIC-NEXT:    retq
-;
-; MEDIUM-STATIC-LABEL: load_thread_data:
-; MEDIUM-STATIC:       # %bb.0:
-; MEDIUM-STATIC-NEXT:    movq    thread_data@GOTTPOFF(%rip), %rax
-; MEDIUM-STATIC-NEXT:    movl    %fs:(%rax), %eax
-; MEDIUM-STATIC-NEXT:    retq
-;
-; LARGE-STATIC-LABEL: load_thread_data:
-; LARGE-STATIC:       # %bb.0:
-; LARGE-STATIC-NEXT:    movq    thread_data@GOTTPOFF(%rip), %rax
-; LARGE-STATIC-NEXT:    movl    %fs:(%rax), %eax
-; LARGE-STATIC-NEXT:    retq
-;
-; SMALL-PIC-LABEL: load_thread_data:
-; SMALL-PIC:       # %bb.0:
-; SMALL-PIC-NEXT:    movq    thread_data@GOTTPOFF(%rip), %rax
-; SMALL-PIC-NEXT:    movl    %fs:(%rax), %eax
-; SMALL-PIC-NEXT:    retq
-;
-; MEDIUM-PIC-LABEL: load_thread_data:
-; MEDIUM-PIC:       # %bb.0:
-; MEDIUM-PIC-NEXT:    movq    thread_data@GOTTPOFF(%rip), %rax
-; MEDIUM-PIC-NEXT:    movl    %fs:(%rax), %eax
-; MEDIUM-PIC-NEXT:    retq
-;
-; LARGE-PIC-LABEL: load_thread_data:
-; LARGE-PIC:       # %bb.0:
-; LARGE-PIC-NEXT:    movq    thread_data@GOTTPOFF(%rip), %rax
-; LARGE-PIC-NEXT:    movl    %fs:(%rax), %eax
-; LARGE-PIC-NEXT:    retq
-;
-  %1 = load i32, i32* @thread_data, align 4
+; CHECK-LABEL: load_thread_data:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    movq thread_data@GOTTPOFF(%rip), %rax
+; CHECK-NEXT:    movl %fs:(%rax), %eax
+; CHECK-NEXT:    retq
+  %1 = load i32, ptr @thread_data, align 4
   ret i32 %1
 }
 
 define dso_local float @load_constant_pool(float %x) #0 {
 ; SMALL-STATIC-LABEL: load_constant_pool:
 ; SMALL-STATIC:       # %bb.0:
-; SMALL-STATIC-NEXT:    addss {{\.LCPI.*}}(%rip), %xmm0
+; SMALL-STATIC-NEXT:    addss {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0
 ; SMALL-STATIC-NEXT:    retq
 ;
 ; MEDIUM-STATIC-LABEL: load_constant_pool:
 ; MEDIUM-STATIC:       # %bb.0:
-; MEDIUM-STATIC-NEXT:    movabsq ${{\.LCPI.*}}, %rax
+; MEDIUM-STATIC-NEXT:    movabsq ${{\.?LCPI[0-9]+_[0-9]+}}, %rax
 ; MEDIUM-STATIC-NEXT:    addss (%rax), %xmm0
 ; MEDIUM-STATIC-NEXT:    retq
 ;
 ; LARGE-STATIC-LABEL: load_constant_pool:
 ; LARGE-STATIC:       # %bb.0:
-; LARGE-STATIC-NEXT:    movabsq ${{\.LCPI.*}}, %rax
+; LARGE-STATIC-NEXT:    movabsq ${{\.?LCPI[0-9]+_[0-9]+}}, %rax
 ; LARGE-STATIC-NEXT:    addss (%rax), %xmm0
 ; LARGE-STATIC-NEXT:    retq
 ;
 ; SMALL-PIC-LABEL: load_constant_pool:
 ; SMALL-PIC:       # %bb.0:
-; SMALL-PIC-NEXT:    addss {{\.LCPI.*}}(%rip), %xmm0
+; SMALL-PIC-NEXT:    addss {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0
 ; SMALL-PIC-NEXT:    retq
 ;
 ; MEDIUM-PIC-LABEL: load_constant_pool:
 ; MEDIUM-PIC:       # %bb.0:
 ; MEDIUM-PIC-NEXT:    leaq _GLOBAL_OFFSET_TABLE_(%rip), %rax
-; MEDIUM-PIC-NEXT:    movabsq ${{\.LCPI.*}}@GOTOFF, %rcx
+; MEDIUM-PIC-NEXT:    movabsq ${{\.?LCPI[0-9]+_[0-9]+}}@GOTOFF, %rcx
 ; MEDIUM-PIC-NEXT:    addss (%rax,%rcx), %xmm0
 ; MEDIUM-PIC-NEXT:    retq
 ;
@@ -475,7 +445,7 @@ define dso_local float @load_constant_pool(float %x) #0 {
 ; LARGE-PIC-NEXT:    leaq .L11$pb(%rip), %rax
 ; LARGE-PIC-NEXT:    movabsq $_GLOBAL_OFFSET_TABLE_-.L11$pb, %rcx
 ; LARGE-PIC-NEXT:    addq %rax, %rcx
-; LARGE-PIC-NEXT:    movabsq ${{\.LCPI.*}}@GOTOFF, %rax
+; LARGE-PIC-NEXT:    movabsq ${{\.?LCPI[0-9]+_[0-9]+}}@GOTOFF, %rax
 ; LARGE-PIC-NEXT:    addss (%rcx,%rax), %xmm0
 ; LARGE-PIC-NEXT:    retq
   %a = fadd float %x, 1.0

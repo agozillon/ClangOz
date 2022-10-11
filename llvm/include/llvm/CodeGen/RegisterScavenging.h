@@ -70,6 +70,26 @@ class RegScavenger {
 public:
   RegScavenger() = default;
 
+  /// Record that \p Reg is in use at scavenging index \p FI. This is for
+  /// targets which need to directly manage the spilling process, and need to
+  /// update the scavenger's internal state.  It's expected this be called a
+  /// second time with \p Restore set to a non-null value, so that the
+  /// externally inserted restore instruction resets the scavenged slot
+  /// liveness when encountered.
+  void assignRegToScavengingIndex(int FI, Register Reg,
+                                  MachineInstr *Restore = nullptr) {
+    for (ScavengedInfo &Slot : Scavenged) {
+      if (Slot.FrameIndex == FI) {
+        assert(!Slot.Reg || Slot.Reg == Reg);
+        Slot.Reg = Reg;
+        Slot.Restore = Restore;
+        return;
+      }
+    }
+
+    llvm_unreachable("did not find scavenging index");
+  }
+
   /// Start tracking liveness from the begin of basic block \p MBB.
   void enterBasicBlock(MachineBasicBlock &MBB);
 
@@ -87,15 +107,6 @@ public:
   void forward(MachineBasicBlock::iterator I) {
     if (!Tracking && MBB->begin() != I) forward();
     while (MBBI != I) forward();
-  }
-
-  /// Invert the behavior of forward() on the current instruction (undo the
-  /// changes to the available registers made by forward()).
-  void unprocess();
-
-  /// Unprocess instructions until you reach the provided iterator.
-  void unprocess(MachineBasicBlock::iterator I) {
-    while (MBBI != I) unprocess();
   }
 
   /// Update internal register state and move MBB iterator backwards.
@@ -135,9 +146,8 @@ public:
 
   /// Query whether a frame index is a scavenging frame index.
   bool isScavengingFrameIndex(int FI) const {
-    for (SmallVectorImpl<ScavengedInfo>::const_iterator I = Scavenged.begin(),
-         IE = Scavenged.end(); I != IE; ++I)
-      if (I->FrameIndex == FI)
+    for (const ScavengedInfo &SI : Scavenged)
+      if (SI.FrameIndex == FI)
         return true;
 
     return false;
@@ -145,10 +155,9 @@ public:
 
   /// Get an array of scavenging frame indices.
   void getScavengingFrameIndices(SmallVectorImpl<int> &A) const {
-    for (SmallVectorImpl<ScavengedInfo>::const_iterator I = Scavenged.begin(),
-         IE = Scavenged.end(); I != IE; ++I)
-      if (I->FrameIndex >= 0)
-        A.push_back(I->FrameIndex);
+    for (const ScavengedInfo &I : Scavenged)
+      if (I.FrameIndex >= 0)
+        A.push_back(I.FrameIndex);
   }
 
   /// Make a register of the specific register class
@@ -203,10 +212,10 @@ private:
   void determineKillsAndDefs();
 
   /// Add all Reg Units that Reg contains to BV.
-  void addRegUnits(BitVector &BV, Register Reg);
+  void addRegUnits(BitVector &BV, MCRegister Reg);
 
   /// Remove all Reg Units that \p Reg contains from \p BV.
-  void removeRegUnits(BitVector &BV, Register Reg);
+  void removeRegUnits(BitVector &BV, MCRegister Reg);
 
   /// Return the candidate register that is unused for the longest after
   /// StartMI. UseMI is set to the instruction where the search stopped.
@@ -219,9 +228,6 @@ private:
 
   /// Initialize RegisterScavenger.
   void init(MachineBasicBlock &MBB);
-
-  /// Mark live-in registers of basic block as used.
-  void setLiveInsUsed(const MachineBasicBlock &MBB);
 
   /// Spill a register after position \p After and reload it before position
   /// \p UseMI.

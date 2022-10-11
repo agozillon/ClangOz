@@ -9,8 +9,6 @@ from lldbsuite.test import lldbutil
 
 class GlobalVariablesTestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
@@ -20,8 +18,8 @@ class GlobalVariablesTestCase(TestBase):
             self.source, '// Set break point at this line.')
         self.shlib_names = ["a"]
 
+    @skipIfDarwin # Chained Fixups
     @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr24764")
-    @expectedFailureAll(archs=["arm64e"]) # <rdar://problem/37773624>
     def test_without_process(self):
         """Test that static initialized variables can be inspected without
         process."""
@@ -37,7 +35,6 @@ class GlobalVariablesTestCase(TestBase):
                     substrs=['42'])
 
     @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr24764")
-    @expectedFailureNetBSD
     def test_c_global_variables(self):
         """Test 'frame variable --scope --no-args' which omits args and shows scopes."""
         self.build()
@@ -66,8 +63,7 @@ class GlobalVariablesTestCase(TestBase):
                              'stop reason = breakpoint'])
 
         # The breakpoint should have a hit count of 1.
-        self.expect("breakpoint list -f", BREAKPOINT_HIT_ONCE,
-                    substrs=[' resolved, hit count = 1'])
+        lldbutil.check_breakpoint(self, bpno = 1, expected_hit_count = 1)
 
         # Test that the statically initialized variable can also be
         # inspected *with* a process.

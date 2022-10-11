@@ -15,10 +15,29 @@ struct E {
 struct F { void operator==(F) const; };
 struct G { bool operator==(G) const = delete; }; // expected-note {{deleted here}}
 
+struct H1 {
+  bool operator==(const H1 &) const = default;
+  bool operator<(const H1 &) const = default; // expected-warning {{implicitly deleted}}
+  // expected-note@-1 {{because there is no viable three-way comparison function for 'H1'}}
+  void (*x)();
+};
+struct H2 {
+  bool operator==(const H2 &) const = default;
+  bool operator<(const H2 &) const = default; // expected-warning {{implicitly deleted}}
+  // expected-note@-1 {{because there is no viable three-way comparison function for 'H2'}}
+  void (H2::*x)();
+};
+struct H3 {
+  bool operator==(const H3 &) const = default;
+  bool operator<(const H3 &) const = default; // expected-warning {{implicitly deleted}}
+  // expected-note@-1 {{because there is no viable three-way comparison function for 'H3'}}
+  int H3::*x;
+};
+
 template<typename T> struct X {
   X();
   bool operator==(const X&) const = default; // #x expected-note 4{{deleted here}}
-  T t; // expected-note 3{{because there is no viable comparison function for member 't'}}
+  T t; // expected-note 3{{because there is no viable three-way comparison function for member 't'}}
        // expected-note@-1 {{because it would invoke a deleted comparison function for member 't'}}
 };
 
@@ -108,7 +127,7 @@ namespace Access {
     // Note: this function is not deleted. The selected operator== is
     // accessible. But the derived-to-base conversion involves an inaccessible
     // base class, which we don't check for until we define the function.
-    bool operator==(const Z&) const = default; // expected-error {{cannot cast 'const Access::Y' to its private base class 'const Access::X'}} expected-warning {{ambiguous}}
+    bool operator==(const Z&) const = default; // expected-error {{cannot cast 'const Y' to its private base class 'const X'}} expected-warning {{ambiguous}}
   };
   bool z = Z() == Z(); // expected-note {{first required here}}
 }

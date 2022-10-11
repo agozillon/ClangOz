@@ -29,13 +29,13 @@ import logging
 import os
 import platform
 import re
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 
 # Third-party modules
-import six
 import unittest2
 
 # LLDB Modules
@@ -52,6 +52,9 @@ def is_exe(fpath):
     """Returns true if fpath is an executable."""
     if fpath == None:
         return False
+    if sys.platform == 'win32':
+        if not fpath.endswith(".exe"):
+            fpath += ".exe"
     return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
 
 
@@ -269,21 +272,25 @@ def parseOptionsAndInitTestdirs():
     elif platform_system == 'Darwin':
         configuration.dsymutil = seven.get_command_output(
             'xcrun -find -toolchain default dsymutil')
-
-
-    # The lldb-dotest script produced by the CMake build passes in a path to a
-    # working FileCheck and yaml2obj binary. So does one specific Xcode
-    # project target. However, when invoking dotest.py directly, a valid
-    # --filecheck and --yaml2obj option needs to be given.
-    if args.filecheck:
-        configuration.filecheck = os.path.abspath(args.filecheck)
-
-    if args.yaml2obj:
-        configuration.yaml2obj = os.path.abspath(args.yaml2obj)
+    if args.llvm_tools_dir:
+        configuration.filecheck = shutil.which("FileCheck", path=args.llvm_tools_dir)
+        configuration.yaml2obj = shutil.which("yaml2obj", path=args.llvm_tools_dir)
 
     if not configuration.get_filecheck_path():
         logging.warning('No valid FileCheck executable; some tests may fail...')
-        logging.warning('(Double-check the --filecheck argument to dotest.py)')
+        logging.warning('(Double-check the --llvm-tools-dir argument to dotest.py)')
+
+    configuration.libcxx_include_dir = args.libcxx_include_dir
+    configuration.libcxx_library_dir = args.libcxx_library_dir
+    if args.libcxx_include_dir or args.libcxx_library_dir:
+        if args.lldb_platform_name:
+            logging.warning('Custom libc++ is not supported for remote runs: ignoring --libcxx arguments')
+        elif args.libcxx_include_dir and args.libcxx_library_dir:
+            configuration.libcxx_include_dir = args.libcxx_include_dir
+            configuration.libcxx_library_dir = args.libcxx_library_dir
+        else:
+            logging.error('Custom libc++ requires both --libcxx-include-dir and --libcxx-library-dir')
+            sys.exit(-1)
 
     if args.channels:
         lldbtest_config.channels = args.channels
@@ -299,6 +306,11 @@ def parseOptionsAndInitTestdirs():
         configuration.sdkroot = seven.get_command_output(
             'xcrun --sdk "%s" --show-sdk-path 2> /dev/null' %
             (args.apple_sdk))
+        if not configuration.sdkroot:
+            logging.error(
+                    'No SDK found with the name %s; aborting...',
+                    args.apple_sdk)
+            sys.exit(-1)
 
     if args.arch:
         configuration.arch = args.arch
@@ -356,7 +368,7 @@ def parseOptionsAndInitTestdirs():
 
     if args.executable:
         # lldb executable is passed explicitly
-        lldbtest_config.lldbExec = os.path.realpath(args.executable)
+        lldbtest_config.lldbExec = os.path.abspath(args.executable)
         if not is_exe(lldbtest_config.lldbExec):
             lldbtest_config.lldbExec = which(args.executable)
         if not is_exe(lldbtest_config.lldbExec):
@@ -364,12 +376,6 @@ def parseOptionsAndInitTestdirs():
                     '%s is not a valid executable to test; aborting...',
                     args.executable)
             sys.exit(-1)
-
-    if args.server and args.out_of_tree_debugserver:
-        logging.warning('Both --server and --out-of-tree-debugserver are set')
-
-    if args.server and not args.out_of_tree_debugserver:
-        os.environ['LLDB_DEBUGSERVER_PATH'] = args.server
 
     if args.excluded:
         for excl_file in args.excluded:
@@ -379,14 +385,6 @@ def parseOptionsAndInitTestdirs():
         if args.p.startswith('-'):
             usage(parser)
         configuration.regexp = args.p
-
-    if args.s:
-        configuration.sdir_name = args.s
-    else:
-        timestamp_started = datetime.datetime.now().strftime("%Y-%m-%d-%H_%M_%S")
-        configuration.sdir_name = os.path.join(os.getcwd(), timestamp_started)
-
-    configuration.session_file_format = args.session_file_format
 
     if args.t:
         os.environ['LLDB_COMMAND_TRACE'] = 'YES'
@@ -405,20 +403,6 @@ def parseOptionsAndInitTestdirs():
 
     if do_help:
         usage(parser)
-
-    # Reproducer arguments
-    if args.capture_path and args.replay_path:
-        logging.error('Cannot specify both a capture and a replay path.')
-        sys.exit(-1)
-
-    if args.capture_path:
-        configuration.capture_path = args.capture_path
-
-    if args.replay_path:
-        configuration.replay_path = args.replay_path
-
-    # rerun-related arguments
-    configuration.rerun_all_issues = args.rerun_all_issues
 
     if args.lldb_platform_name:
         configuration.lldb_platform_name = args.lldb_platform_name
@@ -453,6 +437,18 @@ def parseOptionsAndInitTestdirs():
 
     lldbtest_config.codesign_identity = args.codesign_identity
 
+def registerFaulthandler():
+    try:
+        import faulthandler
+    except ImportError:
+        # faulthandler is not available until python3
+        return
+
+    faulthandler.enable()
+    # faulthandler.register is not available on Windows.
+    if getattr(faulthandler, 'register', None):
+        faulthandler.register(signal.SIGTERM, chain=True)
+
 def setupSysPath():
     """
     Add LLDB.framework/Resources/Python to the search paths for modules.
@@ -482,6 +478,7 @@ def setupSysPath():
     pluginPath = os.path.join(scriptPath, 'plugins')
     toolsLLDBVSCode = os.path.join(scriptPath, 'tools', 'lldb-vscode')
     toolsLLDBServerPath = os.path.join(scriptPath, 'tools', 'lldb-server')
+    intelpt = os.path.join(scriptPath, 'tools', 'intelpt')
 
     # Insert script dir, plugin dir and lldb-server dir to the sys.path.
     sys.path.insert(0, pluginPath)
@@ -489,8 +486,11 @@ def setupSysPath():
     # "import lldb_vscode_testcase" from the VSCode tests
     sys.path.insert(0, toolsLLDBVSCode)
     # Adding test/tools/lldb-server to the path makes it easy
-    sys.path.insert(0, toolsLLDBServerPath)
     # to "import lldbgdbserverutils" from the lldb-server tests
+    sys.path.insert(0, toolsLLDBServerPath)
+    # Adding test/tools/intelpt to the path makes it easy
+    # to "import intelpt_testcase" from the lldb-server tests
+    sys.path.insert(0, intelpt)
 
     # This is the root of the lldb git/svn checkout
     # When this changes over to a package instead of a standalone script, this
@@ -523,13 +523,6 @@ def setupSysPath():
         print("The 'lldb' executable cannot be located.  Some of the tests may not be run as a result.")
         sys.exit(-1)
 
-    # confusingly, this is the "bin" directory
-    lldbLibDir = os.path.dirname(lldbtest_config.lldbExec)
-    os.environ["LLDB_LIB_DIR"] = lldbLibDir
-    lldbImpLibDir = configuration.lldb_libs_dir
-    os.environ["LLDB_IMPLIB_DIR"] = lldbImpLibDir
-    print("LLDB library dir:", os.environ["LLDB_LIB_DIR"])
-    print("LLDB import library dir:", os.environ["LLDB_IMPLIB_DIR"])
     os.system('%s -v' % lldbtest_config.lldbExec)
 
     lldbDir = os.path.dirname(lldbtest_config.lldbExec)
@@ -544,70 +537,33 @@ def setupSysPath():
             configuration.skip_categories.append("lldb-vscode")
 
     lldbPythonDir = None  # The directory that contains 'lldb/__init__.py'
-    if not configuration.lldb_framework_path and os.path.exists(os.path.join(lldbLibDir, "LLDB.framework")):
-        configuration.lldb_framework_path = os.path.join(lldbLibDir, "LLDB.framework")
-    if configuration.lldb_framework_path:
-        lldbtest_config.lldb_framework_path = configuration.lldb_framework_path
-        candidatePath = os.path.join(
-            configuration.lldb_framework_path, 'Resources', 'Python')
-        if os.path.isfile(os.path.join(candidatePath, 'lldb/__init__.py')):
-            lldbPythonDir = candidatePath
-        if not lldbPythonDir:
-            print(
-                'Resources/Python/lldb/__init__.py was not found in ' +
-                configuration.lldb_framework_path)
-            sys.exit(-1)
-    else:
-        # If our lldb supports the -P option, use it to find the python path:
-        init_in_python_dir = os.path.join('lldb', '__init__.py')
 
-        lldb_dash_p_result = subprocess.check_output(
-            [lldbtest_config.lldbExec, "-P"], stderr=subprocess.STDOUT, universal_newlines=True)
+    # If our lldb supports the -P option, use it to find the python path:
+    lldb_dash_p_result = subprocess.check_output([lldbtest_config.lldbExec, "-P"], universal_newlines=True)
+    if lldb_dash_p_result:
+        for line in lldb_dash_p_result.splitlines():
+            if os.path.isdir(line) and os.path.exists(os.path.join(line, 'lldb', '__init__.py')):
+                lldbPythonDir = line
+                break
 
-        if lldb_dash_p_result and not lldb_dash_p_result.startswith(
-                ("<", "lldb: invalid option:")) and not lldb_dash_p_result.startswith("Traceback"):
-            lines = lldb_dash_p_result.splitlines()
-
-            # Workaround for readline vs libedit issue on FreeBSD.  If stdout
-            # is not a terminal Python executes
-            #     rl_variable_bind ("enable-meta-key", "off");
-            # This produces a warning with FreeBSD's libedit because the
-            # enable-meta-key variable is unknown.  Not an issue on Apple
-            # because cpython commit f0ab6f9f0603 added a #ifndef __APPLE__
-            # around the call.  See http://bugs.python.org/issue19884 for more
-            # information.  For now we just discard the warning output.
-            if len(lines) >= 1 and lines[0].startswith(
-                    "bind: Invalid command"):
-                lines.pop(0)
-
-            # Taking the last line because lldb outputs
-            # 'Cannot read termcap database;\nusing dumb terminal settings.\n'
-            # before the path
-            if len(lines) >= 1 and os.path.isfile(
-                    os.path.join(lines[-1], init_in_python_dir)):
-                lldbPythonDir = lines[-1]
-                if "freebsd" in sys.platform or "linux" in sys.platform:
-                    os.environ['LLDB_LIB_DIR'] = os.path.join(
-                        lldbPythonDir, '..', '..')
-
-        if not lldbPythonDir:
-            print(
-                "Unable to load lldb extension module.  Possible reasons for this include:")
-            print("  1) LLDB was built with LLDB_ENABLE_PYTHON=0")
-            print(
-                "  2) PYTHONPATH and PYTHONHOME are not set correctly.  PYTHONHOME should refer to")
-            print(
-                "     the version of Python that LLDB built and linked against, and PYTHONPATH")
-            print(
-                "     should contain the Lib directory for the same python distro, as well as the")
-            print("     location of LLDB\'s site-packages folder.")
-            print(
-                "  3) A different version of Python than that which was built against is exported in")
-            print("     the system\'s PATH environment variable, causing conflicts.")
-            print(
-                "  4) The executable '%s' could not be found.  Please check " %
-                lldbtest_config.lldbExec)
-            print("     that it exists and is executable.")
+    if not lldbPythonDir:
+        print(
+            "Unable to load lldb extension module.  Possible reasons for this include:")
+        print("  1) LLDB was built with LLDB_ENABLE_PYTHON=0")
+        print(
+            "  2) PYTHONPATH and PYTHONHOME are not set correctly.  PYTHONHOME should refer to")
+        print(
+            "     the version of Python that LLDB built and linked against, and PYTHONPATH")
+        print(
+            "     should contain the Lib directory for the same python distro, as well as the")
+        print("     location of LLDB\'s site-packages folder.")
+        print(
+            "  3) A different version of Python than that which was built against is exported in")
+        print("     the system\'s PATH environment variable, causing conflicts.")
+        print(
+            "  4) The executable '%s' could not be found.  Please check " %
+            lldbtest_config.lldbExec)
+        print("     that it exists and is executable.")
 
     if lldbPythonDir:
         lldbPythonDir = os.path.normpath(lldbPythonDir)
@@ -620,6 +576,9 @@ def setupSysPath():
             lldbPythonDir = before + "LLDB.framework" + after
 
         lldbPythonDir = os.path.abspath(lldbPythonDir)
+
+        if "freebsd" in sys.platform or "linux" in sys.platform:
+            os.environ['LLDB_LIB_DIR'] = os.path.join(lldbPythonDir, '..', '..')
 
         # If tests need to find LLDB_FRAMEWORK, now they can do it
         os.environ["LLDB_FRAMEWORK"] = os.path.dirname(
@@ -766,15 +725,6 @@ def getVersionForSDK(sdk):
     return ver
 
 
-def setDefaultTripleForPlatform():
-    if configuration.lldb_platform_name == 'ios-simulator':
-        triple_str = 'x86_64-apple-ios%s' % (
-            getVersionForSDK('iphonesimulator'))
-        os.environ['TRIPLE'] = triple_str
-        return {'TRIPLE': triple_str}
-    return {}
-
-
 def checkCompiler():
     # Add some intervention here to sanity check that the compiler requested is sane.
     # If found not to be an executable program, we abort.
@@ -803,12 +753,10 @@ def canRunLibcxxTests():
         return True, "libc++ always present"
 
     if platform == "linux":
-        if os.path.isdir("/usr/include/c++/v1"):
-            return True, "Headers found, let's hope they work"
         with tempfile.NamedTemporaryFile() as f:
             cmd = [configuration.compiler, "-xc++", "-stdlib=libc++", "-o", f.name, "-"]
             p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-            _, stderr = p.communicate("#include <algorithm>\nint main() {}")
+            _, stderr = p.communicate("#include <cassert>\nint main() {}")
             if not p.returncode:
                 return True, "Compiling with -stdlib=libc++ works"
             return False, "Compiling with -stdlib=libc++ fails with the error: %s" % stderr
@@ -821,7 +769,8 @@ def checkLibcxxSupport():
         return # libc++ supported
     if "libc++" in configuration.categories_list:
         return # libc++ category explicitly requested, let it run.
-    print("Libc++ tests will not be run because: " + reason)
+    if configuration.verbose:
+        print("libc++ tests will not be run because: " + reason)
     configuration.skip_categories.append("libc++")
 
 def canRunLibstdcxxTests():
@@ -840,7 +789,8 @@ def checkLibstdcxxSupport():
         return # libstdcxx supported
     if "libstdcxx" in configuration.categories_list:
         return # libstdcxx category explicitly requested, let it run.
-    print("libstdcxx tests will not be run because: " + reason)
+    if configuration.verbose:
+        print("libstdcxx tests will not be run because: " + reason)
     configuration.skip_categories.append("libstdcxx")
 
 def canRunWatchpointTests():
@@ -858,6 +808,10 @@ def canRunWatchpointTests():
         except subprocess.CalledProcessError:
             pass
         return False, "security.models.extensions.user_set_dbregs disabled"
+    elif platform == "freebsd" and configuration.arch == "aarch64":
+        import lldb
+        if lldb.SBPlatform.GetHostPlatform().GetOSMajorVersion() < 13:
+            return False, "Watchpoint support on arm64 requires FreeBSD 13.0"
     return True, "watchpoint support available"
 
 def checkWatchpointSupport():
@@ -866,24 +820,57 @@ def checkWatchpointSupport():
         return # watchpoints supported
     if "watchpoint" in configuration.categories_list:
         return # watchpoint category explicitly requested, let it run.
-    print("watchpoint tests will not be run because: " + reason)
+    if configuration.verbose:
+        print("watchpoint tests will not be run because: " + reason)
     configuration.skip_categories.append("watchpoint")
 
-def checkDebugInfoSupport():
-    import lldb
+def checkObjcSupport():
+    from lldbsuite.test import lldbplatformutil
 
-    platform = lldb.selected_platform.GetTriple().split('-')[2]
+    if not lldbplatformutil.platformIsDarwin():
+        if configuration.verbose:
+            print("objc tests will be skipped because of unsupported platform")
+        configuration.skip_categories.append("objc")
+
+def checkDebugInfoSupport():
+    from lldbsuite.test import lldbplatformutil
+
+    platform = lldbplatformutil.getPlatform()
     compiler = configuration.compiler
-    skipped = []
     for cat in test_categories.debug_info_categories:
         if cat in configuration.categories_list:
             continue # Category explicitly requested, let it run.
         if test_categories.is_supported_on_platform(cat, platform, compiler):
             continue
         configuration.skip_categories.append(cat)
-        skipped.append(cat)
-    if skipped:
-        print("Skipping following debug info categories:", skipped)
+
+def checkDebugServerSupport():
+    from lldbsuite.test import lldbplatformutil
+    import lldb
+
+    skip_msg = "Skipping %s tests, as they are not compatible with remote testing on this platform"
+    if lldbplatformutil.platformIsDarwin():
+        configuration.skip_categories.append("llgs")
+        if configuration.lldb_platform_name:
+            # <rdar://problem/34539270>
+            configuration.skip_categories.append("debugserver")
+            if configuration.verbose:
+                print(skip_msg%"debugserver");
+    else:
+        configuration.skip_categories.append("debugserver")
+        if configuration.lldb_platform_name and lldbplatformutil.getPlatform() == "windows":
+            configuration.skip_categories.append("llgs")
+            if configuration.verbose:
+                print(skip_msg%"lldb-server");
+
+
+def checkForkVForkSupport():
+    from lldbsuite.test import lldbplatformutil
+
+    platform = lldbplatformutil.getPlatform()
+    if platform not in ["freebsd", "linux", "netbsd"]:
+        configuration.skip_categories.append("fork")
+
 
 def run_suite():
     # On MacOS X, check to make sure that domain for com.apple.DebugSymbols defaults
@@ -897,23 +884,25 @@ def run_suite():
     #
     parseOptionsAndInitTestdirs()
 
+    # Print a stack trace if the test hangs or is passed SIGTERM.
+    registerFaulthandler()
+
     setupSysPath()
 
-    import lldbconfig
-    if configuration.capture_path or configuration.replay_path:
-        lldbconfig.INITIALIZE = False
     import lldb
+    lldb.SBDebugger.Initialize()
+    lldb.SBDebugger.PrintStackTraceOnError()
 
-    if configuration.capture_path:
-        lldb.SBReproducer.Capture(configuration.capture_path)
-        lldb.SBReproducer.SetAutoGenerate(True)
-    elif configuration.replay_path:
-        lldb.SBReproducer.PassiveReplay(configuration.replay_path)
-
-    if not lldbconfig.INITIALIZE:
-        lldb.SBDebugger.Initialize()
+    checkLibcxxSupport()
+    checkLibstdcxxSupport()
+    checkWatchpointSupport()
+    checkDebugInfoSupport()
+    checkDebugServerSupport()
+    checkObjcSupport()
+    checkForkVForkSupport()
 
     # Use host platform by default.
+    lldb.remote_platform = None
     lldb.selected_platform = lldb.SBPlatform.GetHostPlatform()
 
     # Now we can also import lldbutil
@@ -924,6 +913,7 @@ def run_suite():
               (configuration.lldb_platform_name))
         lldb.remote_platform = lldb.SBPlatform(
             configuration.lldb_platform_name)
+        lldb.selected_platform = lldb.remote_platform
         if not lldb.remote_platform.IsValid():
             print(
                 "error: unable to create the LLDB platform named '%s'." %
@@ -947,14 +937,6 @@ def run_suite():
         else:
             configuration.lldb_platform_url = None
 
-    platform_changes = setDefaultTripleForPlatform()
-    first = True
-    for key in platform_changes:
-        if first:
-            print("Environment variables setup for platform support:")
-            first = False
-        print("%s = %s" % (key, platform_changes[key]))
-
     if configuration.lldb_platform_working_dir:
         print("Setting remote platform working directory to '%s'..." %
               (configuration.lldb_platform_working_dir))
@@ -977,25 +959,7 @@ def run_suite():
     # Note that it's not dotest's job to clean this directory.
     lldbutil.mkdir_p(configuration.test_build_dir)
 
-    target_platform = lldb.selected_platform.GetTriple().split('-')[2]
-
-    checkLibcxxSupport()
-    checkLibstdcxxSupport()
-    checkWatchpointSupport()
-    checkDebugInfoSupport()
-
-    # Don't do debugserver tests on anything except OS X.
-    configuration.dont_do_debugserver_test = (
-            "linux" in target_platform or
-            "freebsd" in target_platform or
-            "netbsd" in target_platform or
-            "windows" in target_platform)
-
-    # Don't do lldb-server (llgs) tests on anything except Linux and Windows.
-    configuration.dont_do_llgs_test = not (
-            "linux" in target_platform or
-            "netbsd" in target_platform or
-            "windows" in target_platform)
+    print("Skipping the following test categories: {}".format(configuration.skip_categories))
 
     for testdir in configuration.testdirs:
         for (dirpath, dirnames, filenames) in os.walk(testdir):
@@ -1007,14 +971,6 @@ def run_suite():
 
     # Install the control-c handler.
     unittest2.signals.installHandler()
-
-    lldbutil.mkdir_p(configuration.sdir_name)
-    os.environ["LLDB_SESSION_DIRNAME"] = configuration.sdir_name
-
-    sys.stderr.write(
-        "\nSession logs for test failures/errors/unexpected successes"
-        " will go into directory '%s'\n" %
-        configuration.sdir_name)
 
     #
     # Invoke the default TextTestRunner to run the test suite
@@ -1039,6 +995,10 @@ def run_suite():
             "Collected %d test%s\n\n" %
             (configuration.suite.countTestCases(),
              configuration.suite.countTestCases() != 1 and "s" or ""))
+
+    if configuration.suite.countTestCases() == 0:
+        logging.error("did not discover any matching tests")
+        exitTestSuite(1)
 
     # Invoke the test runner.
     if configuration.count == 1:
@@ -1065,8 +1025,7 @@ def run_suite():
     if configuration.sdir_has_content and configuration.verbose:
         sys.stderr.write(
             "Session logs for test failures/errors/unexpected successes"
-            " can be found in directory '%s'\n" %
-            configuration.sdir_name)
+            " can be found in the test build directory\n")
 
     if configuration.use_categories and len(
             configuration.failures_per_category) > 0:

@@ -258,6 +258,27 @@ __isl_give MULTI(BASE) *FN(FN(MULTI(BASE),set),BASE)(
 	return FN(MULTI(BASE),set_at)(multi, pos, el);
 }
 
+/* Return the base expressions of "multi" as a list.
+ */
+__isl_give LIST(EL) *FN(MULTI(BASE),get_list)(
+	__isl_keep MULTI(BASE) *multi)
+{
+	isl_size n;
+	int i;
+	LIST(EL) *list;
+
+	n = FN(MULTI(BASE),size)(multi);
+	if (n < 0)
+		return NULL;
+	list = FN(LIST(EL),alloc)(FN(MULTI(BASE),get_ctx(multi)), n);
+	for (i = 0; i < n; ++i) {
+		EL *el = FN(MULTI(BASE),get_at)(multi, i);
+		list = FN(LIST(EL),add)(list, el);
+	}
+
+	return list;
+}
+
 /* Reset the space of "multi".  This function is called from isl_pw_templ.c
  * and doesn't know if the space of an element object is represented
  * directly or through its domain.  It therefore passes along both,
@@ -456,6 +477,15 @@ error:
 	isl_space_free(space);
 	FN(LIST(EL),free)(list);
 	return NULL;
+}
+
+/* This function performs the same operation as isl_multi_*_from_*_list,
+ * but is considered as a function on an isl_space when exported.
+ */
+__isl_give MULTI(BASE) *FN(isl_space_multi,BASE)(__isl_take isl_space *space,
+	__isl_take LIST(EL) *list)
+{
+	return FN(FN(MULTI(BASE),from),LIST(BASE))(space, list);
 }
 
 __isl_give MULTI(BASE) *FN(MULTI(BASE),drop_dims)(
@@ -745,6 +775,7 @@ static __isl_give MULTI(BASE) *FN(MULTI(BASE),bin_op)(
 {
 	int i;
 
+	FN(MULTI(BASE),align_params_bin)(&multi1, &multi2);
 	multi1 = FN(MULTI(BASE),cow)(multi1);
 	if (FN(MULTI(BASE),check_equal_space)(multi1, multi2) < 0)
 		goto error;

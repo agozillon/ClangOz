@@ -12,12 +12,12 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/DebugInfo/DWARF/DWARFDataExtractor.h"
+#include "llvm/DebugInfo/DWARF/DWARFDie.h"
 #include "llvm/DebugInfo/DWARF/DWARFFormValue.h"
-#include "llvm/DebugInfo/DWARF/DWARFRelocMap.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
-#include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cassert>
@@ -323,21 +323,21 @@ parseV5DirFileTables(const DWARFDataExtractor &DebugLineData,
         FileEntry.Source = Value;
         break;
       case DW_LNCT_directory_index:
-        FileEntry.DirIdx = Value.getAsUnsignedConstant().getValue();
+        FileEntry.DirIdx = Value.getAsUnsignedConstant().value();
         break;
       case DW_LNCT_timestamp:
-        FileEntry.ModTime = Value.getAsUnsignedConstant().getValue();
+        FileEntry.ModTime = Value.getAsUnsignedConstant().value();
         break;
       case DW_LNCT_size:
-        FileEntry.Length = Value.getAsUnsignedConstant().getValue();
+        FileEntry.Length = Value.getAsUnsignedConstant().value();
         break;
       case DW_LNCT_MD5:
-        if (!Value.getAsBlock() || Value.getAsBlock().getValue().size() != 16)
+        if (!Value.getAsBlock() || Value.getAsBlock().value().size() != 16)
           return createStringError(
               errc::invalid_argument,
               "failed to parse file entry because the MD5 hash is invalid");
-        std::uninitialized_copy_n(Value.getAsBlock().getValue().begin(), 16,
-                                  FileEntry.Checksum.Bytes.begin());
+        std::uninitialized_copy_n(Value.getAsBlock().value().begin(), 16,
+                                  FileEntry.Checksum.begin());
         break;
       default:
         break;
@@ -597,6 +597,10 @@ Expected<const DWARFDebugLine::LineTable *> DWARFDebugLine::getOrParseLineTable(
   return LT;
 }
 
+void DWARFDebugLine::clearLineTable(uint64_t Offset) {
+  LineTableMap.erase(Offset);
+}
+
 static StringRef getOpcodeName(uint8_t Opcode, uint8_t OpcodeBase) {
   assert(Opcode != 0);
   if (Opcode < OpcodeBase)
@@ -783,6 +787,18 @@ Error DWARFDebugLine::LineTable::parse(
     *OS << '\n';
     Row::dumpTableHeader(*OS, /*Indent=*/Verbose ? 12 : 0);
   }
+  bool TombstonedAddress = false;
+  auto EmitRow = [&] {
+    if (!TombstonedAddress) {
+      if (Verbose) {
+        *OS << "\n";
+        OS->indent(12);
+      }
+      if (OS)
+        State.Row.dump(*OS);
+      State.appendRowToMatrix();
+    }
+  };
   while (*OffsetPtr < EndOffset) {
     DataExtractor::Cursor Cursor(*OffsetPtr);
 
@@ -834,13 +850,7 @@ Error DWARFDebugLine::LineTable::parse(
         // No need to test the Cursor is valid here, since it must be to get
         // into this code path - if it were invalid, the default case would be
         // followed.
-        if (Verbose) {
-          *OS << "\n";
-          OS->indent(12);
-        }
-        if (OS)
-          State.Row.dump(*OS);
-        State.appendRowToMatrix();
+        EmitRow();
         State.resetRowAndSequence();
         break;
 
@@ -882,13 +892,20 @@ Error DWARFDebugLine::LineTable::parse(
             State.Row.Address.Address = TableData.getRelocatedAddress(
                 Cursor, &State.Row.Address.SectionIndex);
 
+            uint64_t Tombstone =
+                dwarf::computeTombstoneAddress(OpcodeAddressSize);
+            TombstonedAddress = State.Row.Address.Address == Tombstone;
+
             // Restore the address size if the extractor already had it.
             if (ExtractorAddressSize != 0)
               TableData.setAddressSize(ExtractorAddressSize);
           }
 
-          if (Cursor && Verbose)
-            *OS << format(" (0x%16.16" PRIx64 ")", State.Row.Address.Address);
+          if (Cursor && Verbose) {
+            *OS << " (";
+            DWARFFormValue::dumpAddress(*OS, OpcodeAddressSize, State.Row.Address.Address);
+            *OS << ')';
+          }
         }
         break;
 
@@ -981,13 +998,7 @@ Error DWARFDebugLine::LineTable::parse(
       case DW_LNS_copy:
         // Takes no arguments. Append a row to the matrix using the
         // current values of the state-machine registers.
-        if (Verbose) {
-          *OS << "\n";
-          OS->indent(12);
-        }
-        if (OS)
-          State.Row.dump(*OS);
-        State.appendRowToMatrix();
+        EmitRow();
         break;
 
       case DW_LNS_advance_pc:
@@ -1152,15 +1163,9 @@ Error DWARFDebugLine::LineTable::parse(
       ParsingState::AddrAndLineDelta Delta =
           State.handleSpecialOpcode(Opcode, OpcodeOffset);
 
-      if (Verbose) {
-        *OS << "address += " << Delta.Address << ",  line += " << Delta.Line
-            << "\n";
-        OS->indent(12);
-      }
-      if (OS)
-        State.Row.dump(*OS);
-
-      State.appendRowToMatrix();
+      if (Verbose)
+        *OS << "address += " << Delta.Address << ",  line += " << Delta.Line;
+      EmitRow();
       *OffsetPtr = Cursor.tell();
     }
 
@@ -1330,8 +1335,8 @@ Optional<StringRef> DWARFDebugLine::LineTable::getSourceByIndex(uint64_t FileInd
   if (Kind == FileLineInfoKind::None || !Prologue.hasFileAtIndex(FileIndex))
     return None;
   const FileNameEntry &Entry = Prologue.getFileNameEntry(FileIndex);
-  if (Optional<const char *> source = Entry.Source.getAsCString())
-    return StringRef(*source);
+  if (auto E = dwarf::toString(Entry.Source))
+    return StringRef(*E);
   return None;
 }
 
@@ -1349,10 +1354,10 @@ bool DWARFDebugLine::Prologue::getFileNameByIndex(
   if (Kind == FileLineInfoKind::None || !hasFileAtIndex(FileIndex))
     return false;
   const FileNameEntry &Entry = getFileNameEntry(FileIndex);
-  Optional<const char *> Name = Entry.Name.getAsCString();
-  if (!Name)
+  auto E = dwarf::toString(Entry.Name);
+  if (!E)
     return false;
-  StringRef FileName = *Name;
+  StringRef FileName = *E;
   if (Kind == FileLineInfoKind::RawValue ||
       isPathAbsoluteOnWindowsOrPosix(FileName)) {
     Result = std::string(FileName);
@@ -1371,17 +1376,18 @@ bool DWARFDebugLine::Prologue::getFileNameByIndex(
     // relative names.
     if ((Entry.DirIdx != 0 || Kind != FileLineInfoKind::RelativeFilePath) &&
         Entry.DirIdx < IncludeDirectories.size())
-      IncludeDir = IncludeDirectories[Entry.DirIdx].getAsCString().getValue();
+      IncludeDir = dwarf::toStringRef(IncludeDirectories[Entry.DirIdx]);
   } else {
     if (0 < Entry.DirIdx && Entry.DirIdx <= IncludeDirectories.size())
-      IncludeDir =
-          IncludeDirectories[Entry.DirIdx - 1].getAsCString().getValue();
+      IncludeDir = dwarf::toStringRef(IncludeDirectories[Entry.DirIdx - 1]);
   }
 
-  // For absolute paths only, include the compilation directory of compile unit.
-  // We know that FileName is not absolute, the only way to have an absolute
-  // path at this point would be if IncludeDir is absolute.
-  if (Kind == FileLineInfoKind::AbsoluteFilePath && !CompDir.empty() &&
+  // For absolute paths only, include the compilation directory of compile unit,
+  // unless v5 DirIdx == 0 (IncludeDir indicates the compilation directory). We
+  // know that FileName is not absolute, the only way to have an absolute path
+  // at this point would be if IncludeDir is absolute.
+  if (Kind == FileLineInfoKind::AbsoluteFilePath &&
+      (getVersion() < 5 || Entry.DirIdx != 0) && !CompDir.empty() &&
       !isPathAbsoluteOnWindowsOrPosix(IncludeDir))
     sys::path::append(FilePath, Style, CompDir);
 
@@ -1418,25 +1424,20 @@ bool DWARFDebugLine::LineTable::getFileLineInfoForAddress(
 // Therefore, collect up handles on all the Units that point into the
 // line-table section.
 static DWARFDebugLine::SectionParser::LineToUnitMap
-buildLineToUnitMap(DWARFDebugLine::SectionParser::cu_range CUs,
-                   DWARFDebugLine::SectionParser::tu_range TUs) {
+buildLineToUnitMap(DWARFUnitVector::iterator_range Units) {
   DWARFDebugLine::SectionParser::LineToUnitMap LineToUnit;
-  for (const auto &CU : CUs)
-    if (auto CUDIE = CU->getUnitDIE())
+  for (const auto &U : Units)
+    if (auto CUDIE = U->getUnitDIE())
       if (auto StmtOffset = toSectionOffset(CUDIE.find(DW_AT_stmt_list)))
-        LineToUnit.insert(std::make_pair(*StmtOffset, &*CU));
-  for (const auto &TU : TUs)
-    if (auto TUDIE = TU->getUnitDIE())
-      if (auto StmtOffset = toSectionOffset(TUDIE.find(DW_AT_stmt_list)))
-        LineToUnit.insert(std::make_pair(*StmtOffset, &*TU));
+        LineToUnit.insert(std::make_pair(*StmtOffset, &*U));
   return LineToUnit;
 }
 
-DWARFDebugLine::SectionParser::SectionParser(DWARFDataExtractor &Data,
-                                             const DWARFContext &C,
-                                             cu_range CUs, tu_range TUs)
+DWARFDebugLine::SectionParser::SectionParser(
+    DWARFDataExtractor &Data, const DWARFContext &C,
+    DWARFUnitVector::iterator_range Units)
     : DebugLineData(Data), Context(C) {
-  LineToUnit = buildLineToUnitMap(CUs, TUs);
+  LineToUnit = buildLineToUnitMap(Units);
   if (!DebugLineData.isValidOffset(Offset))
     Done = true;
 }

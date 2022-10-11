@@ -8,6 +8,8 @@
 
 #include "ClangExpressionSourceCode.h"
 
+#include "ClangExpressionUtil.h"
+
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
@@ -27,10 +29,12 @@
 #include "lldb/Target/StackFrame.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/StreamString.h"
+#include "lldb/lldb-forward.h"
 
 using namespace lldb_private;
 
 #define PREFIX_NAME "<lldb wrapper prefix>"
+#define SUFFIX_NAME "<lldb wrapper suffix>"
 
 const llvm::StringRef ClangExpressionSourceCode::g_prefix_file_name = PREFIX_NAME;
 
@@ -73,6 +77,9 @@ extern "C"
 }
 )";
 
+const char *ClangExpressionSourceCode::g_expression_suffix =
+    "\n;\n#line 1 \"" SUFFIX_NAME "\"\n";
+
 namespace {
 
 class AddMacroState {
@@ -84,8 +91,7 @@ class AddMacroState {
 
 public:
   AddMacroState(const FileSpec &current_file, const uint32_t current_file_line)
-      : m_state(CURRENT_FILE_NOT_YET_PUSHED), m_current_file(current_file),
-        m_current_file_line(current_file_line) {}
+      : m_current_file(current_file), m_current_file_line(current_file_line) {}
 
   void StartFile(const FileSpec &file) {
     m_file_stack.push_back(file);
@@ -123,7 +129,7 @@ public:
 
 private:
   std::vector<FileSpec> m_file_stack;
-  State m_state;
+  State m_state = CURRENT_FILE_NOT_YET_PUSHED;
   FileSpec m_current_file;
   uint32_t m_current_file_line;
 };
@@ -180,7 +186,7 @@ lldb_private::ClangExpressionSourceCode::ClangExpressionSourceCode(
   // containing only the user expression. This will hide our wrapper code
   // from the user when we render diagnostics with Clang.
   m_start_marker = "#line 1 \"" + filename.str() + "\"\n";
-  m_end_marker = "\n;\n#line 1 \"<lldb wrapper suffix>\"\n";
+  m_end_marker = g_expression_suffix;
 }
 
 namespace {
@@ -197,6 +203,34 @@ public:
     return m_tokens.find(token) != m_tokens.end();
   }
 };
+
+// If we're evaluating from inside a lambda that captures a 'this' pointer,
+// add a "using" declaration to 'stream' for each capture used in the
+// expression (tokenized by 'verifier').
+//
+// If no 'this' capture exists, generate no using declarations. Instead
+// capture lookups will get resolved by the same mechanism as class member
+// variable lookup. That's because Clang generates an unnamed structure
+// representing the lambda closure whose members are the captured variables.
+void AddLambdaCaptureDecls(StreamString &stream, StackFrame *frame,
+                           TokenVerifier const &verifier) {
+  assert(frame);
+
+  if (auto thisValSP = ClangExpressionUtil::GetLambdaValueObject(frame)) {
+    uint32_t numChildren = thisValSP->GetNumChildren();
+    for (uint32_t i = 0; i < numChildren; ++i) {
+      auto childVal = thisValSP->GetChildAtIndex(i, true);
+      ConstString childName(childVal ? childVal->GetName() : ConstString(""));
+
+      if (!childName.IsEmpty() && verifier.hasToken(childName.GetStringRef()) &&
+          childName != "this") {
+        stream.Printf("using $__lldb_local_vars::%s;\n",
+                      childName.GetCString());
+      }
+    }
+  }
+}
+
 } // namespace
 
 TokenVerifier::TokenVerifier(std::string body) {
@@ -221,7 +255,7 @@ TokenVerifier::TokenVerifier(std::string body) {
   clang::SourceManager SM(diags, file_mgr);
   auto buf = llvm::MemoryBuffer::getMemBuffer(body);
 
-  FileID FID = SM.createFileID(clang::SourceManager::Unowned, buf.get());
+  FileID FID = SM.createFileID(buf->getMemBufferRef());
 
   // Let's just enable the latest ObjC and C++ which should get most tokens
   // right.
@@ -231,7 +265,7 @@ TokenVerifier::TokenVerifier(std::string body) {
   Opts.CPlusPlus17 = true;
   Opts.LineComment = true;
 
-  Lexer lex(FID, buf.get(), SM, Opts);
+  Lexer lex(FID, buf->getMemBufferRef(), SM, Opts);
 
   Token token;
   bool exit = false;
@@ -261,16 +295,24 @@ TokenVerifier::TokenVerifier(std::string body) {
   }
 }
 
-void ClangExpressionSourceCode::AddLocalVariableDecls(
-    const lldb::VariableListSP &var_list_sp, StreamString &stream,
-    const std::string &expr) const {
+void ClangExpressionSourceCode::AddLocalVariableDecls(StreamString &stream,
+                                                      const std::string &expr,
+                                                      StackFrame *frame) const {
+  assert(frame);
   TokenVerifier tokens(expr);
+
+  lldb::VariableListSP var_list_sp = frame->GetInScopeVariableList(false, true);
 
   for (size_t i = 0; i < var_list_sp->GetSize(); i++) {
     lldb::VariableSP var_sp = var_list_sp->GetVariableAtIndex(i);
 
     ConstString var_name = var_sp->GetName();
 
+    if (var_name == "this" && m_wrap_kind == WrapKind::CppMemberFunction) {
+      AddLambdaCaptureDecls(stream, frame, tokens);
+
+      continue;
+    }
 
     // We can check for .block_descriptor w/o checking for langauge since this
     // is not a valid identifier in either C or C++.
@@ -285,9 +327,6 @@ void ClangExpressionSourceCode::AddLocalVariableDecls(
     if ((var_name == "self" || var_name == "_cmd") && is_objc)
       continue;
 
-    if (var_name == "this" && m_wrap_kind == WrapKind::CppMemberFunction)
-      continue;
-
     stream.Printf("using $__lldb_local_vars::%s;\n", var_name.AsCString());
   }
 }
@@ -297,6 +336,7 @@ bool ClangExpressionSourceCode::GetText(
     bool force_add_all_locals, llvm::ArrayRef<std::string> modules) const {
   const char *target_specific_defines = "typedef signed char BOOL;\n";
   std::string module_macros;
+  llvm::raw_string_ostream module_macros_stream(module_macros);
 
   Target *target = exe_ctx.GetTargetPtr();
   if (target) {
@@ -306,17 +346,17 @@ bool ClangExpressionSourceCode::GetText(
     }
     if (target->GetArchitecture().GetMachine() == llvm::Triple::x86_64) {
       if (lldb::PlatformSP platform_sp = target->GetPlatform()) {
-        static ConstString g_platform_ios_simulator("ios-simulator");
-        if (platform_sp->GetPluginName() == g_platform_ios_simulator) {
+        if (platform_sp->GetPluginName() == "ios-simulator") {
           target_specific_defines = "typedef bool BOOL;\n";
         }
       }
     }
 
-    ClangModulesDeclVendor *decl_vendor = target->GetClangModulesDeclVendor();
     auto *persistent_vars = llvm::cast<ClangPersistentVariables>(
         target->GetPersistentExpressionStateForLanguage(lldb::eLanguageTypeC));
-    if (decl_vendor && persistent_vars) {
+    std::shared_ptr<ClangModulesDeclVendor> decl_vendor =
+        persistent_vars->GetClangModulesDeclVendor();
+    if (decl_vendor) {
       const ClangModulesDeclVendor::ModuleVector &hand_imported_modules =
           persistent_vars->GetHandLoadedClangModules();
       ClangModulesDeclVendor::ModuleVector modules_for_macros;
@@ -344,9 +384,13 @@ bool ClangExpressionSourceCode::GetText(
 
       decl_vendor->ForEachMacro(
           modules_for_macros,
-          [&module_macros](const std::string &expansion) -> bool {
-            module_macros.append(expansion);
-            module_macros.append("\n");
+          [&module_macros_stream](llvm::StringRef token,
+                                  llvm::StringRef expansion) -> bool {
+            // Check if the macro hasn't already been defined in the
+            // g_expression_prefix (which defines a few builtin macros).
+            module_macros_stream << "#ifndef " << token << "\n";
+            module_macros_stream << expansion << "\n";
+            module_macros_stream << "#endif\n";
             return false;
           });
     }
@@ -368,10 +412,8 @@ bool ClangExpressionSourceCode::GetText(
 
     if (add_locals)
       if (target->GetInjectLocalVariables(&exe_ctx)) {
-        lldb::VariableListSP var_list_sp =
-            frame->GetInScopeVariableList(false, true);
-        AddLocalVariableDecls(var_list_sp, lldb_local_var_decls,
-                              force_add_all_locals ? "" : m_body);
+        AddLocalVariableDecls(lldb_local_var_decls,
+                              force_add_all_locals ? "" : m_body, frame);
       }
   }
 
@@ -387,8 +429,8 @@ bool ClangExpressionSourceCode::GetText(
 
     StreamString wrap_stream;
 
-    wrap_stream.Printf("%s\n%s\n%s\n%s\n%s\n", module_macros.c_str(),
-                       debug_macros_stream.GetData(), g_expression_prefix,
+    wrap_stream.Printf("%s\n%s\n%s\n%s\n%s\n", g_expression_prefix,
+                       module_macros.c_str(), debug_macros_stream.GetData(),
                        target_specific_defines, m_prefix.c_str());
 
     // First construct a tagged form of the user expression so we can find it

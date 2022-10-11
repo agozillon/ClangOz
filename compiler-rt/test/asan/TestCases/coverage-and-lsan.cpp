@@ -9,10 +9,12 @@
 // RUN: %sancov print %t-dir/*.sancov 2>&1
 //
 // REQUIRES: leak-detection
-
-int *g = new int;
+// FIXME: sancov paths not work with adb
+// UNSUPPORTED: android
+int *g;
 int main(int argc, char **argv) {
-  g = 0;
+  for (int i = 0; i < 10; ++i)
+    g = new int[i];
   return 0;
 }
 

@@ -45,9 +45,6 @@
 #ifndef LLVM_ANALYSIS_CALLGRAPH_H
 #define LLVM_ANALYSIS_CALLGRAPH_H
 
-#include "llvm/ADT/GraphTraits.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/PassManager.h"
@@ -61,7 +58,9 @@
 
 namespace llvm {
 
+template <class GraphType> struct GraphTraits;
 class CallGraphNode;
+class Function;
 class Module;
 class raw_ostream;
 
@@ -86,13 +85,6 @@ class CallGraph {
   /// This node has edges to it from all functions making indirect calls
   /// or calling an external function.
   std::unique_ptr<CallGraphNode> CallsExternalNode;
-
-  /// Replace the function represented by this node by another.
-  ///
-  /// This does not rescan the body of the function, so it is suitable when
-  /// splicing the body of one function to another while also updating all
-  /// callers from the old function to the new.
-  void spliceFunction(const Function *From, const Function *To);
 
 public:
   explicit CallGraph(Module &M);

@@ -40,19 +40,26 @@ namespace tgtok {
     l_paren, r_paren,   // ( )
     less, greater,      // < >
     colon, semi,        // : ;
-    comma, period,      // , .
+    comma, dot,         // , .
     equal, question,    // = ?
     paste,              // #
+    dotdotdot,          // ...
 
-    // Keywords. ('ElseKW' is named to distinguish it from the existing 'Else'
-    // that means the preprocessor #else.)
-    Bit, Bits, Class, Code, Dag, Def, Foreach, Defm, Field, In, Int, Let, List,
-    MultiClass, String, Defset, Defvar, If, Then, ElseKW,
+    // Reserved keywords. ('ElseKW' is named to distinguish it from the
+    // existing 'Else' that means the preprocessor #else.)
+    Assert, Bit, Bits, Class, Code, Dag, Def, Defm, Defset, Defvar, ElseKW,
+    FalseKW, Field, Foreach, If, In, Include, Int, Let, List, MultiClass,
+    String, Then, TrueKW,
 
-    // !keywords.
-    XConcat, XADD, XMUL, XAND, XOR, XSRA, XSRL, XSHL, XListConcat, XListSplat,
-    XStrConcat, XCast, XSubst, XForEach, XFoldl, XHead, XTail, XSize, XEmpty,
-    XIf, XCond, XEq, XIsA, XDag, XNe, XLe, XLt, XGe, XGt, XSetOp, XGetOp,
+    // Bang operators.
+    XConcat, XADD, XSUB, XMUL, XNOT, XAND, XOR, XXOR, XSRA, XSRL, XSHL,
+    XListConcat, XListSplat, XStrConcat, XInterleave, XSubstr, XFind, XCast,
+    XSubst, XForEach, XFilter, XFoldl, XHead, XTail, XSize, XEmpty, XIf,
+    XCond, XEq, XIsA, XDag, XNe, XLe, XLt, XGe, XGt, XSetDagOp, XGetDagOp,
+    XExists,
+
+    // Boolean literals.
+    TrueVal, FalseVal,
 
     // Integer value.
     IntVal,
@@ -80,8 +87,8 @@ class TGLexer {
   // Information about the current token.
   const char *TokStart = nullptr;
   tgtok::TokKind CurCode = tgtok::TokKind::Eof;
-  std::string CurStrVal;  // This is valid for ID, STRVAL, VARNAME, CODEFRAGMENT
-  int64_t CurIntVal = 0;  // This is valid for INTVAL.
+  std::string CurStrVal; // This is valid for Id, StrVal, VarName, CodeFragment
+  int64_t CurIntVal = 0; // This is valid for IntVal.
 
   /// CurBuffer - This is the current buffer index we're lexing from as managed
   /// by the SourceMgr object.
@@ -331,7 +338,7 @@ private:
   //
   // The method returns true upon reaching the first non-whitespace symbol
   // or EOF, CurPtr is set to point to this symbol.  The method returns false,
-  // if an error occured during skipping of a C-style comment.
+  // if an error occurred during skipping of a C-style comment.
   bool prepSkipLineBegin();
 
   // Skip any whitespaces or comments after a preprocessing directive.
@@ -339,7 +346,7 @@ private:
   // or end of the file.  If there is a multiline C-style comment
   // after the preprocessing directive, the method skips
   // the comment, so the final CurPtr may point to one of the next lines.
-  // The method returns false, if an error occured during skipping
+  // The method returns false, if an error occurred during skipping
   // C- or C++-style comment, or a non-whitespace symbol appears
   // after the preprocessing directive.
   //

@@ -1,4 +1,4 @@
-//===-------------------------- __cxxabi_config.h -------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -10,12 +10,25 @@
 #define ____CXXABI_CONFIG_H
 
 #if defined(__arm__) && !defined(__USING_SJLJ_EXCEPTIONS__) &&                 \
-    !defined(__ARM_DWARF_EH__)
+    !defined(__ARM_DWARF_EH__) && !defined(__SEH__)
 #define _LIBCXXABI_ARM_EHABI
 #endif
 
 #if !defined(__has_attribute)
 #define __has_attribute(_attribute_) 0
+#endif
+
+#if defined(__clang__)
+#  define _LIBCXXABI_COMPILER_CLANG
+#  ifndef __apple_build_version__
+#    define _LIBCXXABI_CLANG_VER (__clang_major__ * 100 + __clang_minor__)
+#  endif
+#elif defined(__GNUC__)
+#  define _LIBCXXABI_COMPILER_GCC
+#elif defined(_MSC_VER)
+#  define _LIBCXXABI_COMPILER_MSVC
+#elif defined(__IBMCPP__)
+#  define _LIBCXXABI_COMPILER_IBM
 #endif
 
 #if defined(_WIN32)
@@ -53,7 +66,7 @@
  #endif
 #endif
 
-#if defined(_WIN32)
+#if defined(_LIBCXXABI_COMPILER_MSVC)
 #define _LIBCXXABI_WEAK
 #else
 #define _LIBCXXABI_WEAK __attribute__((__weak__))
@@ -80,8 +93,14 @@
 #  if !__has_feature(cxx_exceptions)
 #    define _LIBCXXABI_NO_EXCEPTIONS
 #  endif
-#elif defined(_LIBCXXABI_COMPILER_GCC) && !__EXCEPTIONS
+#elif defined(_LIBCXXABI_COMPILER_GCC) && !defined(__EXCEPTIONS)
 #  define _LIBCXXABI_NO_EXCEPTIONS
+#endif
+
+#if defined(_WIN32)
+#define _LIBCXXABI_DTOR_FUNC __thiscall
+#else
+#define _LIBCXXABI_DTOR_FUNC
 #endif
 
 #endif // ____CXXABI_CONFIG_H

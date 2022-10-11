@@ -10,7 +10,6 @@ from lldbsuite.test import lldbutil
 
 
 class TestBadReference(TestBase):
-    mydir = TestBase.compute_mydir(__file__)
 
     @skipUnlessDarwin
     @skipIf(archs=no_match(['x86_64'])) # <rdar://problem/33842388> frame diagnose doesn't work for armv7 or arm64
@@ -22,4 +21,5 @@ class TestBadReference(TestBase):
         self.runCmd("run", RUN_SUCCEEDED)
         self.expect("thread list", "Thread should be stopped",
                     substrs=['stopped'])
-        self.expect("frame diagnose", "Crash diagnosis was accurate", "f->b")
+        self.expect("frame diagnose", "Crash diagnosis was accurate",
+                    substrs=["f->b"])

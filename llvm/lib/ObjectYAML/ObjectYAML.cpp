@@ -33,7 +33,14 @@ void MappingTraits<YamlObjectFile>::mapping(IO &IO,
                                                          *ObjectFile.FatMachO);
   } else {
     Input &In = (Input &)IO;
-    if (IO.mapTag("!ELF")) {
+    if (IO.mapTag("!Arch")) {
+      ObjectFile.Arch.reset(new ArchYAML::Archive());
+      MappingTraits<ArchYAML::Archive>::mapping(IO, *ObjectFile.Arch);
+      std::string Err =
+          MappingTraits<ArchYAML::Archive>::validate(IO, *ObjectFile.Arch);
+      if (!Err.empty())
+        IO.setError(Err);
+    } else if (IO.mapTag("!ELF")) {
       ObjectFile.Elf.reset(new ELFYAML::Object());
       MappingTraits<ELFYAML::Object>::mapping(IO, *ObjectFile.Elf);
     } else if (IO.mapTag("!COFF")) {
@@ -49,9 +56,19 @@ void MappingTraits<YamlObjectFile>::mapping(IO &IO,
     } else if (IO.mapTag("!minidump")) {
       ObjectFile.Minidump.reset(new MinidumpYAML::Object());
       MappingTraits<MinidumpYAML::Object>::mapping(IO, *ObjectFile.Minidump);
+    } else if (IO.mapTag("!Offload")) {
+      ObjectFile.Offload.reset(new OffloadYAML::Binary());
+      MappingTraits<OffloadYAML::Binary>::mapping(IO, *ObjectFile.Offload);
     } else if (IO.mapTag("!WASM")) {
       ObjectFile.Wasm.reset(new WasmYAML::Object());
       MappingTraits<WasmYAML::Object>::mapping(IO, *ObjectFile.Wasm);
+    } else if (IO.mapTag("!XCOFF")) {
+      ObjectFile.Xcoff.reset(new XCOFFYAML::Object());
+      MappingTraits<XCOFFYAML::Object>::mapping(IO, *ObjectFile.Xcoff);
+    } else if (IO.mapTag("!dxcontainer")) {
+      ObjectFile.DXContainer.reset(new DXContainerYAML::Object());
+      MappingTraits<DXContainerYAML::Object>::mapping(IO,
+                                                      *ObjectFile.DXContainer);
     } else if (const Node *N = In.getCurrentNode()) {
       if (N->getRawTag().empty())
         IO.setError("YAML Object File missing document type tag!");

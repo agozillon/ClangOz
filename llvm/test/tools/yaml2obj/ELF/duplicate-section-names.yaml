@@ -2,7 +2,7 @@
 ## containing sections with duplicate names (but different name suffixes).
 
 # RUN: yaml2obj --docnum=1 %s -o %t1
-# RUN: llvm-readelf -sections %t1 | FileCheck %s --check-prefix=CASE1
+# RUN: llvm-readelf -S %t1 | FileCheck %s --check-prefix=CASE1
 
 # CASE1:      [Nr] Name    Type
 # CASE1:      [ 1] .foo1   PROGBITS
@@ -15,10 +15,9 @@
 
 --- !ELF
 FileHeader:
-  Class:   ELFCLASS64
-  Data:    ELFDATA2LSB
-  Type:    ET_REL
-  Machine: EM_X86_64
+  Class: ELFCLASS64
+  Data:  ELFDATA2LSB
+  Type:  ET_REL
 Sections:
   - Name: .foo1
     Type: SHT_PROGBITS
@@ -44,10 +43,9 @@ Sections:
 
 --- !ELF
 FileHeader:
-  Class:   ELFCLASS64
-  Data:    ELFDATA2LSB
-  Type:    ET_REL
-  Machine: EM_X86_64
+  Class: ELFCLASS64
+  Data:  ELFDATA2LSB
+  Type:  ET_REL
 Sections:
   - Name: '.foo (1)'
     Type: SHT_PROGBITS
@@ -65,10 +63,9 @@ Sections:
 
 --- !ELF
 FileHeader:
-  Class:   ELFCLASS64
-  Data:    ELFDATA2LSB
-  Type:    ET_REL
-  Machine: EM_X86_64
+  Class: ELFCLASS64
+  Data:  ELFDATA2LSB
+  Type:  ET_REL
 Sections:
   - Name: .foo
     Type: SHT_PROGBITS
@@ -105,10 +102,9 @@ Sections:
 
 --- !ELF
 FileHeader:
-  Class:   ELFCLASS64
-  Data:    ELFDATA2LSB
-  Type:    ET_REL
-  Machine: EM_X86_64
+  Class: ELFCLASS64
+  Data:  ELFDATA2LSB
+  Type:  ET_REL
 Sections:
   - Name: .foo
     Type: SHT_PROGBITS
@@ -124,7 +120,7 @@ Symbols:
 ## reference sections and symbols with name suffixes.
 
 # RUN: yaml2obj --docnum=5 %s -o %t5
-# RUN: llvm-readobj --elf-section-groups %t5 | FileCheck %s --check-prefix=CASE5
+# RUN: llvm-readobj --section-groups %t5 | FileCheck %s --check-prefix=CASE5
 
 # CASE5:      Groups {
 # CASE5-NEXT:   Group {
@@ -153,10 +149,9 @@ Symbols:
 
 --- !ELF
 FileHeader:
-  Class:   ELFCLASS64
-  Data:    ELFDATA2LSB
-  Type:    ET_REL
-  Machine: EM_X86_64
+  Class: ELFCLASS64
+  Data:  ELFDATA2LSB
+  Type:  ET_REL
 Sections:
   - Name: .group
     Type: SHT_GROUP

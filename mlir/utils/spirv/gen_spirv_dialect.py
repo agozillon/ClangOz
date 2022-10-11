@@ -10,13 +10,14 @@
 #
 # For example, to define the enum attribute for SPIR-V memory model:
 #
-# ./gen_spirv_dialect.py --base_td_path /path/to/SPIRVBase.td \
+# ./gen_spirv_dialect.py --base-td-path /path/to/SPIRVBase.td \
 #                        --new-enum MemoryModel
 #
 # The 'operand_kinds' dict of spirv.core.grammar.json contains all supported
 # SPIR-V enum classes.
 
 import itertools
+import math
 import re
 import requests
 import textwrap
@@ -25,39 +26,52 @@ import yaml
 SPIRV_HTML_SPEC_URL = 'https://www.khronos.org/registry/spir-v/specs/unified1/SPIRV.html'
 SPIRV_JSON_SPEC_URL = 'https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/master/include/spirv/unified1/spirv.core.grammar.json'
 
+SPIRV_CL_EXT_HTML_SPEC_URL = 'https://www.khronos.org/registry/SPIR-V/specs/unified1/OpenCL.ExtendedInstructionSet.100.html'
+SPIRV_CL_EXT_JSON_SPEC_URL = 'https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/master/include/spirv/unified1/extinst.opencl.std.100.grammar.json'
+
 AUTOGEN_OP_DEF_SEPARATOR = '\n// -----\n\n'
 AUTOGEN_ENUM_SECTION_MARKER = 'enum section. Generated from SPIR-V spec; DO NOT MODIFY!'
 AUTOGEN_OPCODE_SECTION_MARKER = (
     'opcode section. Generated from SPIR-V spec; DO NOT MODIFY!')
 
-
-def get_spirv_doc_from_html_spec():
+def get_spirv_doc_from_html_spec(url, settings):
   """Extracts instruction documentation from SPIR-V HTML spec.
 
   Returns:
     - A dict mapping from instruction opcode to documentation.
   """
-  response = requests.get(SPIRV_HTML_SPEC_URL)
+  if url is None:
+    url = SPIRV_HTML_SPEC_URL
+
+  response = requests.get(url)
   spec = response.content
 
   from bs4 import BeautifulSoup
   spirv = BeautifulSoup(spec, 'html.parser')
 
-  section_anchor = spirv.find('h3', {'id': '_a_id_instructions_a_instructions'})
-
   doc = {}
 
-  for section in section_anchor.parent.find_all('div', {'class': 'sect3'}):
-    for table in section.find_all('table'):
-      inst_html = table.tbody.tr.td.p
-      opname = inst_html.a['id']
-      # Ignore the first line, which is just the opname.
-      doc[opname] = inst_html.text.split('\n', 1)[1].strip()
+  if settings.gen_cl_ops:
+    section_anchor = spirv.find('h2', {'id': '_binary_form'})
+    for section in section_anchor.parent.find_all('div', {'class': 'sect2'}):
+      for table in section.find_all('table'):
+        inst_html = table.tbody.tr.td
+        opname = inst_html.a['id']
+        # Ignore the first line, which is just the opname.
+        doc[opname] = inst_html.text.split('\n', 1)[1].strip()
+  else:
+    section_anchor = spirv.find('h3', {'id': '_instructions_3'})
+    for section in section_anchor.parent.find_all('div', {'class': 'sect3'}):
+      for table in section.find_all('table'):
+        inst_html = table.tbody.tr.td.p
+        opname = inst_html.a['id']
+        # Ignore the first line, which is just the opname.
+        doc[opname] = inst_html.text.split('\n', 1)[1].strip()
 
   return doc
 
 
-def get_spirv_grammar_from_json_spec():
+def get_spirv_grammar_from_json_spec(url):
   """Extracts operand kind and instruction grammar from SPIR-V JSON spec.
 
   Returns:
@@ -70,7 +84,14 @@ def get_spirv_grammar_from_json_spec():
   import json
   spirv = json.loads(spec)
 
-  return spirv['operand_kinds'], spirv['instructions']
+  if url is None:
+    return spirv['operand_kinds'], spirv['instructions']
+
+  response_ext = requests.get(url)
+  spec_ext = response_ext.content
+  spirv_ext = json.loads(spec_ext)
+
+  return spirv['operand_kinds'], spirv_ext['instructions']
 
 
 def split_list_into_sublists(items):
@@ -246,7 +267,7 @@ def get_availability_spec(enum_case, capability_mapping, for_op, for_cap):
   assert not (for_op and for_cap), 'cannot set both for_op and for_cap'
 
   DEFAULT_MIN_VERSION = 'MinVersion<SPV_V_1_0>'
-  DEFAULT_MAX_VERSION = 'MaxVersion<SPV_V_1_5>'
+  DEFAULT_MAX_VERSION = 'MaxVersion<SPV_V_1_6>'
   DEFAULT_CAP = 'Capability<[]>'
   DEFAULT_EXT = 'Extension<[]>'
 
@@ -347,7 +368,6 @@ def gen_operand_kind_enum_attr(operand_kind, capability_mapping):
 
   kind_name = operand_kind['kind']
   is_bit_enum = operand_kind['category'] == 'BitEnum'
-  kind_category = 'Bit' if is_bit_enum else 'I32'
   kind_acronym = ''.join([c for c in kind_name if c >= 'A' and c <= 'Z'])
 
   name_to_case_dict = {}
@@ -366,22 +386,40 @@ def gen_operand_kind_enum_attr(operand_kind, capability_mapping):
   max_len = max([len(symbol) for (symbol, _) in kind_cases])
 
   # Generate the definition for each enum case
-  fmt_str = 'def SPV_{acronym}_{case} {colon:>{offset}} '\
-            '{category}EnumAttrCase<"{symbol}", {value}>{avail}'
+  case_category = 'I32Bit' if is_bit_enum else 'I32'
+  fmt_str = 'def SPV_{acronym}_{case_name} {colon:>{offset}} '\
+            '{category}EnumAttrCase{suffix}<"{symbol}"{case_value_part}>{avail}'
   case_defs = []
-  for case in kind_cases:
-    avail = get_availability_spec(name_to_case_dict[case[0]],
+  for case_pair in kind_cases:
+    name = case_pair[0]
+    if is_bit_enum:
+      value = int(case_pair[1], base=16)
+    else:
+      value = int(case_pair[1])
+    avail = get_availability_spec(name_to_case_dict[name],
                                   capability_mapping,
                                   False, kind_name == 'Capability')
+    if is_bit_enum:
+      if value == 0:
+        suffix = 'None'
+        value = ''
+      else:
+        suffix = "Bit"
+        value = ', {}'.format(int(math.log2(value)))
+    else:
+        suffix = ''
+        value = ', {}'.format(value)
+
     case_def = fmt_str.format(
-        category=kind_category,
+        category=case_category,
+        suffix=suffix,
         acronym=kind_acronym,
-        case=case[0],
-        symbol=get_case_symbol(kind_name, case[0]),
-        value=case[1],
+        case_name=name,
+        symbol=get_case_symbol(kind_name, name),
+        case_value_part=value,
         avail=' {{\n  {}\n}}'.format(avail) if avail else ';',
         colon=':',
-        offset=(max_len + 1 - len(case[0])))
+        offset=(max_len + 1 - len(name)))
     case_defs.append(case_def)
   case_defs = '\n'.join(case_defs)
 
@@ -397,11 +435,15 @@ def gen_operand_kind_enum_attr(operand_kind, capability_mapping):
   case_names = ',\n'.join(case_names)
 
   # Generate the enum attribute definition
+  kind_category = 'Bit' if is_bit_enum else 'I32'
   enum_attr = '''def SPV_{name}Attr :
-    SPV_{category}EnumAttr<"{name}", "valid SPIR-V {name}", [
+    SPV_{category}EnumAttr<"{name}", "valid SPIR-V {name}", "{snake_name}", [
 {cases}
     ]>;'''.format(
-          name=kind_name, category=kind_category, cases=case_names)
+          name=kind_name,
+          snake_name=snake_casify(kind_name),
+          category=kind_category,
+          cases=case_names)
   return kind_name, case_defs + '\n\n' + enum_attr
 
 
@@ -434,7 +476,8 @@ def gen_opcode(instructions):
   ]
   opcode_list = ',\n'.join(opcode_list)
   enum_attr = 'def SPV_OpcodeAttr :\n'\
-              '    SPV_I32EnumAttr<"{name}", "valid SPIR-V instructions", [\n'\
+              '    SPV_I32EnumAttr<"{name}", "valid SPIR-V instructions", '\
+              '"opcode", [\n'\
               '{lst}\n'\
               '    ]>;'.format(name='Opcode', lst=opcode_list)
   return opcode_str + '\n\n' + enum_attr
@@ -591,9 +634,7 @@ def update_td_enum_attrs(path, operand_kinds, filter_list):
 
 def snake_casify(name):
   """Turns the given name to follow snake_case convention."""
-  name = re.sub('\W+', '', name).split()
-  name = [s.lower() for s in name]
-  return '_'.join(name)
+  return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 
 
 def map_spec_operand_to_ods_argument(operand):
@@ -669,7 +710,7 @@ def get_description(text, appendix):
   return fmt_str.format(text=text, appendix=appendix)
 
 
-def get_op_definition(instruction, doc, existing_info, capability_mapping):
+def get_op_definition(instruction, opname, doc, existing_info, capability_mapping, settings):
   """Generates the TableGen op definition for the given SPIR-V instruction.
 
   Arguments:
@@ -683,19 +724,36 @@ def get_op_definition(instruction, doc, existing_info, capability_mapping):
   Returns:
     - A string containing the TableGen op definition
   """
-  fmt_str = ('def SPV_{opname}Op : '
-             'SPV_{inst_category}<"{opname}"{category_args}[{traits}]> '
-             '{{\n  let summary = {summary};\n\n  let description = '
-             '[{{\n{description}}}];{availability}\n')
+  if settings.gen_cl_ops:
+    fmt_str = ('def SPV_{opname}Op : '
+               'SPV_{inst_category}<"{opname_src}", {opcode}, <<Insert result type>> > '
+               '{{\n  let summary = {summary};\n\n  let description = '
+               '[{{\n{description}}}];{availability}\n')
+  else:
+    fmt_str = ('def SPV_{vendor_name}{opname_src}Op : '
+               'SPV_{inst_category}<"{opname_src}"{category_args}, [{traits}]> '
+               '{{\n  let summary = {summary};\n\n  let description = '
+               '[{{\n{description}}}];{availability}\n')
+
+  vendor_name = ''
   inst_category = existing_info.get('inst_category', 'Op')
   if inst_category == 'Op':
     fmt_str +='\n  let arguments = (ins{args});\n\n'\
               '  let results = (outs{results});\n'
+  elif inst_category.endswith('VendorOp'):
+    vendor_name = inst_category.split('VendorOp')[0].upper()
+    assert len(vendor_name) != 0, 'Invalid instruction category'
 
   fmt_str +='{extras}'\
             '}}\n'
 
-  opname = instruction['opname'][2:]
+  opname_src = instruction['opname']
+  if opname.startswith('Op'):
+    opname_src = opname_src[2:]
+  if len(vendor_name) > 0:
+    assert opname_src.endswith(vendor_name), "op name does not match the instruction category"
+    opname_src = opname_src[:-len(vendor_name)]
+
   category_args = existing_info.get('category_args', '')
 
   if '\n' in doc:
@@ -708,7 +766,7 @@ def get_op_definition(instruction, doc, existing_info, capability_mapping):
 
   # Format summary. If the summary can fit in the same line, we print it out
   # as a "-quoted string; otherwise, wrap the lines using "[{...}]".
-  summary = summary.strip();
+  summary = summary.strip()
   if len(summary) + len('  let summary = "";') <= 80:
     summary = '"{}"'.format(summary)
   else:
@@ -722,13 +780,9 @@ def get_op_definition(instruction, doc, existing_info, capability_mapping):
   operands = instruction.get('operands', [])
 
   # Op availability
-  avail = ''
-  # We assume other instruction categories has a base availability spec, so
-  # only add this if this is directly using SPV_Op as the base.
-  if inst_category == 'Op':
-    avail = get_availability_spec(instruction, capability_mapping, True, False)
-    if avail:
-      avail = '\n\n  {0}'.format(avail)
+  avail = get_availability_spec(instruction, capability_mapping, True, False)
+  if avail:
+    avail = '\n\n  {0}'.format(avail)
 
   # Set op's result
   results = ''
@@ -764,8 +818,11 @@ def get_op_definition(instruction, doc, existing_info, capability_mapping):
 
   return fmt_str.format(
       opname=opname,
+      opname_src=opname_src,
+      opcode=instruction['opcode'],
       category_args=category_args,
       inst_category=inst_category,
+      vendor_name=vendor_name,
       traits=existing_info.get('traits', ''),
       summary=summary,
       description=description,
@@ -893,7 +950,7 @@ def extract_td_op_info(op_def):
 
 
 def update_td_op_definitions(path, instructions, docs, filter_list,
-                             inst_category, capability_mapping):
+                             inst_category, capability_mapping, settings):
   """Updates SPIRVOps.td with newly generated op definition.
 
   Arguments:
@@ -930,16 +987,24 @@ def update_td_op_definitions(path, instructions, docs, filter_list,
   filter_list = sorted(list(set(filter_list)))
 
   op_defs = []
+
+  if settings.gen_cl_ops:
+    fix_opname = lambda src: src.replace('CL','').lower()
+  else:
+    fix_opname = lambda src: src
+
   for opname in filter_list:
     # Find the grammar spec for this op
     try:
+      fixed_opname = fix_opname(opname)
       instruction = next(
-          inst for inst in instructions if inst['opname'] == opname)
+          inst for inst in instructions if inst['opname'] == fixed_opname)
+
       op_defs.append(
           get_op_definition(
-              instruction, docs[opname],
+              instruction, opname, docs[fixed_opname],
               op_info_dict.get(opname, {'inst_category': inst_category}),
-              capability_mapping))
+              capability_mapping, settings))
     except StopIteration:
       # This is an op added by us; use the existing ODS definition.
       op_defs.append(name_op_map[opname])
@@ -998,12 +1063,25 @@ if __name__ == '__main__':
       default='Op',
       help='SPIR-V instruction category used for choosing '\
            'the TableGen base class to define this op')
+  cli_parser.add_argument(
+      '--gen-cl-ops',
+      dest='gen_cl_ops',
+      help='Generate OpenCL Extended Instruction Set op',
+      action='store_true')
+  cli_parser.set_defaults(gen_cl_ops=False)
   cli_parser.add_argument('--gen-inst-coverage', dest='gen_inst_coverage', action='store_true')
   cli_parser.set_defaults(gen_inst_coverage=False)
 
   args = cli_parser.parse_args()
 
-  operand_kinds, instructions = get_spirv_grammar_from_json_spec()
+  if args.gen_cl_ops:
+    ext_html_url = SPIRV_CL_EXT_HTML_SPEC_URL
+    ext_json_url = SPIRV_CL_EXT_JSON_SPEC_URL
+  else:
+    ext_html_url = None
+    ext_json_url = None
+
+  operand_kinds, instructions = get_spirv_grammar_from_json_spec(ext_json_url)
 
   # Define new enum attr
   if args.new_enum is not None:
@@ -1019,10 +1097,10 @@ if __name__ == '__main__':
   # Define new op
   if args.new_inst is not None:
     assert args.op_td_path is not None
-    docs = get_spirv_doc_from_html_spec()
+    docs = get_spirv_doc_from_html_spec(ext_html_url, args)
     capability_mapping = get_capability_mapping(operand_kinds)
     update_td_op_definitions(args.op_td_path, instructions, docs, args.new_inst,
-                             args.inst_category, capability_mapping)
+                             args.inst_category, capability_mapping, args)
     print('Done. Note that this script just generates a template; ', end='')
     print('please read the spec and update traits, arguments, and ', end='')
     print('results accordingly.')

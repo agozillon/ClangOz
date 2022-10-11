@@ -1,10 +1,7 @@
 // REQUIRES: amdgpu-registered-target
-// RUN: %clang_cc1 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 -O2 -fno-experimental-new-pass-manager -disable-llvm-passes | FileCheck %s --check-prefixes=CHECK,CHECK-NOOPT
-// RUN: %clang_cc1 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 -O2 -fno-experimental-new-pass-manager | FileCheck %s --check-prefixes=CHECK,CHECK-OPT,CHECK-LEGACY-OPT
-// RUN: %clang_cc1 -emit-llvm %s -o - -triple=amdgcn-amd-amdhsa -O2 -fno-experimental-new-pass-manager | FileCheck %s --check-prefixes=CHECK,CHECK-OPT,CHECK-LEGACY-OPT
-// RUN: %clang_cc1 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 -O2 -fexperimental-new-pass-manager -disable-llvm-passes | FileCheck %s --check-prefixes=CHECK,CHECK-NOOPT
-// RUN: %clang_cc1 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 -O2 -fexperimental-new-pass-manager | FileCheck %s --check-prefixes=CHECK,CHECK-OPT,X64-NEWPM-OPT
-// RUN: %clang_cc1 -emit-llvm %s -o - -triple=amdgcn-amd-amdhsa -O2 -fexperimental-new-pass-manager | FileCheck %s --check-prefixes=CHECK,CHECK-OPT,CHECK-OPT-NEWPM,AMDGCN-NEWPM-OPT
+// RUN: %clang_cc1 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 -O2 -disable-llvm-passes | FileCheck %s --check-prefixes=CHECK,CHECK-NOOPT
+// RUN: %clang_cc1 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 -O2 | FileCheck %s --check-prefixes=CHECK,CHECK-OPT
+// RUN: %clang_cc1 -emit-llvm %s -o - -triple=amdgcn-amd-amdhsa -O2 | FileCheck %s --check-prefixes=CHECK,CHECK-OPT
 
 namespace {
 
@@ -42,32 +39,21 @@ Checker c;
 
 }
 
-// CHECK-OPT-LABEL: define i32 @_Z12getCtorCallsv()
+// CHECK-OPT-LABEL: define{{.*}} i32 @_Z12getCtorCallsv()
 int getCtorCalls() {
-  // CHECK-LEGACY-OPT: ret i32 5
-  // X64-NEWPM-OPT: ret i32 5
-  // AMDGCN-NEWPM-OPT: [[RET:%.*]] = load i32, i32* addrspacecast (i32 addrspace(1)* @_ZN12_GLOBAL__N_19ctorcallsE to i32*), align 4
-  // AMDGCN-NEWPM-OPT: ret i32 [[RET]]
+  // CHECK-OPT: ret i32 5
   return ctorcalls;
 }
 
-// CHECK-OPT-LABEL: define i32 @_Z12getDtorCallsv()
+// CHECK-OPT-LABEL: define{{.*}} i32 @_Z12getDtorCallsv()
 int getDtorCalls() {
-  // CHECK-LEGACY-OPT: ret i32 5
-  // X64-NEWPM-OPT: ret i32 5
-  // AMDGCN-NEWPM-OPT: [[RET:%.*]] = load i32, i32* addrspacecast (i32 addrspace(1)* @_ZN12_GLOBAL__N_19dtorcallsE to i32*), align 4
-  // AMDGCN-NEWPM-OPT: ret i32 [[RET]]
+  // CHECK-OPT: ret i32 5
   return dtorcalls;
 }
 
-// CHECK-OPT-LABEL: define zeroext i1 @_Z7successv()
+// CHECK-OPT-LABEL: define{{.*}} zeroext i1 @_Z7successv()
 bool success() {
-  // CHECK-LEGACY-OPT: ret i1 true
-  // X64-NEWPM-OPT: ret i1 true
-  // AMDGCN-NEWPM-OPT: [[CTORS:%.*]] = load i32, i32* addrspacecast (i32 addrspace(1)* @_ZN12_GLOBAL__N_19ctorcallsE to i32*), align 4, !tbaa !2
-  // AMDGCN-NEWPM-OPT: [[DTORS:%.*]] = load i32, i32* addrspacecast (i32 addrspace(1)* @_ZN12_GLOBAL__N_19dtorcallsE to i32*), align 4, !tbaa !2
-  // AMDGCN-NEWPM-OPT: %cmp = icmp eq i32 [[CTORS]], [[DTORS]]
-  // AMDGCN-NEWPM-OPT: ret i1 %cmp
+  // CHECK-OPT: ret i1 true
   return ctorcalls == dtorcalls;
 }
 
@@ -86,19 +72,19 @@ int lifetime_nontriv(bool cond) {
   // CHECK-NOOPT: call void @llvm.lifetime.start
   // CHECK-NOOPT: store i1 true,
   // CHECK-NOOPT: store i1 true,
-  // CHECK-NOOPT: call i32 @_ZN1X1fEv(
+  // CHECK-NOOPT: call noundef i32 @_ZN1X1fEv(
   // CHECK-NOOPT: call void @llvm.lifetime.start
   // CHECK-NOOPT: store i1 true,
   // CHECK-NOOPT: store i1 true,
-  // CHECK-NOOPT: call i32 @_ZN1X1fEv(
+  // CHECK-NOOPT: call noundef i32 @_ZN1X1fEv(
   // CHECK-NOOPT: call void @llvm.lifetime.start
   // CHECK-NOOPT: store i1 true,
   // CHECK-NOOPT: store i1 true,
-  // CHECK-NOOPT: call i32 @_ZN1X1fEv(
-  // CHECK-NOOPT: call i32 @_Z1giii(
+  // CHECK-NOOPT: call noundef i32 @_ZN1X1fEv(
+  // CHECK-NOOPT: call noundef i32 @_Z1giii(
   // CHECK-NOOPT: br label
   //
-  // CHECK-NOOPT: call i32 @_Z1giii(i32 1, i32 2, i32 3)
+  // CHECK-NOOPT: call noundef i32 @_Z1giii(i32 noundef 1, i32 noundef 2, i32 noundef 3)
   // CHECK-NOOPT: br label
   //
   // CHECK-NOOPT: load i1,
@@ -136,12 +122,12 @@ int lifetime_nontriv(bool cond) {
   // CHECK-OPT: br i1
   //
   // CHECK-OPT: call void @llvm.lifetime.start
-  // CHECK-OPT: call i32 @_ZN1X1fEv(
+  // CHECK-OPT: call noundef i32 @_ZN1X1fEv(
   // CHECK-OPT: call void @llvm.lifetime.start
-  // CHECK-OPT: call i32 @_ZN1X1fEv(
+  // CHECK-OPT: call noundef i32 @_ZN1X1fEv(
   // CHECK-OPT: call void @llvm.lifetime.start
-  // CHECK-OPT: call i32 @_ZN1X1fEv(
-  // CHECK-OPT: call i32 @_Z1giii(
+  // CHECK-OPT: call noundef i32 @_ZN1X1fEv(
+  // CHECK-OPT: call noundef i32 @_Z1giii(
   // CHECK-OPT: call void @_ZN1XD1Ev(
   // CHECK-OPT: call void @llvm.lifetime.end
   // CHECK-OPT: call void @_ZN1XD1Ev(
@@ -161,13 +147,13 @@ int lifetime_triv(bool cond) {
   // CHECK-NOOPT: call void @llvm.lifetime.start
   // CHECK-NOOPT: br i1
   //
-  // CHECK-NOOPT: call i32 @_ZN1Y1fEv(
-  // CHECK-NOOPT: call i32 @_ZN1Y1fEv(
-  // CHECK-NOOPT: call i32 @_ZN1Y1fEv(
-  // CHECK-NOOPT: call i32 @_Z1giii(
+  // CHECK-NOOPT: call noundef i32 @_ZN1Y1fEv(
+  // CHECK-NOOPT: call noundef i32 @_ZN1Y1fEv(
+  // CHECK-NOOPT: call noundef i32 @_ZN1Y1fEv(
+  // CHECK-NOOPT: call noundef i32 @_Z1giii(
   // CHECK-NOOPT: br label
   //
-  // CHECK-NOOPT: call i32 @_Z1giii(i32 1, i32 2, i32 3)
+  // CHECK-NOOPT: call noundef i32 @_Z1giii(i32 noundef 1, i32 noundef 2, i32 noundef 3)
   // CHECK-NOOPT: br label
   //
   // CHECK-NOOPT: call void @llvm.lifetime.end
@@ -186,10 +172,10 @@ int lifetime_triv(bool cond) {
   // CHECK-OPT: call void @llvm.lifetime.start
   // CHECK-OPT: br i1
   //
-  // CHECK-OPT: call i32 @_ZN1Y1fEv(
-  // CHECK-OPT: call i32 @_ZN1Y1fEv(
-  // CHECK-OPT: call i32 @_ZN1Y1fEv(
-  // CHECK-OPT: call i32 @_Z1giii(
+  // CHECK-OPT: call noundef i32 @_ZN1Y1fEv(
+  // CHECK-OPT: call noundef i32 @_ZN1Y1fEv(
+  // CHECK-OPT: call noundef i32 @_ZN1Y1fEv(
+  // CHECK-OPT: call noundef i32 @_Z1giii(
   // CHECK-OPT: br label
   //
   // CHECK-OPT: call void @llvm.lifetime.end
@@ -205,12 +191,12 @@ int lifetime_nontriv_empty(bool cond) {
   // CHECK-OPT: br i1
   //
   // CHECK-OPT: call void @llvm.lifetime.start
-  // CHECK-OPT: call i32 @_ZN1Z1fEv(
+  // CHECK-OPT: call noundef i32 @_ZN1Z1fEv(
   // CHECK-OPT: call void @llvm.lifetime.start
-  // CHECK-OPT: call i32 @_ZN1Z1fEv(
+  // CHECK-OPT: call noundef i32 @_ZN1Z1fEv(
   // CHECK-OPT: call void @llvm.lifetime.start
-  // CHECK-OPT: call i32 @_ZN1Z1fEv(
-  // CHECK-OPT: call i32 @_Z1giii(
+  // CHECK-OPT: call noundef i32 @_ZN1Z1fEv(
+  // CHECK-OPT: call noundef i32 @_Z1giii(
   // CHECK-OPT: call void @llvm.lifetime.end
   // CHECK-OPT: call void @llvm.lifetime.end
   // CHECK-OPT: call void @llvm.lifetime.end

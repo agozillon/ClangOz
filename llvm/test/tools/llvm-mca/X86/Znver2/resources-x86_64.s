@@ -1001,18 +1001,18 @@ xorq (%rax), %rdi
 # CHECK-NEXT:  1      1     0.25                        andq	%rsi, %rdi
 # CHECK-NEXT:  2      5     0.33    *      *            andq	%rsi, (%rax)
 # CHECK-NEXT:  2      5     0.33    *                   andq	(%rax), %rdi
-# CHECK-NEXT:  1      3     0.25                        bsfw	%si, %di
-# CHECK-NEXT:  1      4     0.25                        bsrw	%si, %di
-# CHECK-NEXT:  2      7     0.33    *                   bsfw	(%rax), %di
-# CHECK-NEXT:  2      8     0.33    *                   bsrw	(%rax), %di
-# CHECK-NEXT:  1      3     0.25                        bsfl	%esi, %edi
-# CHECK-NEXT:  1      4     0.25                        bsrl	%esi, %edi
-# CHECK-NEXT:  2      7     0.33    *                   bsfl	(%rax), %edi
-# CHECK-NEXT:  2      8     0.33    *                   bsrl	(%rax), %edi
-# CHECK-NEXT:  1      3     0.25                        bsfq	%rsi, %rdi
-# CHECK-NEXT:  1      4     0.25                        bsrq	%rsi, %rdi
-# CHECK-NEXT:  2      7     0.33    *                   bsfq	(%rax), %rdi
-# CHECK-NEXT:  2      8     0.33    *                   bsrq	(%rax), %rdi
+# CHECK-NEXT:  6      3     3.00                        bsfw	%si, %di
+# CHECK-NEXT:  6      4     4.00                        bsrw	%si, %di
+# CHECK-NEXT:  8      7     3.00    *                   bsfw	(%rax), %di
+# CHECK-NEXT:  8      8     4.00    *                   bsrw	(%rax), %di
+# CHECK-NEXT:  6      3     3.00                        bsfl	%esi, %edi
+# CHECK-NEXT:  6      4     4.00                        bsrl	%esi, %edi
+# CHECK-NEXT:  8      7     3.00    *                   bsfl	(%rax), %edi
+# CHECK-NEXT:  8      8     4.00    *                   bsrl	(%rax), %edi
+# CHECK-NEXT:  6      3     3.00                        bsfq	%rsi, %rdi
+# CHECK-NEXT:  6      4     4.00                        bsrq	%rsi, %rdi
+# CHECK-NEXT:  8      7     3.00    *                   bsfq	(%rax), %rdi
+# CHECK-NEXT:  8      8     4.00    *                   bsrq	(%rax), %rdi
 # CHECK-NEXT:  1      1     1.00                        bswapl	%eax
 # CHECK-NEXT:  1      1     1.00                        bswapq	%rax
 # CHECK-NEXT:  1      1     0.25                        btw	%si, %di
@@ -1185,7 +1185,7 @@ xorq (%rax), %rdi
 # CHECK-NEXT:  1      100   0.25                  U     insl	%dx, %es:(%rdi)
 # CHECK-NEXT:  1      100   0.25    *      *      U     int	$7
 # CHECK-NEXT:  1      100   0.25                  U     invlpg	(%rax)
-# CHECK-NEXT:  1      100   0.25                  U     invlpga	%rax, %ecx
+# CHECK-NEXT:  1      100   0.25                  U     invlpga
 # CHECK-NEXT:  1      100   0.25                        lahf
 # CHECK-NEXT:  2      8     0.33    *                   leave
 # CHECK-NEXT:  1      100   0.25                  U     lodsb	(%rsi), %al
@@ -1696,7 +1696,7 @@ xorq (%rax), %rdi
 
 # CHECK:      Resource pressure per iteration:
 # CHECK-NEXT: [0]    [1]    [2]    [3]    [4]    [5]    [6]    [7]    [8]    [9]    [10]   [11]   [12]
-# CHECK-NEXT: 116.00 116.00 116.00 158.00 192.00 174.00 158.00 392.00  -      -      -      -     34.00
+# CHECK-NEXT: 116.00 116.00 116.00 197.00 231.00 213.00 197.00 392.00  -      -      -      -     34.00
 
 # CHECK:      Resource pressure by instruction:
 # CHECK-NEXT: [0]    [1]    [2]    [3]    [4]    [5]    [6]    [7]    [8]    [9]    [10]   [11]   [12]   Instructions:
@@ -1802,18 +1802,18 @@ xorq (%rax), %rdi
 # CHECK-NEXT:  -      -      -     0.25   0.25   0.25   0.25    -      -      -      -      -      -     andq	%rsi, %rdi
 # CHECK-NEXT: 0.33   0.33   0.33   0.25   0.25   0.25   0.25    -      -      -      -      -      -     andq	%rsi, (%rax)
 # CHECK-NEXT: 0.33   0.33   0.33   0.25   0.25   0.25   0.25    -      -      -      -      -      -     andq	(%rax), %rdi
-# CHECK-NEXT:  -      -      -     0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsfw	%si, %di
-# CHECK-NEXT:  -      -      -     0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsrw	%si, %di
-# CHECK-NEXT: 0.33   0.33   0.33   0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsfw	(%rax), %di
-# CHECK-NEXT: 0.33   0.33   0.33   0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsrw	(%rax), %di
-# CHECK-NEXT:  -      -      -     0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsfl	%esi, %edi
-# CHECK-NEXT:  -      -      -     0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsrl	%esi, %edi
-# CHECK-NEXT: 0.33   0.33   0.33   0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsfl	(%rax), %edi
-# CHECK-NEXT: 0.33   0.33   0.33   0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsrl	(%rax), %edi
-# CHECK-NEXT:  -      -      -     0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsfq	%rsi, %rdi
-# CHECK-NEXT:  -      -      -     0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsrq	%rsi, %rdi
-# CHECK-NEXT: 0.33   0.33   0.33   0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsfq	(%rax), %rdi
-# CHECK-NEXT: 0.33   0.33   0.33   0.25   0.25   0.25   0.25    -      -      -      -      -      -     bsrq	(%rax), %rdi
+# CHECK-NEXT:  -      -      -     3.00   3.00   3.00   3.00    -      -      -      -      -      -     bsfw	%si, %di
+# CHECK-NEXT:  -      -      -     4.00   4.00   4.00   4.00    -      -      -      -      -      -     bsrw	%si, %di
+# CHECK-NEXT: 0.33   0.33   0.33   3.00   3.00   3.00   3.00    -      -      -      -      -      -     bsfw	(%rax), %di
+# CHECK-NEXT: 0.33   0.33   0.33   4.00   4.00   4.00   4.00    -      -      -      -      -      -     bsrw	(%rax), %di
+# CHECK-NEXT:  -      -      -     3.00   3.00   3.00   3.00    -      -      -      -      -      -     bsfl	%esi, %edi
+# CHECK-NEXT:  -      -      -     4.00   4.00   4.00   4.00    -      -      -      -      -      -     bsrl	%esi, %edi
+# CHECK-NEXT: 0.33   0.33   0.33   3.00   3.00   3.00   3.00    -      -      -      -      -      -     bsfl	(%rax), %edi
+# CHECK-NEXT: 0.33   0.33   0.33   4.00   4.00   4.00   4.00    -      -      -      -      -      -     bsrl	(%rax), %edi
+# CHECK-NEXT:  -      -      -     3.00   3.00   3.00   3.00    -      -      -      -      -      -     bsfq	%rsi, %rdi
+# CHECK-NEXT:  -      -      -     4.00   4.00   4.00   4.00    -      -      -      -      -      -     bsrq	%rsi, %rdi
+# CHECK-NEXT: 0.33   0.33   0.33   3.00   3.00   3.00   3.00    -      -      -      -      -      -     bsfq	(%rax), %rdi
+# CHECK-NEXT: 0.33   0.33   0.33   4.00   4.00   4.00   4.00    -      -      -      -      -      -     bsrq	(%rax), %rdi
 # CHECK-NEXT:  -      -      -     1.00   1.00   1.00   1.00    -      -      -      -      -      -     bswapl	%eax
 # CHECK-NEXT:  -      -      -     1.00   1.00   1.00   1.00    -      -      -      -      -      -     bswapq	%rax
 # CHECK-NEXT:  -      -      -     0.25   0.25   0.25   0.25    -      -      -      -      -      -     btw	%si, %di
@@ -1986,7 +1986,7 @@ xorq (%rax), %rdi
 # CHECK-NEXT:  -      -      -      -      -      -      -      -      -      -      -      -      -     insl	%dx, %es:(%rdi)
 # CHECK-NEXT:  -      -      -      -      -      -      -      -      -      -      -      -      -     int	$7
 # CHECK-NEXT:  -      -      -      -      -      -      -      -      -      -      -      -      -     invlpg	(%rax)
-# CHECK-NEXT:  -      -      -      -      -      -      -      -      -      -      -      -      -     invlpga	%rax, %ecx
+# CHECK-NEXT:  -      -      -      -      -      -      -      -      -      -      -      -      -     invlpga
 # CHECK-NEXT:  -      -      -      -      -      -      -      -      -      -      -      -      -     lahf
 # CHECK-NEXT: 0.33   0.33   0.33   0.25   0.25   0.25   0.25    -      -      -      -      -      -     leave
 # CHECK-NEXT:  -      -      -      -      -      -      -      -      -      -      -      -      -     lodsb	(%rsi), %al

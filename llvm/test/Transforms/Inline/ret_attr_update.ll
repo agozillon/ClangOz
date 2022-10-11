@@ -2,7 +2,7 @@
 ; RUN: opt < %s -inline-threshold=0 -always-inline -S | FileCheck %s
 ; RUN: opt < %s -passes=always-inline -S | FileCheck %s
 
-declare i8* @foo(i8*) argmemonly nounwind
+declare i8* @foo(i8*) nounwind willreturn
 
 define i8* @callee(i8 *%p) alwaysinline {
 ; CHECK-LABEL: @callee(
@@ -120,7 +120,7 @@ define i8* @test4(i8* %ptr, i64 %x) {
   ret i8* %p
 }
 
-declare i8* @baz(i8*) nounwind readonly
+declare i8* @baz(i8*) nounwind willreturn
 define internal i8* @callee5(i8* %p) alwaysinline {
   %r = call i8* @foo(i8* %p)
   %v = call i8* @baz(i8* %p)
@@ -142,7 +142,7 @@ define i8* @test5(i8* %ptr, i64 %x) {
 
 ; deref attributes have different values on the callee and the call feeding into
 ; the return.
-; AttrBuilder chooses the already existing value and does not overwrite it.
+; AttrBuilder overwrites the existing value.
 define internal i8* @callee6(i8* %p) alwaysinline {
   %r = call dereferenceable_or_null(16) i8* @foo(i8* %p)
   %v = call i8* @baz(i8* %p)
@@ -153,7 +153,7 @@ define internal i8* @callee6(i8* %p) alwaysinline {
 define i8* @test6(i8* %ptr, i64 %x) {
 ; CHECK-LABEL: @test6(
 ; CHECK-NEXT:    [[GEP:%.*]] = getelementptr inbounds i8, i8* [[PTR:%.*]], i64 [[X:%.*]]
-; CHECK-NEXT:    [[R_I:%.*]] = call dereferenceable_or_null(16) i8* @foo(i8* [[GEP]])
+; CHECK-NEXT:    [[R_I:%.*]] = call dereferenceable_or_null(12) i8* @foo(i8* [[GEP]])
 ; CHECK-NEXT:    [[V_I:%.*]] = call i8* @baz(i8* [[GEP]])
 ; CHECK-NEXT:    ret i8* [[R_I]]
 ;

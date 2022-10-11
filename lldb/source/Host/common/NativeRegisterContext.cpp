@@ -7,8 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/Host/common/NativeRegisterContext.h"
-
-#include "lldb/Utility/Log.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/RegisterValue.h"
 
 #include "lldb/Host/PosixApi.h"
@@ -22,7 +21,7 @@ NativeRegisterContext::NativeRegisterContext(NativeThreadProtocol &thread)
     : m_thread(thread) {}
 
 // Destructor
-NativeRegisterContext::~NativeRegisterContext() {}
+NativeRegisterContext::~NativeRegisterContext() = default;
 
 // FIXME revisit invalidation, process stop ids, etc.  Right now we don't
 // support caching in NativeRegisterContext.  We can do this later by utilizing
@@ -56,14 +55,26 @@ NativeRegisterContext::GetRegisterInfoByName(llvm::StringRef reg_name,
   if (reg_name.empty())
     return nullptr;
 
+  // Generic register names take precedence over specific register names.
+  // For example, on x86 we want "sp" to refer to the complete RSP/ESP register
+  // rather than the 16-bit SP pseudo-register.
+  uint32_t generic_reg = Args::StringToGenericRegister(reg_name);
+  if (generic_reg != LLDB_INVALID_REGNUM) {
+    const RegisterInfo *reg_info =
+        GetRegisterInfo(eRegisterKindGeneric, generic_reg);
+    if (reg_info)
+      return reg_info;
+  }
+
   const uint32_t num_registers = GetRegisterCount();
   for (uint32_t reg = start_idx; reg < num_registers; ++reg) {
     const RegisterInfo *reg_info = GetRegisterInfoAtIndex(reg);
 
-    if (reg_name.equals_lower(reg_info->name) ||
-        reg_name.equals_lower(reg_info->alt_name))
+    if (reg_name.equals_insensitive(reg_info->name) ||
+        reg_name.equals_insensitive(reg_info->alt_name))
       return reg_info;
   }
+
   return nullptr;
 }
 
@@ -110,7 +121,7 @@ const char *NativeRegisterContext::GetRegisterSetNameForRegisterAtIndex(
 }
 
 lldb::addr_t NativeRegisterContext::GetPC(lldb::addr_t fail_value) {
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_THREAD));
+  Log *log = GetLog(LLDBLog::Thread);
 
   uint32_t reg = ConvertRegisterKindToRegisterNumber(eRegisterKindGeneric,
                                                      LLDB_REGNUM_GENERIC_PC);
@@ -185,7 +196,7 @@ NativeRegisterContext::ReadRegisterAsUnsigned(uint32_t reg,
 uint64_t
 NativeRegisterContext::ReadRegisterAsUnsigned(const RegisterInfo *reg_info,
                                               lldb::addr_t fail_value) {
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_THREAD));
+  Log *log = GetLog(LLDBLog::Thread);
 
   if (reg_info) {
     RegisterValue value;
@@ -264,6 +275,10 @@ uint32_t NativeRegisterContext::SetHardwareWatchpoint(lldb::addr_t addr,
 
 bool NativeRegisterContext::ClearHardwareWatchpoint(uint32_t hw_index) {
   return false;
+}
+
+Status NativeRegisterContext::ClearWatchpointHit(uint32_t hw_index) {
+  return Status("not implemented");
 }
 
 Status NativeRegisterContext::ClearAllHardwareWatchpoints() {
@@ -419,4 +434,33 @@ NativeRegisterContext::ConvertRegisterKindToRegisterNumber(uint32_t kind,
   }
 
   return LLDB_INVALID_REGNUM;
+}
+
+std::vector<uint32_t>
+NativeRegisterContext::GetExpeditedRegisters(ExpeditedRegs expType) const {
+  if (expType == ExpeditedRegs::Minimal) {
+    // Expedite only a minimum set of important generic registers.
+    static const uint32_t k_expedited_registers[] = {
+        LLDB_REGNUM_GENERIC_PC, LLDB_REGNUM_GENERIC_SP, LLDB_REGNUM_GENERIC_FP,
+        LLDB_REGNUM_GENERIC_RA};
+
+    std::vector<uint32_t> expedited_reg_nums;
+    for (uint32_t gen_reg : k_expedited_registers) {
+      uint32_t reg_num =
+          ConvertRegisterKindToRegisterNumber(eRegisterKindGeneric, gen_reg);
+      if (reg_num == LLDB_INVALID_REGNUM)
+        continue; // Target does not support the given register.
+      else
+        expedited_reg_nums.push_back(reg_num);
+    }
+
+    return expedited_reg_nums;
+  }
+
+  if (GetRegisterSetCount() > 0 && expType == ExpeditedRegs::Full)
+    return std::vector<uint32_t>(GetRegisterSet(0)->registers,
+                                 GetRegisterSet(0)->registers +
+                                     GetRegisterSet(0)->num_registers);
+
+  return std::vector<uint32_t>();
 }

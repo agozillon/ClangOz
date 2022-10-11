@@ -17,10 +17,13 @@
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Testing/TestClangConfig.h"
 #include "clang/Tooling/Syntax/Nodes.h"
+#include "clang/Tooling/Syntax/TokenBufferTokenManager.h"
 #include "clang/Tooling/Syntax/Tokens.h"
 #include "clang/Tooling/Syntax/Tree.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/ScopedPrinter.h"
 #include "llvm/Testing/Support/Annotations.h"
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
 namespace clang {
@@ -32,11 +35,6 @@ protected:
   TranslationUnit *buildTree(StringRef Code,
                              const TestClangConfig &ClangConfig);
 
-  ::testing::AssertionResult treeDumpEqual(StringRef Code, StringRef Tree);
-
-  ::testing::AssertionResult
-  treeDumpEqualOnAnnotations(StringRef CodeWithAnnotations,
-                             ArrayRef<StringRef> TreeDumps);
   /// Finds the deepest node in the tree that covers exactly \p R.
   /// FIXME: implement this efficiently and move to public syntax tree API.
   syntax::Node *nodeByRange(llvm::Annotations::Range R, syntax::Node *Root);
@@ -54,8 +52,19 @@ protected:
   std::shared_ptr<CompilerInvocation> Invocation;
   // Set after calling buildTree().
   std::unique_ptr<syntax::TokenBuffer> TB;
+  std::unique_ptr<syntax::TokenBufferTokenManager> TM;
   std::unique_ptr<syntax::Arena> Arena;
 };
+
+std::vector<TestClangConfig> allTestClangConfigs();
+
+MATCHER_P(role, R, "") {
+  if (arg.getRole() == R)
+    return true;
+  *result_listener << "role is " << llvm::to_string(arg.getRole());
+  return false;
+}
+
 } // namespace syntax
 } // namespace clang
 #endif // LLVM_CLANG_UNITTESTS_TOOLING_SYNTAX_TREETESTBASE_H

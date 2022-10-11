@@ -1,64 +1,19 @@
 cmake_minimum_required(VERSION 3.13.4)
 
-if(POLICY CMP0075)
-  cmake_policy(SET CMP0075 NEW)
-endif()
-
 # If we are not building as a part of LLVM, build Clang as an
 # standalone project, using LLVM as an external library:
-if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(Clang)
+  set(CLANG_BUILT_STANDALONE TRUE)
+endif()
 
-  set(CMAKE_CXX_STANDARD 14 CACHE STRING "C++ standard to conform to")
+# Must go below project(..)
+include(GNUInstallDirs)
+
+if(CLANG_BUILT_STANDALONE)
+  set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
   set(CMAKE_CXX_STANDARD_REQUIRED YES)
   set(CMAKE_CXX_EXTENSIONS NO)
-
-  # Rely on llvm-config.
-  set(CONFIG_OUTPUT)
-  if(LLVM_CONFIG)
-    set (LLVM_CONFIG_FOUND 1)
-    message(STATUS "Found LLVM_CONFIG as ${LLVM_CONFIG}")
-    message(DEPRECATION "Using llvm-config to detect the LLVM installation is \
-          deprecated.  The installed cmake files should be used \
-          instead.  CMake should be able to detect your LLVM install \
-          automatically, but you can also use LLVM_DIR to specify \
-          the path containing LLVMConfig.cmake.")
-    set(CONFIG_COMMAND ${LLVM_CONFIG}
-      "--assertion-mode"
-      "--bindir"
-      "--libdir"
-      "--includedir"
-      "--prefix"
-      "--src-root"
-      "--cmakedir")
-    execute_process(
-      COMMAND ${CONFIG_COMMAND}
-      RESULT_VARIABLE HAD_ERROR
-      OUTPUT_VARIABLE CONFIG_OUTPUT
-    )
-    if(NOT HAD_ERROR)
-      string(REGEX REPLACE
-        "[ \t]*[\r\n]+[ \t]*" ";"
-        CONFIG_OUTPUT ${CONFIG_OUTPUT})
-    else()
-      string(REPLACE ";" " " CONFIG_COMMAND_STR "${CONFIG_COMMAND}")
-      message(STATUS "${CONFIG_COMMAND_STR}")
-      message(FATAL_ERROR "llvm-config failed with status ${HAD_ERROR}")
-    endif()
-
-    list(GET CONFIG_OUTPUT 0 ENABLE_ASSERTIONS)
-    list(GET CONFIG_OUTPUT 1 TOOLS_BINARY_DIR)
-    list(GET CONFIG_OUTPUT 2 LIBRARY_DIR)
-    list(GET CONFIG_OUTPUT 3 INCLUDE_DIR)
-    list(GET CONFIG_OUTPUT 4 LLVM_OBJ_ROOT)
-    list(GET CONFIG_OUTPUT 5 MAIN_SRC_DIR)
-    list(GET CONFIG_OUTPUT 6 LLVM_CONFIG_CMAKE_PATH)
-
-    # Normalize LLVM_CMAKE_PATH. --cmakedir might contain backslashes.
-    # CMake assumes slashes as PATH.
-    file(TO_CMAKE_PATH ${LLVM_CONFIG_CMAKE_PATH} LLVM_CMAKE_PATH)
-  endif()
-
 
   if(NOT MSVC_IDE)
     set(LLVM_ENABLE_ASSERTIONS ${ENABLE_ASSERTIONS}
@@ -67,30 +22,15 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
     mark_as_advanced(LLVM_ENABLE_ASSERTIONS)
   endif()
 
-  find_package(LLVM REQUIRED HINTS "${LLVM_CMAKE_PATH}")
-  list(APPEND CMAKE_MODULE_PATH ${LLVM_DIR})
+  find_package(LLVM REQUIRED HINTS "${LLVM_CMAKE_DIR}")
+  list(APPEND CMAKE_MODULE_PATH "${LLVM_DIR}")
 
-  # We can't check LLVM_CONFIG here, because find_package(LLVM ...) also sets
-  # LLVM_CONFIG.
-  if (NOT LLVM_CONFIG_FOUND)
-    # Pull values from LLVMConfig.cmake.  We can drop this once the llvm-config
-    # path is removed.
-    set(TOOLS_BINARY_DIR ${LLVM_TOOLS_BINARY_DIR})
-    set(LIBRARY_DIR ${LLVM_LIBRARY_DIR})
-    set(INCLUDE_DIR ${LLVM_INCLUDE_DIR})
-    set(LLVM_OBJ_DIR ${LLVM_BINARY_DIR})
-    # The LLVM_CMAKE_PATH variable is set when doing non-standalone builds and
-    # used in this project, so we need to make sure we set this value.
-    # FIXME: LLVM_CMAKE_DIR comes from LLVMConfig.cmake.  We should rename
-    # LLVM_CMAKE_PATH to LLVM_CMAKE_DIR throughout the project.
-    set(LLVM_CMAKE_PATH ${LLVM_CMAKE_DIR})
-  endif()
-
-  set(LLVM_TOOLS_BINARY_DIR ${TOOLS_BINARY_DIR} CACHE PATH "Path to llvm/bin")
-  set(LLVM_LIBRARY_DIR ${LIBRARY_DIR} CACHE PATH "Path to llvm/lib")
-  set(LLVM_MAIN_INCLUDE_DIR ${INCLUDE_DIR} CACHE PATH "Path to llvm/include")
-  set(LLVM_BINARY_DIR ${LLVM_OBJ_ROOT} CACHE PATH "Path to LLVM build tree")
-  set(LLVM_MAIN_SRC_DIR ${MAIN_SRC_DIR} CACHE PATH "Path to LLVM source tree")
+  # Turn into CACHE PATHs for overwritting
+  set(LLVM_INCLUDE_DIRS ${LLVM_INCLUDE_DIRS} CACHE PATH "Path to llvm/include and any other header dirs needed")
+  set(LLVM_BINARY_DIR "${LLVM_BINARY_DIR}" CACHE PATH "Path to LLVM build tree")
+  set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../llvm" CACHE PATH "Path to LLVM source tree")
+  set(LLVM_TOOLS_BINARY_DIR "${LLVM_TOOLS_BINARY_DIR}" CACHE PATH "Path to llvm/bin")
+  set(LLVM_LIBRARY_DIR "${LLVM_LIBRARY_DIR}" CACHE PATH "Path to llvm/lib")
 
   find_program(LLVM_TABLEGEN_EXE "llvm-tblgen" ${LLVM_TOOLS_BINARY_DIR}
     NO_DEFAULT_PATH)
@@ -105,7 +45,6 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
     set(LLVM_SHLIB_OUTPUT_INTDIR ${LLVM_LIBRARY_OUTPUT_INTDIR})
   endif()
 
-  option(LLVM_ENABLE_WARNINGS "Enable compiler warnings." ON)
   option(LLVM_INSTALL_TOOLCHAIN_ONLY
     "Only include toolchain files in the 'install' target." OFF)
 
@@ -118,6 +57,7 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
   include(TableGen)
   include(HandleLLVMOptions)
   include(VersionFromVCS)
+  include(GetErrcMessages)
   include(LLVMDistributionSupport)
 
   set(PACKAGE_VERSION "${LLVM_PACKAGE_VERSION}")
@@ -128,7 +68,7 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
     set(LLVM_INCLUDE_TESTS ON)
   endif()
 
-  include_directories("${LLVM_BINARY_DIR}/include" "${LLVM_MAIN_INCLUDE_DIR}")
+  include_directories(${LLVM_INCLUDE_DIRS})
   link_directories("${LLVM_LIBRARY_DIR}")
 
   set( CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin )
@@ -136,39 +76,8 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
   set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib${LLVM_LIBDIR_SUFFIX} )
 
   if(LLVM_INCLUDE_TESTS)
-    if(CMAKE_VERSION VERSION_LESS 3.12)
-      include(FindPythonInterp)
-      if(NOT PYTHONINTERP_FOUND)
-        message(FATAL_ERROR
-  "Unable to find Python interpreter, required for builds and testing.
-
-  Please install Python or specify the PYTHON_EXECUTABLE CMake variable.")
-      endif()
-
-      if( ${PYTHON_VERSION_STRING} VERSION_LESS 2.7 )
-        message(FATAL_ERROR "Python 2.7 or newer is required")
-      endif()
-
-      add_executable(Python3::Interpreter IMPORTED)
-      set_target_properties(Python3::Interpreter PROPERTIES
-        IMPORTED_LOCATION ${PYTHON_EXECUTABLE})
-      set(Python3_EXECUTABLE ${PYTHON_EXECUTABLE})
-    else()
-      find_package(Python3 COMPONENTS Interpreter)
-      if(NOT Python3_Interpreter_FOUND)
-        message(WARNING "Python3 not found, using python2 as a fallback")
-        find_package(Python2 COMPONENTS Interpreter REQUIRED)
-        if(Python2_VERSION VERSION_LESS 2.7)
-          message(SEND_ERROR "Python 2.7 or newer is required")
-        endif()
-
-        # Treat python2 as python3
-        add_executable(Python3::Interpreter IMPORTED)
-        set_target_properties(Python3::Interpreter PROPERTIES
-          IMPORTED_LOCATION ${Python2_EXECUTABLE})
-        set(Python3_EXECUTABLE ${Python2_EXECUTABLE})
-      endif()
-    endif()
+    find_package(Python3 ${LLVM_MINIMUM_PYTHON_VERSION} REQUIRED
+      COMPONENTS Interpreter)
 
     # Check prebuilt llvm/utils.
     if(EXISTS ${LLVM_TOOLS_BINARY_DIR}/FileCheck${CMAKE_EXECUTABLE_SUFFIX}
@@ -213,6 +122,8 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
       endif()
       set(LLVM_LIT_ARGS "${LIT_ARGS_DEFAULT}" CACHE STRING "Default options for lit")
 
+      get_errc_messages(LLVM_LIT_ERRC_MESSAGES)
+
       # On Win32 hosts, provide an option to specify the path to the GnuWin32 tools.
       if( WIN32 AND NOT CYGWIN )
         set(LLVM_LIT_TOOLS_DIR "" CACHE PATH "Path to GnuWin32 tools")
@@ -220,17 +131,25 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
     else()
       set(LLVM_INCLUDE_TESTS OFF)
     endif()
-  endif()
 
-  set( CLANG_BUILT_STANDALONE 1 )
+    umbrella_lit_testsuite_begin(check-all)
+  endif() # LLVM_INCLUDE_TESTS
+
   set(BACKEND_PACKAGE_STRING "LLVM ${LLVM_PACKAGE_VERSION}")
 else()
   set(BACKEND_PACKAGE_STRING "${PACKAGE_STRING}")
+endif() # standalone
+
+if(NOT DEFINED LLVM_COMMON_CMAKE_UTILS)
+  set(LLVM_COMMON_CMAKE_UTILS ${CMAKE_CURRENT_SOURCE_DIR}/../cmake)
 endif()
 
 # Make sure that our source directory is on the current cmake module path so that
 # we can include cmake files from this directory.
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
+list(INSERT CMAKE_MODULE_PATH 0
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules"
+  "${LLVM_COMMON_CMAKE_UTILS}/Modules"
+  )
 
 if(LLVM_ENABLE_LIBXML2)
   # Don't look for libxml if we're using MSan, since uninstrumented third party
@@ -262,11 +181,24 @@ set(ENABLE_LINKER_BUILD_ID OFF CACHE BOOL "pass --build-id to ld")
 set(ENABLE_X86_RELAX_RELOCATIONS ON CACHE BOOL
     "enable x86 relax relocations by default")
 
-set(ENABLE_EXPERIMENTAL_NEW_PASS_MANAGER FALSE CACHE BOOL
-  "Enable the experimental new pass manager by default.")
+set(PPC_LINUX_DEFAULT_IEEELONGDOUBLE OFF CACHE BOOL
+    "Enable IEEE binary128 as default long double format on PowerPC Linux.")
 
 set(CLANG_SPAWN_CC1 OFF CACHE BOOL
     "Whether clang should use a new process for the CC1 invocation")
+
+option(CLANG_DEFAULT_PIE_ON_LINUX "Default to -fPIE and -pie on linux-gnu" ON)
+
+# Manually handle default so we can change the meaning of a cached default.
+set(CLANG_ENABLE_OPAQUE_POINTERS "DEFAULT" CACHE STRING
+    "Enable opaque pointers by default")
+if(CLANG_ENABLE_OPAQUE_POINTERS STREQUAL "DEFAULT")
+  set(CLANG_ENABLE_OPAQUE_POINTERS_INTERNAL ON)
+elseif(CLANG_ENABLE_OPAQUE_POINTERS)
+  set(CLANG_ENABLE_OPAQUE_POINTERS_INTERNAL ON)
+else()
+  set(CLANG_ENABLE_OPAQUE_POINTERS_INTERNAL OFF)
+endif()
 
 # TODO: verify the values against LangStandards.def?
 set(CLANG_DEFAULT_STD_C "" CACHE STRING
@@ -302,8 +234,6 @@ set(CLANG_DEFAULT_UNWINDLIB "" CACHE STRING
 if (CLANG_DEFAULT_UNWINDLIB STREQUAL "")
   if (CLANG_DEFAULT_RTLIB STREQUAL "libgcc")
     set (CLANG_DEFAULT_UNWINDLIB "libgcc" CACHE STRING "" FORCE)
-  elseif (CLANG_DEFAULT_RTLIBS STREQUAL "libunwind")
-    set (CLANG_DEFAULT_UNWINDLIB "none" CACHE STRING "" FORCE)
   endif()
 endif()
 
@@ -313,7 +243,7 @@ if (NOT(CLANG_DEFAULT_UNWINDLIB STREQUAL "" OR
         CLANG_DEFAULT_UNWINDLIB STREQUAL "libunwind"))
   message(WARNING "Resetting default unwindlib to use platform default")
   set(CLANG_DEFAULT_UNWINDLIB "" CACHE STRING
-    "Default unwind library to use (\"none\" \"libgcc\" or \"libunwind\", empty for none)" FORCE)
+    "Default unwind library to use (\"none\" \"libgcc\" or \"libunwind\", empty to match runtime library.)" FORCE)
 endif()
 
 set(CLANG_DEFAULT_OBJCOPY "objcopy" CACHE STRING
@@ -325,23 +255,32 @@ set(CLANG_DEFAULT_OPENMP_RUNTIME "libomp" CACHE STRING
 # OpenMP offloading requires at least sm_35 because we use shuffle instructions
 # to generate efficient code for reductions and the atomicMax instruction on
 # 64-bit integers in the implementation of conditional lastprivate.
-set(CLANG_OPENMP_NVPTX_DEFAULT_ARCH "sm_35" CACHE STRING
-  "Default architecture for OpenMP offloading to Nvidia GPUs.")
-string(REGEX MATCH "^sm_([0-9]+)$" MATCHED_ARCH "${CLANG_OPENMP_NVPTX_DEFAULT_ARCH}")
-if (NOT DEFINED MATCHED_ARCH OR "${CMAKE_MATCH_1}" LESS 35)
-  message(WARNING "Resetting default architecture for OpenMP offloading to Nvidia GPUs to sm_35")
+set(CUDA_ARCH_FLAGS "sm_35")
+
+# Try to find the highest Nvidia GPU architecture the system supports
+if (NOT DEFINED CLANG_OPENMP_NVPTX_DEFAULT_ARCH)
+  find_package(CUDA QUIET)
+  if (CUDA_FOUND)
+    cuda_select_nvcc_arch_flags(CUDA_ARCH_FLAGS)
+  endif()
+else()
+  set(CUDA_ARCH_FLAGS ${CLANG_OPENMP_NVPTX_DEFAULT_ARCH})
+endif()
+
+string(REGEX MATCH "sm_([0-9]+)" CUDA_ARCH_MATCH ${CUDA_ARCH_FLAGS})
+if (NOT DEFINED CUDA_ARCH_MATCH OR "${CMAKE_MATCH_1}" LESS 35)
   set(CLANG_OPENMP_NVPTX_DEFAULT_ARCH "sm_35" CACHE STRING
     "Default architecture for OpenMP offloading to Nvidia GPUs." FORCE)
+  message(WARNING "Resetting default architecture for OpenMP offloading to Nvidia GPUs to sm_35")
+else()
+  set(CLANG_OPENMP_NVPTX_DEFAULT_ARCH ${CUDA_ARCH_MATCH} CACHE STRING
+    "Default architecture for OpenMP offloading to Nvidia GPUs.")
 endif()
 
 set(CLANG_SYSTEMZ_DEFAULT_ARCH "z10" CACHE STRING "SystemZ Default Arch")
 
 set(CLANG_VENDOR ${PACKAGE_VENDOR} CACHE STRING
   "Vendor-specific text for showing with version information.")
-
-if( CLANG_VENDOR )
-  add_definitions( -DCLANG_VENDOR="${CLANG_VENDOR} " )
-endif()
 
 set(CLANG_REPOSITORY_STRING "" CACHE STRING
   "Vendor-specific text for showing the repository the source is taken from.")
@@ -366,6 +305,10 @@ endif()
 
 # The libdir suffix must exactly match whatever LLVM's configuration used.
 set(CLANG_LIBDIR_SUFFIX "${LLVM_LIBDIR_SUFFIX}")
+
+set(CLANG_TOOLS_INSTALL_DIR "${CMAKE_INSTALL_BINDIR}" CACHE PATH
+    "Path for binary subdirectory (defaults to '${CMAKE_INSTALL_BINDIR}')")
+mark_as_advanced(CLANG_TOOLS_INSTALL_DIR)
 
 set(CLANG_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(CLANG_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
@@ -417,7 +360,7 @@ endif ()
 
 # Determine HOST_LINK_VERSION on Darwin.
 set(HOST_LINK_VERSION)
-if (APPLE)
+if (APPLE AND NOT CMAKE_LINKER MATCHES ".*lld.*")
   set(LD_V_OUTPUT)
   execute_process(
     COMMAND sh -c "${CMAKE_LINKER} -v 2>&1 | head -1"
@@ -447,17 +390,16 @@ include_directories(BEFORE
 
 if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
   install(DIRECTORY include/clang include/clang-c
-    DESTINATION include
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
     COMPONENT clang-headers
     FILES_MATCHING
     PATTERN "*.def"
     PATTERN "*.h"
     PATTERN "config.h" EXCLUDE
-    PATTERN ".svn" EXCLUDE
     )
 
   install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/clang
-    DESTINATION include
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
     COMPONENT clang-headers
     FILES_MATCHING
     PATTERN "CMakeFiles" EXCLUDE
@@ -476,8 +418,8 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
   endif()
 
   add_custom_target(bash-autocomplete DEPENDS utils/bash-autocomplete.sh)
-  install(PROGRAMS utils/bash-autocomplete.sh
-          DESTINATION share/clang
+  install(FILES utils/bash-autocomplete.sh
+          DESTINATION "${CMAKE_INSTALL_DATADIR}/clang"
           COMPONENT bash-autocomplete)
   if(NOT LLVM_ENABLE_IDE)
     add_llvm_install_targets(install-bash-autocomplete
@@ -491,8 +433,25 @@ add_definitions( -D_GNU_SOURCE )
 option(CLANG_BUILD_TOOLS
   "Build the Clang tools. If OFF, just generate build targets." ON)
 
+if(LLVM_ENABLE_PLUGINS OR LLVM_EXPORT_SYMBOLS_FOR_PLUGINS)
+  set(HAVE_CLANG_PLUGIN_SUPPORT ON)
+else()
+  set(HAVE_CLANG_PLUGIN_SUPPORT OFF)
+endif()
+CMAKE_DEPENDENT_OPTION(CLANG_PLUGIN_SUPPORT
+  "Build clang with plugin support" ON
+  "HAVE_CLANG_PLUGIN_SUPPORT" OFF)
+
+# If libstdc++ is statically linked, clang-repl needs to statically link libstdc++
+# itself, which is not possible in many platforms because of current limitations in 
+# JIT stack. (more platforms need to be supported by JITLink)
+if(NOT LLVM_STATIC_LINK_CXX_STDLIB)
+  set(HAVE_CLANG_REPL_SUPPORT ON)
+endif()
+
 option(CLANG_ENABLE_ARCMT "Build ARCMT." ON)
-option(CLANG_ENABLE_STATIC_ANALYZER "Build static analyzer." ON)
+option(CLANG_ENABLE_STATIC_ANALYZER
+  "Include static analyzer in clang binary." ON)
 
 option(CLANG_ENABLE_PROTO_FUZZER "Build Clang protobuf fuzzer." OFF)
 
@@ -503,6 +462,12 @@ endif()
 if(CLANG_ENABLE_ARCMT)
   set(CLANG_ENABLE_OBJC_REWRITER ON)
 endif()
+
+# This option is a stop-gap, we should commit to removing this as
+# soon as possible. See discussion:
+# https://discourse.llvm.org/t/rationale-for-removing-versioned-libclang-middle-ground-to-keep-it-behind-option/
+option(CLANG_FORCE_MATCHING_LIBCLANG_SOVERSION
+  "Force the SOVERSION of libclang to be equal to CLANG_MAJOR" ON)
 
 # Clang version information
 set(CLANG_EXECUTABLE_VERSION
@@ -518,6 +483,9 @@ option(CLANG_INCLUDE_TESTS
        ${LLVM_INCLUDE_TESTS})
 
 add_subdirectory(utils/TableGen)
+
+# Export CLANG_TABLEGEN_EXE for use by flang docs.
+set(CLANG_TABLEGEN_EXE "${CLANG_TABLEGEN_EXE}" CACHE INTERNAL "")
 
 add_subdirectory(include)
 
@@ -579,21 +547,7 @@ if( CLANG_INCLUDE_TESTS )
   add_subdirectory(bindings/python/tests)
 
   if(CLANG_BUILT_STANDALONE)
-    # Add a global check rule now that all subdirectories have been traversed
-    # and we know the total set of lit testsuites.
-    get_property(LLVM_LIT_TESTSUITES GLOBAL PROPERTY LLVM_LIT_TESTSUITES)
-    get_property(LLVM_LIT_PARAMS GLOBAL PROPERTY LLVM_LIT_PARAMS)
-    get_property(LLVM_LIT_DEPENDS GLOBAL PROPERTY LLVM_LIT_DEPENDS)
-    get_property(LLVM_LIT_EXTRA_ARGS GLOBAL PROPERTY LLVM_LIT_EXTRA_ARGS)
-    get_property(LLVM_ADDITIONAL_TEST_TARGETS
-                 GLOBAL PROPERTY LLVM_ADDITIONAL_TEST_TARGETS)
-    add_lit_target(check-all
-      "Running all regression tests"
-      ${LLVM_LIT_TESTSUITES}
-      PARAMS ${LLVM_LIT_PARAMS}
-      DEPENDS ${LLVM_LIT_DEPENDS} ${LLVM_ADDITIONAL_TEST_TARGETS}
-      ARGS ${LLVM_LIT_EXTRA_ARGS}
-      )
+    umbrella_lit_testsuite_end(check-all)
   endif()
   add_subdirectory(utils/perf-training)
 endif()
@@ -663,6 +617,11 @@ if (CLANG_ENABLE_BOOTSTRAP)
   set(BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-bins/)
 
   if(BOOTSTRAP_LLVM_ENABLE_LLD)
+    # adding lld to clang-bootstrap-deps without having it enabled in
+    # LLVM_ENABLE_PROJECTS just generates a cryptic error message.
+    if (NOT "lld" IN_LIST LLVM_ENABLE_PROJECTS)
+      message(FATAL_ERROR "LLD is enabled in the bootstrap build, but lld is not in LLVM_ENABLE_PROJECTS")
+    endif()
     add_dependencies(clang-bootstrap-deps lld)
   endif()
 
@@ -728,6 +687,7 @@ if (CLANG_ENABLE_BOOTSTRAP)
     CMAKE_CXX_COMPILER_LAUNCHER
     CMAKE_MAKE_PROGRAM
     CMAKE_OSX_ARCHITECTURES
+    CMAKE_BUILD_TYPE
     LLVM_ENABLE_PROJECTS
     LLVM_ENABLE_RUNTIMES)
 
@@ -764,7 +724,6 @@ if (CLANG_ENABLE_BOOTSTRAP)
   endif()
 
   if(BOOTSTRAP_CMAKE_SYSTEM_NAME)
-    set(${CLANG_STAGE}_CONFIG -DLLVM_CONFIG_PATH=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-config)
     set(${CLANG_STAGE}_TABLEGEN
       -DLLVM_TABLEGEN=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-tblgen
       -DCLANG_TABLEGEN=${LLVM_RUNTIME_OUTPUT_INTDIR}/clang-tblgen)
@@ -780,6 +739,7 @@ if (CLANG_ENABLE_BOOTSTRAP)
       add_dependencies(clang-bootstrap-deps llvm-objcopy llvm-strip)
       set(${CLANG_STAGE}_OBJCOPY -DCMAKE_OBJCOPY=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-objcopy)
       set(${CLANG_STAGE}_STRIP -DCMAKE_STRIP=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-strip)
+      set(${CLANG_STAGE}_READELF -DCMAKE_READELF=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-readelf)
     endif()
   endif()
 
@@ -807,6 +767,19 @@ if (CLANG_ENABLE_BOOTSTRAP)
     set(LTO_RANLIB)
   endif()
 
+  # Populate the passthrough variables
+  foreach(variableName ${CLANG_BOOTSTRAP_PASSTHROUGH} ${_BOOTSTRAP_DEFAULT_PASSTHROUGH})
+    if(DEFINED ${variableName})
+      if("${${variableName}}" STREQUAL "")
+        set(value "")
+      else()
+        string(REPLACE ";" "|" value "${${variableName}}")
+      endif()
+      list(APPEND PASSTHROUGH_VARIABLES
+        -D${variableName}=${value})
+    endif()
+  endforeach()
+
   # Find all variables that start with BOOTSTRAP_ and populate a variable with
   # them.
   get_cmake_property(variableNames VARIABLES)
@@ -823,18 +796,13 @@ if (CLANG_ENABLE_BOOTSTRAP)
     endif()
   endforeach()
 
-  # Populate the passthrough variables
-  foreach(variableName ${CLANG_BOOTSTRAP_PASSTHROUGH} ${_BOOTSTRAP_DEFAULT_PASSTHROUGH})
-    if(DEFINED ${variableName})
-      if("${${variableName}}" STREQUAL "")
-        set(value "")
-      else()
-        string(REPLACE ";" "|" value "${${variableName}}")
-      endif()
-      list(APPEND PASSTHROUGH_VARIABLES
-        -D${variableName}=${value})
-    endif()
-  endforeach()
+  # Build arguments for native tool used in CMake.
+  set(build_configuration "$<CONFIG>")
+  set(build_tool_args "${LLVM_EXTERNAL_PROJECT_BUILD_TOOL_ARGS}")
+  if(NOT build_tool_args STREQUAL "")
+    string(PREPEND build_tool_args "-- ")
+    separate_arguments(build_tool_args UNIX_COMMAND "${build_tool_args}")
+  endif()
 
   ExternalProject_Add(${NEXT_CLANG_STAGE}
     DEPENDS clang-bootstrap-deps
@@ -851,7 +819,6 @@ if (CLANG_ENABLE_BOOTSTRAP)
                 ${CLANG_BOOTSTRAP_CMAKE_ARGS}
                  -DCLANG_STAGE=${NEXT_CLANG_STAGE}
                 ${COMPILER_OPTIONS}
-                ${${CLANG_STAGE}_CONFIG}
                 ${${CLANG_STAGE}_TABLEGEN}
                 ${LTO_LIBRARY} ${verbose} ${PGO_OPT}
                 ${${CLANG_STAGE}_LINKER}
@@ -859,6 +826,9 @@ if (CLANG_ENABLE_BOOTSTRAP)
                 ${${CLANG_STAGE}_RANLIB}
                 ${${CLANG_STAGE}_OBJCOPY}
                 ${${CLANG_STAGE}_STRIP}
+    BUILD_COMMAND ${CMAKE_COMMAND} --build ${BINARY_DIR}
+                                   --config ${build_configuration}
+                                   ${build_tool_args}
     INSTALL_COMMAND ""
     STEP_TARGETS configure build
     USES_TERMINAL_CONFIGURE 1
@@ -882,13 +852,24 @@ if (CLANG_ENABLE_BOOTSTRAP)
     set(CLANG_BOOTSTRAP_TARGETS check-llvm check-clang check-all)
   endif()
   foreach(target ${CLANG_BOOTSTRAP_TARGETS})
-    # exclude from main target
-    set_target_properties(${NEXT_CLANG_STAGE} PROPERTIES _EP_${target}_EXCLUDE_FROM_MAIN On)
+    # Install targets have side effects, so we always want to execute them.
+    # "install" is reserved by CMake and can't be used as a step name for
+    # ExternalProject_Add_Step, so we can match against "^install-" instead of
+    # "^install" to get a tighter match. CMake's installation scripts already
+    # skip up-to-date files, so there's no behavior change if you install to the
+    # same destination multiple times.
+    if(target MATCHES "^install-")
+      set(step_always ON)
+    else()
+      set(step_always OFF)
+    endif()
 
     ExternalProject_Add_Step(${NEXT_CLANG_STAGE} ${target}
       COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target ${target}
       COMMENT "Performing ${target} for '${NEXT_CLANG_STAGE}'"
       DEPENDEES configure
+      ALWAYS ${step_always}
+      EXCLUDE_FROM_MAIN ON
       USES_TERMINAL 1
     )
 
@@ -909,6 +890,8 @@ if(CLANG_BUILT_STANDALONE)
   llvm_distribution_add_targets()
   process_llvm_pass_plugins()
 endif()
+
+set(CLANG_INSTALL_LIBDIR_BASENAME "lib${CLANG_LIBDIR_SUFFIX}")
 
 configure_file(
   ${CLANG_SOURCE_DIR}/include/clang/Config/config.h.cmake

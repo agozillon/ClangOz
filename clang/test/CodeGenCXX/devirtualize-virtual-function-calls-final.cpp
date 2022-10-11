@@ -1,13 +1,13 @@
-// RUN: %clang_cc1 -triple i386-unknown-unknown -std=c++11 %s -emit-llvm -o - | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple i386-unknown-unknown -std=c++11 %s -emit-llvm -o - | FileCheck %s
 
 namespace Test1 {
   struct A {
     virtual int f() final;
   };
 
-  // CHECK-LABEL: define i32 @_ZN5Test11fEPNS_1AE
+  // CHECK-LABEL: define{{.*}} i32 @_ZN5Test11fEPNS_1AE
   int f(A *a) {
-    // CHECK: call i32 @_ZN5Test11A1fEv
+    // CHECK: call noundef i32 @_ZN5Test11A1fEv
     return a->f();
   }
 }
@@ -17,9 +17,9 @@ namespace Test2 {
     virtual int f();
   };
 
-  // CHECK-LABEL: define i32 @_ZN5Test21fEPNS_1AE
+  // CHECK-LABEL: define{{.*}} i32 @_ZN5Test21fEPNS_1AE
   int f(A *a) {
-    // CHECK: call i32 @_ZN5Test21A1fEv
+    // CHECK: call noundef i32 @_ZN5Test21A1fEv
     return a->f();
   }
 }
@@ -30,9 +30,9 @@ namespace Test2a {
     virtual int f();
   };
 
-  // CHECK-LABEL: define i32 @_ZN6Test2a1fEPNS_1AE
+  // CHECK-LABEL: define{{.*}} i32 @_ZN6Test2a1fEPNS_1AE
   int f(A *a) {
-    // CHECK: call i32 @_ZN6Test2a1A1fEv
+    // CHECK: call noundef i32 @_ZN6Test2a1A1fEv
     return a->f();
   }
 }
@@ -44,21 +44,21 @@ namespace Test3 {
 
   struct B final : A { };
 
-  // CHECK-LABEL: define i32 @_ZN5Test31fEPNS_1BE
+  // CHECK-LABEL: define{{.*}} i32 @_ZN5Test31fEPNS_1BE
   int f(B *b) {
-    // CHECK: call i32 @_ZN5Test31A1fEv
+    // CHECK: call noundef i32 @_ZN5Test31A1fEv
     return b->f();
   }
 
-  // CHECK-LABEL: define i32 @_ZN5Test31fERNS_1BE
+  // CHECK-LABEL: define{{.*}} i32 @_ZN5Test31fERNS_1BE
   int f(B &b) {
-    // CHECK: call i32 @_ZN5Test31A1fEv
+    // CHECK: call noundef i32 @_ZN5Test31A1fEv
     return b.f();
   }
 
-  // CHECK-LABEL: define i32 @_ZN5Test31fEPv
+  // CHECK-LABEL: define{{.*}} i32 @_ZN5Test31fEPv
   int f(void *v) {
-    // CHECK: call i32 @_ZN5Test31A1fEv
+    // CHECK: call noundef i32 @_ZN5Test31A1fEv
     return static_cast<B*>(v)->f();
   }
 }
@@ -74,11 +74,11 @@ namespace Test4 {
     virtual int operator-();
   };
 
-  // CHECK-LABEL: define void @_ZN5Test41fEPNS_1BE
+  // CHECK-LABEL: define{{.*}} void @_ZN5Test41fEPNS_1BE
   void f(B* d) {
     // CHECK: call void @_ZN5Test41B1fEv
     static_cast<A*>(d)->f();
-    // CHECK: call i32 @_ZN5Test41BngEv
+    // CHECK: call noundef i32 @_ZN5Test41BngEv
     -static_cast<A&>(*d);
   }
 }
@@ -97,7 +97,7 @@ namespace Test5 {
   struct C final : B {
   };
 
-  // CHECK-LABEL: define void @_ZN5Test51fEPNS_1CE
+  // CHECK-LABEL: define{{.*}} void @_ZN5Test51fEPNS_1CE
   void f(C* d) {
     // FIXME: It should be possible to devirtualize this case, but that is
     // not implemented yet.
@@ -106,13 +106,13 @@ namespace Test5 {
     // CHECK-NEXT: call void %[[FUNC]]
     static_cast<A*>(d)->f();
   }
-  // CHECK-LABEL: define void @_ZN5Test53fopEPNS_1CE
+  // CHECK-LABEL: define{{.*}} void @_ZN5Test53fopEPNS_1CE
   void fop(C* d) {
     // FIXME: It should be possible to devirtualize this case, but that is
     // not implemented yet.
     // CHECK: getelementptr
     // CHECK-NEXT: %[[FUNC:.*]] = load
-    // CHECK-NEXT: call i32 %[[FUNC]]
+    // CHECK-NEXT: call noundef i32 %[[FUNC]]
     -static_cast<A&>(*d);
   }
 }
@@ -133,7 +133,7 @@ namespace Test6 {
   struct D final : public C, public B {
   };
 
-  // CHECK-LABEL: define void @_ZN5Test61fEPNS_1DE
+  // CHECK-LABEL: define{{.*}} void @_ZN5Test61fEPNS_1DE
   void f(D* d) {
     // CHECK: call void @_ZN5Test61DD1Ev
     static_cast<A*>(d)->~A();
@@ -154,12 +154,12 @@ namespace Test7 {
     virtual int f() {return z;}
   };
 
-  // CHECK-LABEL: define i32 @_ZN5Test71fEPNS_3zedE
+  // CHECK-LABEL: define{{.*}} i32 @_ZN5Test71fEPNS_3zedE
   int f(zed *z) {
     // CHECK: alloca
     // CHECK-NEXT: store
     // CHECK-NEXT: load
-    // CHECK-NEXT: call i32 @_ZN5Test73zed1fEv
+    // CHECK-NEXT: call noundef i32 @_ZN5Test73zed1fEv
     // CHECK-NEXT: ret
     return static_cast<bar*>(z)->f();
   }
@@ -172,10 +172,10 @@ namespace Test8 {
     virtual int foo() { return b; }
   };
   struct C final : A, B {  };
-  // CHECK-LABEL: define i32 @_ZN5Test84testEPNS_1CE
+  // CHECK-LABEL: define{{.*}} i32 @_ZN5Test84testEPNS_1CE
   int test(C *c) {
     // CHECK: %[[THIS:.*]] = phi
-    // CHECK-NEXT: call i32 @_ZN5Test81B3fooEv(%"struct.Test8::B"* %[[THIS]])
+    // CHECK-NEXT: call noundef i32 @_ZN5Test81B3fooEv(%"struct.Test8::B"* {{[^,]*}} %[[THIS]])
     return static_cast<B*>(c)->foo();
   }
 }
@@ -248,9 +248,9 @@ namespace Test10 {
     int f() final;
   };
 
-  // CHECK-LABEL: define i32 @_ZN6Test101fEPNS_1BE
+  // CHECK-LABEL: define{{.*}} i32 @_ZN6Test101fEPNS_1BE
   int f(B *b) {
-    // CHECK: call i32 @_ZN6Test101B1fEv
+    // CHECK: call noundef i32 @_ZN6Test101B1fEv
     return static_cast<A *>(b)->f();
   }
 }
@@ -303,13 +303,13 @@ namespace Test11 {
 
   // CHECK-LABEL: define linkonce_odr void @_ZN6Test111SIiE4foo1Ev(
   // CHECK: call void @_ZN6Test111SIiE7DerivedclEv(
-  // CHECK: call zeroext i1 @_ZN6Test111SIiE7DerivedeqERKNS_4BaseE(
-  // CHECK: call zeroext i1 @_ZN6Test111SIiE7DerivedntEv(
-  // CHECK: call nonnull align 4 dereferenceable(4) %"class.Test11::Base"* @_ZN6Test111SIiE7DerivedixEi(
+  // CHECK: call noundef zeroext i1 @_ZN6Test111SIiE7DerivedeqERKNS_4BaseE(
+  // CHECK: call noundef zeroext i1 @_ZN6Test111SIiE7DerivedntEv(
+  // CHECK: call noundef nonnull align 4 dereferenceable(4) %"class.Test11::Base"* @_ZN6Test111SIiE7DerivedixEi(
   // CHECK: define linkonce_odr void @_ZN6Test111SIiE7DerivedclEv(
-  // CHECK: define linkonce_odr zeroext i1 @_ZN6Test111SIiE7DerivedeqERKNS_4BaseE(
-  // CHECK: define linkonce_odr zeroext i1 @_ZN6Test111SIiE7DerivedntEv(
-  // CHECK: define linkonce_odr nonnull align 4 dereferenceable(4) %"class.Test11::Base"* @_ZN6Test111SIiE7DerivedixEi(
+  // CHECK: define linkonce_odr noundef zeroext i1 @_ZN6Test111SIiE7DerivedeqERKNS_4BaseE(
+  // CHECK: define linkonce_odr noundef zeroext i1 @_ZN6Test111SIiE7DerivedntEv(
+  // CHECK: define linkonce_odr noundef nonnull align 4 dereferenceable(4) %"class.Test11::Base"* @_ZN6Test111SIiE7DerivedixEi(
   class Base {
   public:
     virtual void operator()() {}

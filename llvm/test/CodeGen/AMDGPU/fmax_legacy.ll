@@ -1,10 +1,10 @@
-; RUN: llc -march=amdgcn -verify-machineinstrs < %s | FileCheck -enable-var-scope -check-prefixes=GCN-SAFE,SI-SAFE,GCN,FUNC %s
-; RUN: llc -enable-no-nans-fp-math -enable-no-signed-zeros-fp-math -march=amdgcn -verify-machineinstrs < %s | FileCheck -enable-var-scope -check-prefixes=SI-NONAN,GCN-NONAN,GCN,FUNC %s
+; RUN: llc -march=amdgcn -verify-machineinstrs < %s | FileCheck -enable-var-scope -check-prefixes=SI-SAFE,GCN,FUNC %s
+; RUN: llc -enable-no-nans-fp-math -enable-no-signed-zeros-fp-math -march=amdgcn -verify-machineinstrs < %s | FileCheck -enable-var-scope -check-prefixes=GCN-NONAN,GCN,FUNC %s
 
-; RUN: llc -march=amdgcn -mcpu=fiji -verify-machineinstrs < %s | FileCheck -enable-var-scope -check-prefixes=VI-SAFE,GCN-SAFE,GCN,FUNC %s
-; RUN: llc -enable-no-nans-fp-math -enable-no-signed-zeros-fp-math -march=amdgcn -mcpu=fiji -verify-machineinstrs < %s | FileCheck -enable-var-scope -check-prefixes=VI-NONAN,GCN-NONAN,GCN,FUNC %s
+; RUN: llc -march=amdgcn -mcpu=fiji -verify-machineinstrs < %s | FileCheck -enable-var-scope -check-prefixes=VI-SAFE,GCN,FUNC %s
+; RUN: llc -enable-no-nans-fp-math -enable-no-signed-zeros-fp-math -march=amdgcn -mcpu=fiji -verify-machineinstrs < %s | FileCheck -enable-var-scope -check-prefixes=GCN-NONAN,GCN,FUNC %s
 
-; RUN: llc -march=r600 -mcpu=redwood < %s | FileCheck -enable-var-scope -check-prefix=EG -check-prefix=FUNC %s
+; RUN: llc -march=r600 -mcpu=redwood < %s | FileCheck -enable-var-scope --check-prefixes=EG,FUNC %s
 
 declare i32 @llvm.amdgcn.workitem.id.x() #1
 
@@ -157,8 +157,8 @@ define amdgpu_kernel void @test_fmax_legacy_ogt_v1f32(<1 x float> addrspace(1)* 
   %gep.0 = getelementptr <1 x float>, <1 x float> addrspace(1)* %in, i32 %tid
   %gep.1 = getelementptr <1 x float>, <1 x float> addrspace(1)* %gep.0, i32 1
 
-  %a = load <1 x float>, <1 x float> addrspace(1)* %gep.0
-  %b = load <1 x float>, <1 x float> addrspace(1)* %gep.1
+  %a = load volatile <1 x float>, <1 x float> addrspace(1)* %gep.0
+  %b = load volatile <1 x float>, <1 x float> addrspace(1)* %gep.1
 
   %cmp = fcmp ogt <1 x float> %a, %b
   %val = select <1 x i1> %cmp, <1 x float> %a, <1 x float> %b

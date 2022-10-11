@@ -1,4 +1,5 @@
-; RUN: llc -verify-machineinstrs -mcpu=pwr7 -mtriple powerpc-ibm-aix-xcoff -filetype=obj -o %t.o < %s
+; RUN: llc -verify-machineinstrs -mcpu=pwr7 -mattr=-altivec -mtriple powerpc-ibm-aix-xcoff \
+; RUN:     -xcoff-traceback-table=false -filetype=obj -o %t.o < %s
 ; RUN: llvm-readobj  --symbols %t.o | FileCheck %s
 
 define void @foo() {
@@ -11,6 +12,16 @@ entry:
 ; CHECK-NEXT: Arch: powerpc
 ; CHECK-NEXT: AddressSize: 32bit
 ; CHECK:        Symbol {
+; CHECK-NEXT:     Index: 0
+; CHECK-NEXT:     Name: <stdin>
+; CHECK-NEXT:     Value (SymbolTableIndex): 0x0
+; CHECK-NEXT:     Section: N_DEBUG
+; CHECK-NEXT:     Source Language ID: TB_C (0x0)
+; CHECK-NEXT:     CPU Version ID: 0x0
+; CHECK-NEXT:     StorageClass: C_FILE (0x67)
+; CHECK-NEXT:     NumberOfAuxEntries: 0
+; CHECK-NEXT:   }
+; CHECK-NEXT:   Symbol {
 ; CHECK-NEXT:     Index: [[#Index:]]
 ; CHECK-NEXT:     Name: .text
 ; CHECK-NEXT:     Value (RelocatableAddress): 0x0
@@ -23,7 +34,7 @@ entry:
 ; CHECK-NEXT:       SectionLen: 4
 ; CHECK-NEXT:       ParameterHashIndex: 0x0
 ; CHECK-NEXT:       TypeChkSectNum: 0x0
-; CHECK-NEXT:       SymbolAlignmentLog2: 4
+; CHECK-NEXT:       SymbolAlignmentLog2: 5
 ; CHECK-NEXT:       SymbolType: XTY_SD (0x1)
 ; CHECK-NEXT:       StorageMappingClass: XMC_PR (0x0)
 ; CHECK-NEXT:       StabInfoIndex: 0x0

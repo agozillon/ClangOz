@@ -83,7 +83,7 @@ public:
 } // namespace
 
 static void printHelp(const char *argv0) {
-  MinGWOptTable().PrintHelp(
+  MinGWOptTable().printHelp(
       lld::outs(), (std::string(argv0) + " [options] file...").c_str(), "lld",
       false /*ShowHidden*/, true /*ShowAllAliases*/);
   lld::outs() << "\n";
@@ -100,7 +100,7 @@ opt::InputArgList MinGWOptTable::parse(ArrayRef<const char *> argv) {
   unsigned missingCount;
 
   SmallVector<const char *, 256> vec(argv.data(), argv.data() + argv.size());
-  cl::ExpandResponseFiles(saver, getQuotingStyle(), vec);
+  cl::ExpandResponseFiles(saver(), getQuotingStyle(), vec);
   opt::InputArgList args = this->ParseArgs(vec, missingIndex, missingCount);
 
   if (missingCount)
@@ -142,16 +142,10 @@ searchLibrary(StringRef name, ArrayRef<StringRef> searchPaths, bool bStatic) {
     if (!bStatic) {
       if (Optional<std::string> s = findFile(dir, name + ".lib"))
         return *s;
-      if (Optional<std::string> s = findFile(dir, "lib" + name + ".dll")) {
-        error("lld doesn't support linking directly against " + *s +
-              ", use an import library");
-        return "";
-      }
-      if (Optional<std::string> s = findFile(dir, name + ".dll")) {
-        error("lld doesn't support linking directly against " + *s +
-              ", use an import library");
-        return "";
-      }
+      if (Optional<std::string> s = findFile(dir, "lib" + name + ".dll"))
+        return *s;
+      if (Optional<std::string> s = findFile(dir, name + ".dll"))
+        return *s;
     }
   }
   error("unable to find library -l" + name);
@@ -160,12 +154,11 @@ searchLibrary(StringRef name, ArrayRef<StringRef> searchPaths, bool bStatic) {
 
 // Convert Unix-ish command line arguments to Windows-ish ones and
 // then call coff::link.
-bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
-                 raw_ostream &stdoutOS, raw_ostream &stderrOS) {
-  lld::stdoutOS = &stdoutOS;
-  lld::stderrOS = &stderrOS;
-
-  stderrOS.enable_colors(stderrOS.has_colors());
+bool mingw::link(ArrayRef<const char *> argsArr, llvm::raw_ostream &stdoutOS,
+                 llvm::raw_ostream &stderrOS, bool exitEarly,
+                 bool disableOutput) {
+  auto *ctx = new CommonLinkerContext;
+  ctx->e.initialize(stdoutOS, stderrOS, exitEarly, disableOutput);
 
   MinGWOptTable parser;
   opt::InputArgList args = parser.parse(argsArr.slice(1));
@@ -214,27 +207,43 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
 
   if (args.hasArg(OPT_major_os_version, OPT_minor_os_version,
                   OPT_major_subsystem_version, OPT_minor_subsystem_version)) {
-    auto *majOSVer = args.getLastArg(OPT_major_os_version);
-    auto *minOSVer = args.getLastArg(OPT_minor_os_version);
-    auto *majSubSysVer = args.getLastArg(OPT_major_subsystem_version);
-    auto *minSubSysVer = args.getLastArg(OPT_minor_subsystem_version);
-    if (majOSVer && majSubSysVer &&
-        StringRef(majOSVer->getValue()) != StringRef(majSubSysVer->getValue()))
-      warn("--major-os-version and --major-subsystem-version set to differing "
-           "versions, not supported");
-    if (minOSVer && minSubSysVer &&
-        StringRef(minOSVer->getValue()) != StringRef(minSubSysVer->getValue()))
-      warn("--minor-os-version and --minor-subsystem-version set to differing "
-           "versions, not supported");
+    StringRef majOSVer = args.getLastArgValue(OPT_major_os_version, "6");
+    StringRef minOSVer = args.getLastArgValue(OPT_minor_os_version, "0");
+    StringRef majSubSysVer = "6";
+    StringRef minSubSysVer = "0";
+    StringRef subSysName = "default";
+    StringRef subSysVer;
+    // Iterate over --{major,minor}-subsystem-version and --subsystem, and pick
+    // the version number components from the last one of them that specifies
+    // a version.
+    for (auto *a : args.filtered(OPT_major_subsystem_version,
+                                 OPT_minor_subsystem_version, OPT_subs)) {
+      switch (a->getOption().getID()) {
+      case OPT_major_subsystem_version:
+        majSubSysVer = a->getValue();
+        break;
+      case OPT_minor_subsystem_version:
+        minSubSysVer = a->getValue();
+        break;
+      case OPT_subs:
+        std::tie(subSysName, subSysVer) = StringRef(a->getValue()).split(':');
+        if (!subSysVer.empty()) {
+          if (subSysVer.contains('.'))
+            std::tie(majSubSysVer, minSubSysVer) = subSysVer.split('.');
+          else
+            majSubSysVer = subSysVer;
+        }
+        break;
+      }
+    }
+    add("-osversion:" + majOSVer + "." + minOSVer);
+    add("-subsystem:" + subSysName + "," + majSubSysVer + "." + minSubSysVer);
+  } else if (args.hasArg(OPT_subs)) {
     StringRef subSys = args.getLastArgValue(OPT_subs, "default");
-    StringRef major = majOSVer ? majOSVer->getValue()
-                               : majSubSysVer ? majSubSysVer->getValue() : "6";
-    StringRef minor = minOSVer ? minOSVer->getValue()
-                               : minSubSysVer ? minSubSysVer->getValue() : "";
-    StringRef sep = minor.empty() ? "" : ".";
-    add("-subsystem:" + subSys + "," + major + sep + minor);
-  } else if (auto *a = args.getLastArg(OPT_subs)) {
-    add("-subsystem:" + StringRef(a->getValue()));
+    StringRef subSysName, subSysVer;
+    std::tie(subSysName, subSysVer) = subSys.split(':');
+    StringRef sep = subSysVer.empty() ? "" : ",";
+    add("-subsystem:" + subSysName + sep + subSysVer);
   }
 
   if (auto *a = args.getLastArg(OPT_out_implib))
@@ -255,6 +264,8 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     add("-filealign:" + StringRef(a->getValue()));
   if (auto *a = args.getLastArg(OPT_section_alignment))
     add("-align:" + StringRef(a->getValue()));
+  if (auto *a = args.getLastArg(OPT_heap))
+    add("-heap:" + StringRef(a->getValue()));
 
   if (auto *a = args.getLastArg(OPT_o))
     add("-out:" + StringRef(a->getValue()));
@@ -274,6 +285,16 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     add("-debug:dwarf");
   }
 
+  if (args.hasFlag(OPT_fatal_warnings, OPT_no_fatal_warnings, false))
+    add("-WX");
+  else
+    add("-WX:no");
+
+  if (args.hasFlag(OPT_enable_stdcall_fixup, OPT_disable_stdcall_fixup, false))
+    add("-stdcall-fixup");
+  else if (args.hasArg(OPT_disable_stdcall_fixup))
+    add("-stdcall-fixup:no");
+
   if (args.hasArg(OPT_shared))
     add("-dll");
   if (args.hasArg(OPT_verbose))
@@ -288,12 +309,22 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     add("-kill-at");
   if (args.hasArg(OPT_appcontainer))
     add("-appcontainer");
-  if (args.hasArg(OPT_no_seh))
+  if (args.hasFlag(OPT_no_seh, OPT_disable_no_seh, false))
     add("-noseh");
 
   if (args.getLastArgValue(OPT_m) != "thumb2pe" &&
-      args.getLastArgValue(OPT_m) != "arm64pe" && !args.hasArg(OPT_dynamicbase))
+      args.getLastArgValue(OPT_m) != "arm64pe" &&
+      args.hasFlag(OPT_disable_dynamicbase, OPT_dynamicbase, false))
     add("-dynamicbase:no");
+  if (args.hasFlag(OPT_disable_high_entropy_va, OPT_high_entropy_va, false))
+    add("-highentropyva:no");
+  if (args.hasFlag(OPT_disable_nxcompat, OPT_nxcompat, false))
+    add("-nxcompat:no");
+  if (args.hasFlag(OPT_disable_tsaware, OPT_tsaware, false))
+    add("-tsaware:no");
+
+  if (args.hasFlag(OPT_disable_reloc_section, OPT_enable_reloc_section, false))
+    add("-fixed");
 
   if (args.hasFlag(OPT_no_insert_timestamp, OPT_insert_timestamp, false))
     add("-timestamp:0");
@@ -302,6 +333,11 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     add("-opt:ref");
   else
     add("-opt:noref");
+
+  if (args.hasFlag(OPT_demangle, OPT_no_demangle, true))
+    add("-demangle");
+  else
+    add("-demangle:no");
 
   if (args.hasFlag(OPT_enable_auto_import, OPT_disable_auto_import, true))
     add("-auto-import");
@@ -312,6 +348,10 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     add("-runtime-pseudo-reloc");
   else
     add("-runtime-pseudo-reloc:no");
+
+  if (args.hasFlag(OPT_allow_multiple_definition,
+                   OPT_no_allow_multiple_definition, false))
+    add("-force:multiple");
 
   if (auto *a = args.getLastArg(OPT_icf)) {
     StringRef s = a->getValue();
@@ -339,6 +379,17 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
       error("unknown parameter: -m" + s);
   }
 
+  if (args.hasFlag(OPT_guard_cf, OPT_no_guard_cf, false)) {
+    if (args.hasFlag(OPT_guard_longjmp, OPT_no_guard_longjmp, true))
+      add("-guard:cf,longjmp");
+    else
+      add("-guard:cf,nolongjmp");
+  } else if (args.hasFlag(OPT_guard_longjmp, OPT_no_guard_longjmp, false)) {
+    auto *a = args.getLastArg(OPT_guard_longjmp);
+    warn("parameter " + a->getSpelling() +
+         " only takes effect when used with --guard-cf");
+  }
+
   for (auto *a : args.filtered(OPT_mllvm))
     add("-mllvm:" + StringRef(a->getValue()));
 
@@ -356,6 +407,10 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     add("-includeoptional:" + StringRef(a->getValue()));
   for (auto *a : args.filtered(OPT_delayload))
     add("-delayload:" + StringRef(a->getValue()));
+  for (auto *a : args.filtered(OPT_wrap))
+    add("-wrap:" + StringRef(a->getValue()));
+  for (auto *a : args.filtered(OPT_exclude_symbols))
+    add("-exclude-symbols:" + StringRef(a->getValue()));
 
   std::vector<StringRef> searchPaths;
   for (auto *a : args.filtered(OPT_L)) {
@@ -368,7 +423,7 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
   for (auto *a : args) {
     switch (a->getOption().getID()) {
     case OPT_INPUT:
-      if (StringRef(a->getValue()).endswith_lower(".def"))
+      if (StringRef(a->getValue()).endswith_insensitive(".def"))
         add("-def:" + StringRef(a->getValue()));
       else
         add(prefix + StringRef(a->getValue()));
@@ -395,7 +450,7 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     return false;
 
   if (args.hasArg(OPT_verbose) || args.hasArg(OPT__HASH_HASH_HASH))
-    lld::outs() << llvm::join(linkArgs, " ") << "\n";
+    lld::errs() << llvm::join(linkArgs, " ") << "\n";
 
   if (args.hasArg(OPT__HASH_HASH_HASH))
     return true;
@@ -404,5 +459,12 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
   std::vector<const char *> vec;
   for (const std::string &s : linkArgs)
     vec.push_back(s.c_str());
-  return coff::link(vec, true, stdoutOS, stderrOS);
+  // Pass the actual binary name, to make error messages be printed with
+  // the right prefix.
+  vec[0] = argsArr[0];
+
+  // The context will be re-created in the COFF driver.
+  lld::CommonLinkerContext::destroy();
+
+  return coff::link(vec, stdoutOS, stderrOS, exitEarly, disableOutput);
 }

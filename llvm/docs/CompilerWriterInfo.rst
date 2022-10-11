@@ -102,6 +102,16 @@ RISC-V
 ------
 * `RISC-V User-Level ISA Specification <https://riscv.org/specifications/>`_
 
+C-SKY
+------
+* `C-SKY Architecture User Guide <https://github.com/c-sky/csky-doc/blob/master/CSKY%20Architecture%20user_guide.pdf>`_
+* `C-SKY V2 ABI <https://github.com/c-sky/csky-doc/blob/master/C-SKY_V2_CPU_Applications_Binary_Interface_Standards_Manual.pdf>`_
+
+LoongArch
+---------
+* `LoongArch Reference Manual - Volume 1: Basic Architecture <https://loongson.github.io/LoongArch-Documentation/LoongArch-Vol1-EN.html>`_
+* `LoongArch ELF ABI specification <https://loongson.github.io/LoongArch-Documentation/LoongArch-ELF-ABI-EN.html>`_
+
 SPARC
 -----
 
@@ -113,6 +123,12 @@ SystemZ
 -------
 
 * `z/Architecture Principles of Operation (registration required, free sign-up) <http://www-01.ibm.com/support/docview.wss?uid=isg2b9de5f05a9d57819852571c500428f9a>`_
+
+VE
+--
+
+* `NEC SX-Aurora TSUBASA ISA Guide <https://www.hpc.nec/documents/guide/pdfs/Aurora_ISA_guide.pdf>`_
+* `NEC SX-Aurora TSUBASA manuals and documentation <https://www.hpc.nec/documentation>`_
 
 X86
 ---
@@ -126,8 +142,9 @@ X86
 XCore
 -----
 
-* `The XMOS XS1 Architecture (ISA) <https://www.xmos.com/en/download/public/The-XMOS-XS1-Architecture%28X7879A%29.pdf>`_
-* `Tools Development Guide (includes ABI) <https://www.xmos.com/download/public/Tools-Development-Guide%28X9114A%29.pdf>`_
+* `The XMOS XS1 Architecture (ISA) <https://www.xmos.ai/download/The-XMOS-XS1-Architecture%281.0%29.pdf>`_
+* `The XMOS XS2 Architecture (ISA) <https://www.xmos.ai/download/xCORE-200:-The-XMOS-XS2-Architecture-%28ISA%29%281.1%29.pdf>`_
+* `Tools Development Guide (includes ABI) <https://www.xmos.ai/download/Tools-Development-Guide%282.1%29.pdf>`_
 
 Hexagon
 -------
@@ -180,6 +197,11 @@ NVPTX
 
 * `CUDA Documentation <http://docs.nvidia.com/cuda/index.html>`_ includes the PTX
   ISA and Driver API documentation
+
+SPIR-V
+======
+
+* `SPIR-V documentation <https://www.khronos.org/registry/SPIR-V/>`_
 
 Miscellaneous Resources
 =======================

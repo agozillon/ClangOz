@@ -358,7 +358,20 @@ let Class = UnresolvedUsingType in {
   }
 
   def : Creator<[{
-    return ctx.getTypeDeclType(cast<UnresolvedUsingTypenameDecl>(declaration));
+    return ctx.getUnresolvedUsingType(cast<UnresolvedUsingTypenameDecl>(declaration));
+  }]>;
+}
+
+let Class = UsingType in {
+  def : Property<"foundDeclaration", UsingShadowDeclRef> {
+    let Read = [{ node->getFoundDecl() }];
+  }
+  def : Property<"underlyingType", QualType> {
+    let Read = [{ node->getUnderlyingType() }];
+  }
+
+  def : Creator<[{
+    return ctx.getUsingType(foundDeclaration, underlyingType);
   }]>;
 }
 
@@ -484,8 +497,12 @@ let Class = TagType in {
     let Read = [{ node->isDependentType() }];
   }
   def : Property<"declaration", DeclRef> {
-    // Serializing a reference to the canonical declaration is apparently
-    // necessary to make module-merging work.
+    // We don't know which declaration was originally referenced here, and we
+    // cannot reference a declaration that follows the use (because that can
+    // introduce deserialization cycles), so conservatively generate a
+    // reference to the first declaration.
+    // FIXME: If this is a reference to a class template specialization, that
+    // can still introduce a deserialization cycle.
     let Read = [{ node->getDecl()->getCanonicalDecl() }];
   }
 }
@@ -602,6 +619,19 @@ let Class = AttributedType in {
   }]>;
 }
 
+let Class = BTFTagAttributedType in {
+  def : Property<"attr", BTFTypeTagAttr> {
+    let Read = [{ node->getAttr() }];
+  }
+  def : Property<"wrappedType", QualType> {
+    let Read = [{ node->getWrappedType() }];
+  }
+
+  def : Creator<[{
+    return ctx.getBTFTagAttributedType(attr, wrappedType);
+  }]>;
+}
+
 let Class = DependentAddressSpaceType in {
   def : Property<"pointeeType", QualType> {
     let Read = [{ node->getPointeeType() }];
@@ -641,7 +671,7 @@ let Class = TemplateSpecializationType in {
 
   def : Creator<[{
     QualType result;
-    if (!underlyingType.hasValue()) {
+    if (!underlyingType) {
       result = ctx.getCanonicalTemplateSpecializationType(templateName,
                                                           templateArguments);
     } else {
@@ -761,6 +791,14 @@ let Class = BuiltinType in {
       case BuiltinType::ID: return ctx.SINGLETON_ID;
 #include "clang/Basic/AArch64SVEACLETypes.def"
 
+#define PPC_VECTOR_TYPE(NAME, ID, SIZE) \
+      case BuiltinType::ID: return ctx.ID##Ty;
+#include "clang/Basic/PPCTypes.def"
+
+#define RVV_TYPE(NAME, ID, SINGLETON_ID) \
+      case BuiltinType::ID: return ctx.SINGLETON_ID;
+#include "clang/Basic/RISCVVTypes.def"
+
 #define BUILTIN_TYPE(ID, SINGLETON_ID) \
       case BuiltinType::ID: return ctx.SINGLETON_ID;
 #include "clang/AST/BuiltinTypes.def"
@@ -870,7 +908,7 @@ let Class = PipeType in {
   }]>;
 }
 
-let Class = ExtIntType in {
+let Class = BitIntType in {
   def : Property<"isUnsigned", Bool> {
     let Read = [{ node->isUnsigned() }];
   }
@@ -879,11 +917,11 @@ let Class = ExtIntType in {
   }
 
   def : Creator<[{
-    return ctx.getExtIntType(isUnsigned, numBits);
+    return ctx.getBitIntType(isUnsigned, numBits);
   }]>;
 }
 
-let Class = DependentExtIntType in {
+let Class = DependentBitIntType in {
   def : Property<"isUnsigned", Bool> {
     let Read = [{ node->isUnsigned() }];
   }
@@ -891,6 +929,6 @@ let Class = DependentExtIntType in {
     let Read = [{ node->getNumBitsExpr() }];
   }
   def : Creator<[{
-    return ctx.getDependentExtIntType(isUnsigned, numBitsExpr);
+    return ctx.getDependentBitIntType(isUnsigned, numBitsExpr);
   }]>;
 }

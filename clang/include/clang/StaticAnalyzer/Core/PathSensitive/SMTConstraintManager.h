@@ -122,15 +122,14 @@ public:
       // this method tries to get the interpretation (the actual value) from
       // the solver, which is currently not cached.
 
-      llvm::SMTExprRef Exp =
-          SMTConv::fromData(Solver, SD->getSymbolID(), Ty, Ctx.getTypeSize(Ty));
+      llvm::SMTExprRef Exp = SMTConv::fromData(Solver, Ctx, SD);
 
       Solver->reset();
       addStateConstraints(State);
 
       // Constraints are unsatisfiable
       Optional<bool> isSat = Solver->check();
-      if (!isSat.hasValue() || !isSat.getValue())
+      if (!isSat || !*isSat)
         return nullptr;
 
       // Model does not assign interpretation
@@ -147,7 +146,7 @@ public:
       Solver->addConstraint(NotExp);
 
       Optional<bool> isNotSat = Solver->check();
-      if (!isSat.hasValue() || isNotSat.getValue())
+      if (!isNotSat || *isNotSat)
         return nullptr;
 
       // This is the only solution, store it
@@ -342,10 +341,10 @@ protected:
     addStateConstraints(NewState);
 
     Optional<bool> res = Solver->check();
-    if (!res.hasValue())
+    if (!res)
       Cached[hash] = ConditionTruthVal();
     else
-      Cached[hash] = ConditionTruthVal(res.getValue());
+      Cached[hash] = ConditionTruthVal(res.value());
 
     return Cached[hash];
   }

@@ -100,6 +100,9 @@ public:
   SourceMgr &operator=(SourceMgr &&) = default;
   ~SourceMgr() = default;
 
+  /// Return the include directories of this source manager.
+  ArrayRef<std::string> getIncludeDirs() const { return IncludeDirectories; }
+
   void setIncludeDirs(const std::vector<std::string> &Dirs) {
     IncludeDirectories = Dirs;
   }
@@ -147,6 +150,22 @@ public:
     return Buffers.size();
   }
 
+  /// Takes the source buffers from the given source manager and append them to
+  /// the current manager. `MainBufferIncludeLoc` is an optional include
+  /// location to attach to the main buffer of `SrcMgr` after it gets moved to
+  /// the current manager.
+  void takeSourceBuffersFrom(SourceMgr &SrcMgr,
+                             SMLoc MainBufferIncludeLoc = SMLoc()) {
+    if (SrcMgr.Buffers.empty())
+      return;
+
+    size_t OldNumBuffers = getNumBuffers();
+    std::move(SrcMgr.Buffers.begin(), SrcMgr.Buffers.end(),
+              std::back_inserter(Buffers));
+    SrcMgr.Buffers.clear();
+    Buffers[OldNumBuffers].IncludeLoc = MainBufferIncludeLoc;
+  }
+
   /// Search for a file with the specified name in the current directory or in
   /// one of the IncludeDirs.
   ///
@@ -155,6 +174,17 @@ public:
   /// \p IncludedFile.
   unsigned AddIncludeFile(const std::string &Filename, SMLoc IncludeLoc,
                           std::string &IncludedFile);
+
+  /// Search for a file with the specified name in the current directory or in
+  /// one of the IncludeDirs, and try to open it **without** adding to the
+  /// SourceMgr. If the opened file is intended to be added to the source
+  /// manager, prefer `AddIncludeFile` instead.
+  ///
+  /// If no file is found, this returns an Error, otherwise it returns the
+  /// buffer of the stacked file. The full path to the included file can be
+  /// found in \p IncludedFile.
+  ErrorOr<std::unique_ptr<MemoryBuffer>>
+  OpenIncludeFile(const std::string &Filename, std::string &IncludedFile);
 
   /// Return the ID of the buffer containing the specified location.
   ///
@@ -171,6 +201,11 @@ public:
   /// specified file. This is not a fast method.
   std::pair<unsigned, unsigned> getLineAndColumn(SMLoc Loc,
                                                  unsigned BufferID = 0) const;
+
+  /// Get a string with the \p SMLoc filename and line number
+  /// formatted in the standard style.
+  std::string getFormattedLocationNoOffset(SMLoc Loc,
+                                           bool IncludePath = false) const;
 
   /// Given a line and column number in a mapped buffer, turn it into an SMLoc.
   /// This will return a null SMLoc if the line/column location is invalid.

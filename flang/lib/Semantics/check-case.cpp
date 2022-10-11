@@ -9,6 +9,7 @@
 #include "check-case.h"
 #include "flang/Common/idioms.h"
 #include "flang/Common/reference.h"
+#include "flang/Common/template.h"
 #include "flang/Evaluate/fold.h"
 #include "flang/Evaluate/type.h"
 #include "flang/Parser/parse-tree.h"
@@ -42,14 +43,14 @@ private:
     const auto &stmt{std::get<parser::Statement<parser::CaseStmt>>(c.t)};
     const parser::CaseStmt &caseStmt{stmt.statement};
     const auto &selector{std::get<parser::CaseSelector>(caseStmt.t)};
-    std::visit(
+    common::visit(
         common::visitors{
             [&](const std::list<parser::CaseValueRange> &ranges) {
               for (const auto &range : ranges) {
                 auto pair{ComputeBounds(range)};
                 if (pair.first && pair.second && *pair.first > *pair.second) {
                   context_.Say(stmt.source,
-                      "CASE has lower bound greater than upper bound"_en_US);
+                      "CASE has lower bound greater than upper bound"_warn_en_US);
                 } else {
                   if constexpr (T::category == TypeCategory::Logical) { // C1148
                     if ((pair.first || pair.second) &&
@@ -78,15 +79,31 @@ private:
       if (type && type->category() == caseExprType_.category() &&
           (type->category() != TypeCategory::Character ||
               type->kind() == caseExprType_.kind())) {
-        x->v = evaluate::Fold(context_.foldingContext(),
-            evaluate::ConvertToType(T::GetType(), std::move(*x->v)));
-        if (x->v) {
-          if (auto value{evaluate::GetScalarConstantValue<T>(*x->v)}) {
-            return *value;
+        parser::Messages buffer; // discarded folding messages
+        parser::ContextualMessages foldingMessages{expr.source, &buffer};
+        evaluate::FoldingContext foldingContext{
+            context_.foldingContext(), foldingMessages};
+        auto folded{evaluate::Fold(foldingContext, SomeExpr{*x->v})};
+        if (auto converted{evaluate::Fold(foldingContext,
+                evaluate::ConvertToType(T::GetType(), SomeExpr{folded}))}) {
+          if (auto value{evaluate::GetScalarConstantValue<T>(*converted)}) {
+            auto back{evaluate::Fold(foldingContext,
+                evaluate::ConvertToType(*type, SomeExpr{*converted}))};
+            if (back == folded) {
+              x->v = converted;
+              return value;
+            } else {
+              context_.Say(expr.source,
+                  "CASE value (%s) overflows type (%s) of SELECT CASE expression"_warn_en_US,
+                  folded.AsFortran(), caseExprType_.AsFortran());
+              hasErrors_ = true;
+              return std::nullopt;
+            }
           }
         }
-        context_.Say(
-            expr.source, "CASE value must be a constant scalar"_err_en_US);
+        context_.Say(expr.source,
+            "CASE value (%s) must be a constant scalar"_err_en_US,
+            x->v->AsFortran());
       } else {
         std::string typeStr{type ? type->AsFortran() : "typeless"s};
         context_.Say(expr.source,
@@ -100,25 +117,26 @@ private:
 
   using PairOfValues = std::pair<std::optional<Value>, std::optional<Value>>;
   PairOfValues ComputeBounds(const parser::CaseValueRange &range) {
-    return std::visit(common::visitors{
-                          [&](const parser::CaseValue &x) {
-                            auto value{GetValue(x)};
-                            return PairOfValues{value, value};
-                          },
-                          [&](const parser::CaseValueRange::Range &x) {
-                            std::optional<Value> lo, hi;
-                            if (x.lower) {
-                              lo = GetValue(*x.lower);
-                            }
-                            if (x.upper) {
-                              hi = GetValue(*x.upper);
-                            }
-                            if ((x.lower && !lo) || (x.upper && !hi)) {
-                              return PairOfValues{}; // error case
-                            }
-                            return PairOfValues{std::move(lo), std::move(hi)};
-                          },
-                      },
+    return common::visit(
+        common::visitors{
+            [&](const parser::CaseValue &x) {
+              auto value{GetValue(x)};
+              return PairOfValues{value, value};
+            },
+            [&](const parser::CaseValueRange::Range &x) {
+              std::optional<Value> lo, hi;
+              if (x.lower) {
+                lo = GetValue(*x.lower);
+              }
+              if (x.upper) {
+                hi = GetValue(*x.upper);
+              }
+              if ((x.lower && !lo) || (x.upper && !hi)) {
+                return PairOfValues{}; // error case
+              }
+              return PairOfValues{std::move(lo), std::move(hi)};
+            },
+        },
         range.u);
   }
 
@@ -201,13 +219,29 @@ private:
   bool hasErrors_{false};
 };
 
+template <TypeCategory CAT> struct TypeVisitor {
+  using Result = bool;
+  using Types = evaluate::CategoryTypes<CAT>;
+  template <typename T> Result Test() {
+    if (T::kind == exprType.kind()) {
+      CaseValues<T>(context, exprType).Check(caseList);
+      return true;
+    } else {
+      return false;
+    }
+  }
+  SemanticsContext &context;
+  const evaluate::DynamicType &exprType;
+  const std::list<parser::CaseConstruct::Case> &caseList;
+};
+
 void CaseChecker::Enter(const parser::CaseConstruct &construct) {
   const auto &selectCaseStmt{
       std::get<parser::Statement<parser::SelectCaseStmt>>(construct.t)};
   const auto &selectCase{selectCaseStmt.statement};
   const auto &selectExpr{
       std::get<parser::Scalar<parser::Expr>>(selectCase.t).thing};
-  const auto *x{GetExpr(selectExpr)};
+  const auto *x{GetExpr(context_, selectExpr)};
   if (!x) {
     return; // expression semantics failed
   }
@@ -216,32 +250,17 @@ void CaseChecker::Enter(const parser::CaseConstruct &construct) {
         std::get<std::list<parser::CaseConstruct::Case>>(construct.t)};
     switch (exprType->category()) {
     case TypeCategory::Integer:
-      CaseValues<evaluate::Type<TypeCategory::Integer, 16>>{context_, *exprType}
-          .Check(caseList);
+      common::SearchTypes(
+          TypeVisitor<TypeCategory::Integer>{context_, *exprType, caseList});
       return;
     case TypeCategory::Logical:
       CaseValues<evaluate::Type<TypeCategory::Logical, 1>>{context_, *exprType}
           .Check(caseList);
       return;
     case TypeCategory::Character:
-      switch (exprType->kind()) {
-        SWITCH_COVERS_ALL_CASES
-      case 1:
-        CaseValues<evaluate::Type<TypeCategory::Character, 1>>{
-            context_, *exprType}
-            .Check(caseList);
-        return;
-      case 2:
-        CaseValues<evaluate::Type<TypeCategory::Character, 2>>{
-            context_, *exprType}
-            .Check(caseList);
-        return;
-      case 4:
-        CaseValues<evaluate::Type<TypeCategory::Character, 4>>{
-            context_, *exprType}
-            .Check(caseList);
-        return;
-      }
+      common::SearchTypes(
+          TypeVisitor<TypeCategory::Character>{context_, *exprType, caseList});
+      return;
     default:
       break;
     }

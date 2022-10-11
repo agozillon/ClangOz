@@ -50,7 +50,7 @@ std::size_t TotalElementCount(const ConstantSubscripts &);
 
 // Validate dimension re-ordering like ORDER in RESHAPE.
 // On success, return a vector that can be used as dimOrder in
-// ConstantBound::IncrementSubscripts().
+// ConstantBounds::IncrementSubscripts().
 std::optional<std::vector<int>> ValidateDimensionOrder(
     int rank, const std::vector<int> &order);
 
@@ -64,7 +64,9 @@ public:
   ~ConstantBounds();
   const ConstantSubscripts &shape() const { return shape_; }
   const ConstantSubscripts &lbounds() const { return lbounds_; }
+  ConstantSubscripts ComputeUbounds(std::optional<int> dim) const;
   void set_lbounds(ConstantSubscripts &&);
+  void SetLowerBoundsToOne();
   int Rank() const { return GetRank(shape_); }
   Constant<SubscriptInteger> SHAPE() const;
 
@@ -97,8 +99,7 @@ public:
 
   template <typename A>
   ConstantBase(const A &x, Result res = Result{}) : result_{res}, values_{x} {}
-  template <typename A, typename = common::NoLvalue<A>>
-  ConstantBase(A &&x, Result res = Result{})
+  ConstantBase(ELEMENT &&x, Result res = Result{})
       : result_{res}, values_{std::move(x)} {}
   ConstantBase(
       std::vector<Element> &&, ConstantSubscripts &&, Result = Result{});
@@ -141,7 +142,8 @@ public:
     }
   }
 
-  // Apply subscripts.
+  // Apply subscripts.  Excess subscripts are ignored, including the
+  // case of a scalar.
   Element At(const ConstantSubscripts &) const;
 
   Constant Reshape(ConstantSubscripts &&) const;
@@ -168,6 +170,7 @@ public:
   bool empty() const;
   std::size_t size() const;
 
+  const Scalar<Result> &values() const { return values_; }
   ConstantSubscript LEN() const { return length_; }
 
   std::optional<Scalar<Result>> GetScalarValue() const {
@@ -178,14 +181,15 @@ public:
     }
   }
 
-  // Apply subscripts
+  // Apply subscripts, if any.
   Scalar<Result> At(const ConstantSubscripts &) const;
+
+  // Extract substring(s); returns nullopt for errors.
+  std::optional<Constant> Substring(ConstantSubscript, ConstantSubscript) const;
 
   Constant Reshape(ConstantSubscripts &&) const;
   llvm::raw_ostream &AsFortran(llvm::raw_ostream &) const;
-  static constexpr DynamicType GetType() {
-    return {TypeCategory::Character, KIND};
-  }
+  DynamicType GetType() const { return {KIND, length_}; }
   std::size_t CopyFrom(const Constant &source, std::size_t count,
       ConstantSubscripts &resultSubscripts, const std::vector<int> *dimOrder);
 
@@ -195,8 +199,11 @@ private:
 };
 
 class StructureConstructor;
-using StructureConstructorValues =
-    std::map<SymbolRef, common::CopyableIndirection<Expr<SomeType>>>;
+struct ComponentCompare {
+  bool operator()(SymbolRef x, SymbolRef y) const;
+};
+using StructureConstructorValues = std::map<SymbolRef,
+    common::CopyableIndirection<Expr<SomeType>>, ComponentCompare>;
 
 template <>
 class Constant<SomeDerived>

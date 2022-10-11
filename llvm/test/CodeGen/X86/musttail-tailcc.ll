@@ -4,9 +4,9 @@
 
 ; tailcc will turn all of these musttail calls into tail calls.
 
-declare tailcc i32 @tailcallee(i32 %a1, i32 %a2)
+declare dso_local tailcc i32 @tailcallee(i32 %a1, i32 %a2)
 
-define tailcc i32 @tailcaller(i32 %in1, i32 %in2) nounwind {
+define dso_local tailcc i32 @tailcaller(i32 %in1, i32 %in2) nounwind {
 ; X64-LABEL: tailcaller:
 ; X64:       # %bb.0: # %entry
 ; X64-NEXT:    jmp tailcallee # TAILCALL
@@ -19,9 +19,9 @@ entry:
   ret i32 %tmp11
 }
 
-declare tailcc i8* @alias_callee()
+declare dso_local tailcc ptr @alias_callee()
 
-define tailcc noalias i8* @noalias_caller() nounwind {
+define tailcc noalias ptr @noalias_caller() nounwind {
 ; X64-LABEL: noalias_caller:
 ; X64:       # %bb.0:
 ; X64-NEXT:    jmp alias_callee # TAILCALL
@@ -29,13 +29,13 @@ define tailcc noalias i8* @noalias_caller() nounwind {
 ; X32-LABEL: noalias_caller:
 ; X32:       # %bb.0:
 ; X32-NEXT:    jmp alias_callee # TAILCALL
-  %p = musttail call tailcc i8* @alias_callee()
-  ret i8* %p
+  %p = musttail call tailcc ptr @alias_callee()
+  ret ptr %p
 }
 
-declare tailcc noalias i8* @noalias_callee()
+declare dso_local tailcc noalias ptr @noalias_callee()
 
-define tailcc i8* @alias_caller() nounwind {
+define dso_local tailcc ptr @alias_caller() nounwind {
 ; X64-LABEL: alias_caller:
 ; X64:       # %bb.0:
 ; X64-NEXT:    jmp noalias_callee # TAILCALL
@@ -43,11 +43,11 @@ define tailcc i8* @alias_caller() nounwind {
 ; X32-LABEL: alias_caller:
 ; X32:       # %bb.0:
 ; X32-NEXT:    jmp noalias_callee # TAILCALL
-  %p = musttail call tailcc noalias i8* @noalias_callee()
-  ret i8* %p
+  %p = musttail call tailcc noalias ptr @noalias_callee()
+  ret ptr %p
 }
 
-define tailcc void @void_test(i32, i32, i32, i32) {
+define dso_local tailcc void @void_test(i32, i32, i32, i32) {
 ; X64-LABEL: void_test:
 ; X64:       # %bb.0: # %entry
 ; X64-NEXT:    jmp void_test # TAILCALL
@@ -69,7 +69,7 @@ define tailcc void @void_test(i32, i32, i32, i32) {
    ret void
 }
 
-define tailcc i1 @i1test(i32, i32, i32, i32) {
+define dso_local tailcc i1 @i1test(i32, i32, i32, i32) {
 ; X64-LABEL: i1test:
 ; X64:       # %bb.0: # %entry
 ; X64-NEXT:    jmp i1test # TAILCALL

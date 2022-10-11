@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang-c/Index.h"
+#include "clang-c/Rewrite.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
@@ -735,4 +736,285 @@ TEST_F(LibclangSerializationTest, TokenKindsAreCorrectAfterLoading) {
   ASSERT_TRUE(SaveAndLoadTU(ASTName));
 
   CheckTokenKinds();
+}
+
+TEST_F(LibclangParseTest, clang_getVarDeclInitializer) {
+  std::string Main = "main.cpp";
+  WriteFile(Main, "int foo() { return 5; }; const int a = foo();");
+  ClangTU = clang_parseTranslationUnit(Index, Main.c_str(), nullptr, 0, nullptr,
+                                       0, TUFlags);
+
+  CXCursor C = clang_getTranslationUnitCursor(ClangTU);
+  clang_visitChildren(
+      C,
+      [](CXCursor cursor, CXCursor parent,
+         CXClientData client_data) -> CXChildVisitResult {
+        if (clang_getCursorKind(cursor) == CXCursor_VarDecl) {
+          const CXCursor Initializer = clang_Cursor_getVarDeclInitializer(cursor);
+          EXPECT_FALSE(clang_Cursor_isNull(Initializer));
+          CXString Spelling = clang_getCursorSpelling(Initializer);
+          const char* const SpellingCSstr = clang_getCString(Spelling);
+          EXPECT_TRUE(SpellingCSstr);
+          EXPECT_EQ(std::string(SpellingCSstr), std::string("foo"));
+          clang_disposeString(Spelling);
+          return CXChildVisit_Break;
+        }
+        return CXChildVisit_Continue;
+      },
+      nullptr);
+}
+
+TEST_F(LibclangParseTest, clang_hasVarDeclGlobalStorageFalse) {
+  std::string Main = "main.cpp";
+  WriteFile(Main, "void foo() { int a; }");
+  ClangTU = clang_parseTranslationUnit(Index, Main.c_str(), nullptr, 0, nullptr,
+                                       0, TUFlags);
+
+  CXCursor C = clang_getTranslationUnitCursor(ClangTU);
+  clang_visitChildren(
+      C,
+      [](CXCursor cursor, CXCursor parent,
+         CXClientData client_data) -> CXChildVisitResult {
+        if (clang_getCursorKind(cursor) == CXCursor_VarDecl) {
+          EXPECT_FALSE(clang_Cursor_hasVarDeclGlobalStorage(cursor));
+          return CXChildVisit_Break;
+        }
+        return CXChildVisit_Continue;
+      },
+      nullptr);
+}
+
+TEST_F(LibclangParseTest, clang_Cursor_hasVarDeclGlobalStorageTrue) {
+  std::string Main = "main.cpp";
+  WriteFile(Main, "int a;");
+  ClangTU = clang_parseTranslationUnit(Index, Main.c_str(), nullptr, 0, nullptr,
+                                       0, TUFlags);
+
+  CXCursor C = clang_getTranslationUnitCursor(ClangTU);
+  clang_visitChildren(
+      C,
+      [](CXCursor cursor, CXCursor parent,
+         CXClientData client_data) -> CXChildVisitResult {
+        if (clang_getCursorKind(cursor) == CXCursor_VarDecl) {
+          EXPECT_TRUE(clang_Cursor_hasVarDeclGlobalStorage(cursor));
+          return CXChildVisit_Break;
+        }
+        return CXChildVisit_Continue;
+      },
+      nullptr);
+}
+
+TEST_F(LibclangParseTest, clang_Cursor_hasVarDeclExternalStorageFalse) {
+  std::string Main = "main.cpp";
+  WriteFile(Main, "int a;");
+  ClangTU = clang_parseTranslationUnit(Index, Main.c_str(), nullptr, 0, nullptr,
+                                       0, TUFlags);
+
+  CXCursor C = clang_getTranslationUnitCursor(ClangTU);
+  clang_visitChildren(
+      C,
+      [](CXCursor cursor, CXCursor parent,
+         CXClientData client_data) -> CXChildVisitResult {
+        if (clang_getCursorKind(cursor) == CXCursor_VarDecl) {
+          EXPECT_FALSE(clang_Cursor_hasVarDeclExternalStorage(cursor));
+          return CXChildVisit_Break;
+        }
+        return CXChildVisit_Continue;
+      },
+      nullptr);
+}
+
+TEST_F(LibclangParseTest, clang_Cursor_hasVarDeclExternalStorageTrue) {
+  std::string Main = "main.cpp";
+  WriteFile(Main, "extern int a;");
+  ClangTU = clang_parseTranslationUnit(Index, Main.c_str(), nullptr, 0, nullptr,
+                                       0, TUFlags);
+
+  CXCursor C = clang_getTranslationUnitCursor(ClangTU);
+  clang_visitChildren(
+      C,
+      [](CXCursor cursor, CXCursor parent,
+         CXClientData client_data) -> CXChildVisitResult {
+        if (clang_getCursorKind(cursor) == CXCursor_VarDecl) {
+          EXPECT_TRUE(clang_Cursor_hasVarDeclExternalStorage(cursor));
+          return CXChildVisit_Break;
+        }
+        return CXChildVisit_Continue;
+      },
+      nullptr);
+}
+
+TEST_F(LibclangParseTest, clang_getUnqualifiedTypeRemovesQualifiers) {
+  std::string Header = "header.h";
+  WriteFile(Header, "void foo1(const int);\n"
+                    "void foo2(volatile int);\n"
+                    "void foo3(const volatile int);\n"
+                    "void foo4(int* const);\n"
+                    "void foo5(int* volatile);\n"
+                    "void foo6(int* restrict);\n"
+                    "void foo7(int* const volatile);\n"
+                    "void foo8(int* volatile restrict);\n"
+                    "void foo9(int* const restrict);\n"
+                    "void foo10(int* const volatile restrict);\n");
+
+  auto is_qualified = [](CXType type) -> bool {
+    return clang_isConstQualifiedType(type) ||
+           clang_isVolatileQualifiedType(type) ||
+           clang_isRestrictQualifiedType(type);
+  };
+
+  auto from_CXString = [](CXString cx_string) -> std::string {
+    std::string string{clang_getCString(cx_string)};
+
+    clang_disposeString(cx_string);
+
+    return string;
+  };
+
+  ClangTU = clang_parseTranslationUnit(Index, Header.c_str(), nullptr, 0,
+                                       nullptr, 0, TUFlags);
+
+  Traverse([&is_qualified, &from_CXString](CXCursor cursor, CXCursor) {
+    if (clang_getCursorKind(cursor) == CXCursor_FunctionDecl) {
+      CXType arg_type = clang_getArgType(clang_getCursorType(cursor), 0);
+      EXPECT_TRUE(is_qualified(arg_type))
+          << "Input data '" << from_CXString(clang_getCursorSpelling(cursor))
+          << "' first argument does not have a qualified type.";
+
+      CXType unqualified_arg_type = clang_getUnqualifiedType(arg_type);
+      EXPECT_FALSE(is_qualified(unqualified_arg_type))
+          << "The type '" << from_CXString(clang_getTypeSpelling(arg_type))
+          << "' was not unqualified after a call to clang_getUnqualifiedType.";
+    }
+
+    return CXChildVisit_Continue;
+  });
+}
+
+TEST_F(LibclangParseTest, clang_getNonReferenceTypeRemovesRefQualifiers) {
+  std::string Header = "header.h";
+  WriteFile(Header, "void foo1(int&);\n"
+                    "void foo2(int&&);\n");
+
+  auto is_ref_qualified = [](CXType type) -> bool {
+    return (type.kind == CXType_LValueReference) ||
+           (type.kind == CXType_RValueReference);
+  };
+
+  auto from_CXString = [](CXString cx_string) -> std::string {
+    std::string string{clang_getCString(cx_string)};
+
+    clang_disposeString(cx_string);
+
+    return string;
+  };
+
+  const char *Args[] = {"-xc++"};
+  ClangTU = clang_parseTranslationUnit(Index, Header.c_str(), Args, 1, nullptr,
+                                       0, TUFlags);
+
+  Traverse([&is_ref_qualified, &from_CXString](CXCursor cursor, CXCursor) {
+    if (clang_getCursorKind(cursor) == CXCursor_FunctionDecl) {
+      CXType arg_type = clang_getArgType(clang_getCursorType(cursor), 0);
+      EXPECT_TRUE(is_ref_qualified(arg_type))
+          << "Input data '" << from_CXString(clang_getCursorSpelling(cursor))
+          << "' first argument does not have a ref-qualified type.";
+
+      CXType non_reference_arg_type = clang_getNonReferenceType(arg_type);
+      EXPECT_FALSE(is_ref_qualified(non_reference_arg_type))
+          << "The type '" << from_CXString(clang_getTypeSpelling(arg_type))
+          << "' ref-qualifier was not removed after a call to "
+             "clang_getNonReferenceType.";
+    }
+
+    return CXChildVisit_Continue;
+  });
+}
+
+class LibclangRewriteTest : public LibclangParseTest {
+public:
+  CXRewriter Rew = nullptr;
+  std::string Filename;
+  CXFile File = nullptr;
+
+  void SetUp() override {
+    LibclangParseTest::SetUp();
+    Filename = "file.cpp";
+    WriteFile(Filename, "int main() { return 0; }");
+    ClangTU = clang_parseTranslationUnit(Index, Filename.c_str(), nullptr, 0,
+                                         nullptr, 0, TUFlags);
+    Rew = clang_CXRewriter_create(ClangTU);
+    File = clang_getFile(ClangTU, Filename.c_str());
+  }
+  void TearDown() override {
+    clang_CXRewriter_dispose(Rew);
+    LibclangParseTest::TearDown();
+  }
+};
+
+static std::string getFileContent(const std::string& Filename) {
+  std::ifstream RewrittenFile(Filename);
+  std::string RewrittenFileContent;
+  std::string Line;
+  while (std::getline(RewrittenFile, Line)) {
+    if (RewrittenFileContent.empty())
+      RewrittenFileContent = Line;
+    else {
+      RewrittenFileContent += "\n" + Line;
+    }
+  }
+  return RewrittenFileContent;
+}
+
+TEST_F(LibclangRewriteTest, RewriteReplace) {
+  CXSourceLocation B = clang_getLocation(ClangTU, File, 1, 5);
+  CXSourceLocation E = clang_getLocation(ClangTU, File, 1, 9);
+  CXSourceRange Rng	= clang_getRange(B, E);
+
+  clang_CXRewriter_replaceText(Rew, Rng, "MAIN");
+
+  ASSERT_EQ(clang_CXRewriter_overwriteChangedFiles(Rew), 0);
+  EXPECT_EQ(getFileContent(Filename), "int MAIN() { return 0; }");
+}
+
+TEST_F(LibclangRewriteTest, RewriteReplaceShorter) {
+  CXSourceLocation B = clang_getLocation(ClangTU, File, 1, 5);
+  CXSourceLocation E = clang_getLocation(ClangTU, File, 1, 9);
+  CXSourceRange Rng	= clang_getRange(B, E);
+
+  clang_CXRewriter_replaceText(Rew, Rng, "foo");
+
+  ASSERT_EQ(clang_CXRewriter_overwriteChangedFiles(Rew), 0);
+  EXPECT_EQ(getFileContent(Filename), "int foo() { return 0; }");
+}
+
+TEST_F(LibclangRewriteTest, RewriteReplaceLonger) {
+  CXSourceLocation B = clang_getLocation(ClangTU, File, 1, 5);
+  CXSourceLocation E = clang_getLocation(ClangTU, File, 1, 9);
+  CXSourceRange Rng	= clang_getRange(B, E);
+
+  clang_CXRewriter_replaceText(Rew, Rng, "patatino");
+
+  ASSERT_EQ(clang_CXRewriter_overwriteChangedFiles(Rew), 0);
+  EXPECT_EQ(getFileContent(Filename), "int patatino() { return 0; }");
+}
+
+TEST_F(LibclangRewriteTest, RewriteInsert) {
+  CXSourceLocation Loc = clang_getLocation(ClangTU, File, 1, 5);
+
+  clang_CXRewriter_insertTextBefore(Rew, Loc, "ro");
+
+  ASSERT_EQ(clang_CXRewriter_overwriteChangedFiles(Rew), 0);
+  EXPECT_EQ(getFileContent(Filename), "int romain() { return 0; }");
+}
+
+TEST_F(LibclangRewriteTest, RewriteRemove) {
+  CXSourceLocation B = clang_getLocation(ClangTU, File, 1, 5);
+  CXSourceLocation E = clang_getLocation(ClangTU, File, 1, 9);
+  CXSourceRange Rng	= clang_getRange(B, E);
+
+  clang_CXRewriter_removeText(Rew, Rng);
+
+  ASSERT_EQ(clang_CXRewriter_overwriteChangedFiles(Rew), 0);
+  EXPECT_EQ(getFileContent(Filename), "int () { return 0; }");
 }

@@ -12,15 +12,12 @@ from lldbsuite.test import lldbutil
 
 class DataFormatterSynthTypeTestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
         # Find the line number to break at.
         self.line = line_number('main.cpp', 'break here')
 
-    @skipIfFreeBSD  # llvm.org/pr20545 bogus output confuses buildbot parser
     def test_with_run_command(self):
         """Test using Python synthetic children provider to provide a typename."""
         self.build()

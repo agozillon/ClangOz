@@ -7,11 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "TestTracer.h"
-#include "support/Context.h"
 #include "support/Trace.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/Threading.h"
@@ -28,7 +25,7 @@ using testing::ElementsAre;
 using testing::SizeIs;
 using testing::StartsWith;
 
-MATCHER_P(StringNode, Val, "") {
+MATCHER_P(stringNode, Val, "") {
   if (arg->getType() != llvm::yaml::Node::NK_Scalar) {
     *result_listener << "is a " << arg->getVerbatimTag();
     return false;
@@ -39,7 +36,7 @@ MATCHER_P(StringNode, Val, "") {
 
 // Checks that N is a Mapping (JS object) with the expected scalar properties.
 // The object must have all the Expected properties, but may have others.
-bool VerifyObject(llvm::yaml::Node &N,
+bool verifyObject(llvm::yaml::Node &N,
                   std::map<std::string, std::string> Expected) {
   auto *M = llvm::dyn_cast<llvm::yaml::MappingNode>(&N);
   if (!M) {
@@ -61,6 +58,7 @@ bool VerifyObject(llvm::yaml::Node &N,
     if (!V) {
       ADD_FAILURE() << KS << " is not a string";
       Match = false;
+      continue;
     }
     std::string VS = V->getValue(Tmp).str();
     if (VS != I->second) {
@@ -108,24 +106,24 @@ TEST(TraceTest, SmokeTest) {
   // (The order doesn't matter, but the YAML parser is awkward to use otherwise)
   auto Prop = Root->begin();
   ASSERT_NE(Prop, Root->end()) << "Expected displayTimeUnit property";
-  ASSERT_THAT(Prop->getKey(), StringNode("displayTimeUnit"));
-  EXPECT_THAT(Prop->getValue(), StringNode("ns"));
+  ASSERT_THAT(Prop->getKey(), stringNode("displayTimeUnit"));
+  EXPECT_THAT(Prop->getValue(), stringNode("ns"));
   ASSERT_NE(++Prop, Root->end()) << "Expected traceEvents property";
-  EXPECT_THAT(Prop->getKey(), StringNode("traceEvents"));
+  EXPECT_THAT(Prop->getKey(), stringNode("traceEvents"));
   auto *Events =
       llvm::dyn_cast_or_null<llvm::yaml::SequenceNode>(Prop->getValue());
   ASSERT_NE(Events, nullptr) << "traceEvents should be an array";
   auto Event = Events->begin();
   ASSERT_NE(Event, Events->end()) << "Expected process name";
-  EXPECT_TRUE(VerifyObject(*Event, {{"ph", "M"}, {"name", "process_name"}}));
+  EXPECT_TRUE(verifyObject(*Event, {{"ph", "M"}, {"name", "process_name"}}));
   if (ThreadsHaveNames) {
     ASSERT_NE(++Event, Events->end()) << "Expected thread name";
-    EXPECT_TRUE(VerifyObject(*Event, {{"ph", "M"}, {"name", "thread_name"}}));
+    EXPECT_TRUE(verifyObject(*Event, {{"ph", "M"}, {"name", "thread_name"}}));
   }
   ASSERT_NE(++Event, Events->end()) << "Expected log message";
-  EXPECT_TRUE(VerifyObject(*Event, {{"ph", "i"}, {"name", "Log"}}));
+  EXPECT_TRUE(verifyObject(*Event, {{"ph", "i"}, {"name", "Log"}}));
   ASSERT_NE(++Event, Events->end()) << "Expected span end";
-  EXPECT_TRUE(VerifyObject(*Event, {{"ph", "X"}, {"name", "A"}}));
+  EXPECT_TRUE(verifyObject(*Event, {{"ph", "X"}, {"name", "A"}}));
   ASSERT_EQ(++Event, Events->end());
   ASSERT_EQ(++Prop, Root->end());
 }
@@ -153,7 +151,7 @@ protected:
   std::vector<std::string> outputLines() {
     // Deliberately don't flush output stream, the tracer should do that.
     // This is important when clangd crashes.
-    llvm::SmallVector<llvm::StringRef, 4> Lines;
+    llvm::SmallVector<llvm::StringRef> Lines;
     llvm::StringRef(Output).split(Lines, "\r\n");
     return {Lines.begin(), Lines.end()};
   }
@@ -184,6 +182,11 @@ TEST_F(CSVMetricsTracerTest, Escaping) {
   EXPECT_THAT(outputLines(), ElementsAre(_, StartsWith(R"(d,dist,",",1)"),
                                          StartsWith(R"(d,dist,"a""b",1)"),
                                          StartsWith("d,dist,\"a\nb\",1"), ""));
+}
+
+TEST_F(CSVMetricsTracerTest, IgnoresArgs) {
+  trace::Span Tracer("Foo");
+  EXPECT_EQ(nullptr, Tracer.Args);
 }
 
 } // namespace

@@ -8,6 +8,7 @@
 
 #include "check-io.h"
 #include "flang/Common/format.h"
+#include "flang/Evaluate/tools.h"
 #include "flang/Parser/tools.h"
 #include "flang/Semantics/expression.h"
 #include "flang/Semantics/tools.h"
@@ -37,7 +38,8 @@ bool FormatErrorReporter::Say(const common::FormatMessage &msg) {
     return false;
   }
   parser::MessageFormattedText text{
-      parser::MessageFixedText(msg.text, strlen(msg.text), msg.isError),
+      parser::MessageFixedText{msg.text, strlen(msg.text),
+          msg.isError ? parser::Severity::Error : parser::Severity::Warning},
       msg.arg};
   if (formatCharBlock_.size()) {
     // The input format is a folded expression.  Error markers span the full
@@ -95,6 +97,14 @@ void IoChecker::Enter(const parser::ConnectSpec &spec) {
   }
 }
 
+// Ignore trailing spaces (12.5.6.2 p1) and convert to upper case
+static std::string Normalize(const std::string &value) {
+  auto upper{parser::ToUpperCaseLetters(value)};
+  std::size_t lastNonBlank{upper.find_last_not_of(" ")};
+  upper.resize(lastNonBlank == std::string::npos ? 0 : lastNonBlank + 1);
+  return upper;
+}
+
 void IoChecker::Enter(const parser::ConnectSpec::CharExpr &spec) {
   IoSpecKind specKind{};
   using ParseKind = parser::ConnectSpec::CharExpr::Kind;
@@ -135,6 +145,9 @@ void IoChecker::Enter(const parser::ConnectSpec::CharExpr &spec) {
   case ParseKind::Sign:
     specKind = IoSpecKind::Sign;
     break;
+  case ParseKind::Carriagecontrol:
+    specKind = IoSpecKind::Carriagecontrol;
+    break;
   case ParseKind::Convert:
     specKind = IoSpecKind::Convert;
     break;
@@ -145,17 +158,25 @@ void IoChecker::Enter(const parser::ConnectSpec::CharExpr &spec) {
   SetSpecifier(specKind);
   if (const std::optional<std::string> charConst{GetConstExpr<std::string>(
           std::get<parser::ScalarDefaultCharExpr>(spec.t))}) {
-    std::string s{parser::ToUpperCaseLetters(*charConst)};
+    std::string s{Normalize(*charConst)};
     if (specKind == IoSpecKind::Access) {
       flags_.set(Flag::KnownAccess);
       flags_.set(Flag::AccessDirect, s == "DIRECT");
       flags_.set(Flag::AccessStream, s == "STREAM");
     }
     CheckStringValue(specKind, *charConst, parser::FindSourceLocation(spec));
+    if (specKind == IoSpecKind::Carriagecontrol &&
+        (s == "FORTRAN" || s == "NONE")) {
+      context_.Say(parser::FindSourceLocation(spec),
+          "Unimplemented %s value '%s'"_err_en_US,
+          parser::ToUpperCaseLetters(common::EnumToString(specKind)),
+          *charConst);
+    }
   }
 }
 
-void IoChecker::Enter(const parser::ConnectSpec::Newunit &) {
+void IoChecker::Enter(const parser::ConnectSpec::Newunit &var) {
+  CheckForDefinableVariable(var, "NEWUNIT");
   SetSpecifier(IoSpecKind::Newunit);
 }
 
@@ -191,31 +212,44 @@ void IoChecker::Enter(const parser::FileUnitNumber &) {
 void IoChecker::Enter(const parser::Format &spec) {
   SetSpecifier(IoSpecKind::Fmt);
   flags_.set(Flag::FmtOrNml);
-  std::visit(
+  common::visit(
       common::visitors{
           [&](const parser::Label &) { flags_.set(Flag::LabelFmt); },
           [&](const parser::Star &) { flags_.set(Flag::StarFmt); },
           [&](const parser::Expr &format) {
-            const SomeExpr *expr{GetExpr(format)};
+            const SomeExpr *expr{GetExpr(context_, format)};
             if (!expr) {
               return;
             }
             auto type{expr->GetType()};
-            if (!type ||
-                (type->category() != TypeCategory::Integer &&
-                    type->category() != TypeCategory::Character) ||
-                type->kind() !=
-                    context_.defaultKinds().GetDefaultKind(type->category())) {
-              context_.Say(format.source,
-                  "Format expression must be default character or integer"_err_en_US);
-              return;
-            }
-            if (type->category() == TypeCategory::Integer) {
+            if (type && type->category() == TypeCategory::Integer &&
+                type->kind() ==
+                    context_.defaultKinds().GetDefaultKind(type->category()) &&
+                expr->Rank() == 0) {
               flags_.set(Flag::AssignFmt);
-              if (expr->Rank() != 0 || !IsVariable(*expr)) {
+              if (!IsVariable(*expr)) {
                 context_.Say(format.source,
                     "Assigned format label must be a scalar variable"_err_en_US);
               }
+              return;
+            }
+            if (type && type->category() != TypeCategory::Character &&
+                (type->category() != TypeCategory::Integer ||
+                    expr->Rank() > 0) &&
+                context_.IsEnabled(
+                    common::LanguageFeature::NonCharacterFormat)) {
+              // Legacy extension: using non-character variables, typically
+              // DATA-initialized with Hollerith, as format expressions.
+              if (context_.ShouldWarn(
+                      common::LanguageFeature::NonCharacterFormat)) {
+                context_.Say(format.source,
+                    "Non-character format expression is not standard"_port_en_US);
+              }
+            } else if (!type ||
+                type->kind() !=
+                    context_.defaultKinds().GetDefaultKind(type->category())) {
+              context_.Say(format.source,
+                  "Format expression must be default character or default scalar integer"_err_en_US);
               return;
             }
             flags_.set(Flag::CharFmt);
@@ -266,10 +300,11 @@ void IoChecker::Enter(const parser::IdExpr &) { SetSpecifier(IoSpecKind::Id); }
 
 void IoChecker::Enter(const parser::IdVariable &spec) {
   SetSpecifier(IoSpecKind::Id);
-  auto expr{GetExpr(spec)};
+  const auto *expr{GetExpr(context_, spec)};
   if (!expr || !expr->GetType()) {
     return;
   }
+  CheckForDefinableVariable(spec, "ID");
   int kind{expr->GetType()->kind()};
   int defaultKind{context_.GetDefaultKind(TypeCategory::Integer)};
   if (kind < defaultKind) {
@@ -281,21 +316,16 @@ void IoChecker::Enter(const parser::IdVariable &spec) {
 
 void IoChecker::Enter(const parser::InputItem &spec) {
   flags_.set(Flag::DataList);
-  if (const parser::Variable * var{std::get_if<parser::Variable>(&spec.u)}) {
-    const parser::Name &name{GetLastName(*var)};
-    if (name.symbol) {
-      if (auto *details{name.symbol->detailsIf<ObjectEntityDetails>()}) {
-        // TODO: Determine if this check is needed at all, and if so, replace
-        // the false subcondition with a check for a whole array.  Otherwise,
-        // the check incorrectly flags array element and section references.
-        if (details->IsAssumedSize() && false) {
-          // This check may be superseded by C928 or C1002.
-          context_.Say(name.source,
-              "'%s' must not be a whole assumed size array"_err_en_US,
-              name.source); // C1231
-        }
-      }
-    }
+  const parser::Variable *var{std::get_if<parser::Variable>(&spec.u)};
+  if (!var) {
+    return;
+  }
+  CheckForDefinableVariable(*var, "Input");
+  if (auto expr{AnalyzeExpr(context_, *var)}) {
+    CheckForBadIoComponent(*expr,
+        flags_.test(Flag::FmtOrNml) ? GenericKind::DefinedIo::ReadFormatted
+                                    : GenericKind::DefinedIo::ReadUnformatted,
+        var->GetSource());
   }
 }
 
@@ -379,6 +409,9 @@ void IoChecker::Enter(const parser::InquireSpec::CharVar &spec) {
   case ParseKind::Write:
     specKind = IoSpecKind::Write;
     break;
+  case ParseKind::Carriagecontrol:
+    specKind = IoSpecKind::Carriagecontrol;
+    break;
   case ParseKind::Convert:
     specKind = IoSpecKind::Convert;
     break;
@@ -386,6 +419,8 @@ void IoChecker::Enter(const parser::InquireSpec::CharVar &spec) {
     specKind = IoSpecKind::Dispose;
     break;
   }
+  CheckForDefinableVariable(std::get<parser::ScalarDefaultCharVariable>(spec.t),
+      parser::ToUpperCaseLetters(common::EnumToString(specKind)));
   SetSpecifier(specKind);
 }
 
@@ -412,6 +447,8 @@ void IoChecker::Enter(const parser::InquireSpec::IntVar &spec) {
     specKind = IoSpecKind::Size;
     break;
   }
+  CheckForDefinableVariable(std::get<parser::ScalarIntVariable>(spec.t),
+      parser::ToUpperCaseLetters(common::EnumToString(specKind)));
   SetSpecifier(specKind);
 }
 
@@ -448,8 +485,7 @@ void IoChecker::Enter(const parser::IoControlSpec::Asynchronous &spec) {
   SetSpecifier(IoSpecKind::Asynchronous);
   if (const std::optional<std::string> charConst{
           GetConstExpr<std::string>(spec)}) {
-    flags_.set(
-        Flag::AsynchronousYes, parser::ToUpperCaseLetters(*charConst) == "YES");
+    flags_.set(Flag::AsynchronousYes, Normalize(*charConst) == "YES");
     CheckStringValue(IoSpecKind::Asynchronous, *charConst,
         parser::FindSourceLocation(spec)); // C1223
   }
@@ -485,8 +521,7 @@ void IoChecker::Enter(const parser::IoControlSpec::CharExpr &spec) {
   if (const std::optional<std::string> charConst{GetConstExpr<std::string>(
           std::get<parser::ScalarDefaultCharExpr>(spec.t))}) {
     if (specKind == IoSpecKind::Advance) {
-      flags_.set(
-          Flag::AdvanceYes, parser::ToUpperCaseLetters(*charConst) == "YES");
+      flags_.set(Flag::AdvanceYes, Normalize(*charConst) == "YES");
     }
     CheckStringValue(specKind, *charConst, parser::FindSourceLocation(spec));
   }
@@ -500,18 +535,20 @@ void IoChecker::Enter(const parser::IoControlSpec::Rec &) {
   SetSpecifier(IoSpecKind::Rec);
 }
 
-void IoChecker::Enter(const parser::IoControlSpec::Size &) {
+void IoChecker::Enter(const parser::IoControlSpec::Size &var) {
+  CheckForDefinableVariable(var, "SIZE");
   SetSpecifier(IoSpecKind::Size);
 }
 
 void IoChecker::Enter(const parser::IoUnit &spec) {
   if (const parser::Variable * var{std::get_if<parser::Variable>(&spec.u)}) {
-    // TODO: C1201 - internal file variable must not be an array section ...
-    if (auto expr{GetExpr(*var)}) {
-      if (!ExprTypeKindIsDefault(*expr, context_)) {
-        // This may be too restrictive; other kinds may be valid.
-        context_.Say( // C1202
-            "Invalid character kind for an internal file variable"_err_en_US);
+    if (stmt_ == IoStmtKind::Write) {
+      CheckForDefinableVariable(*var, "Internal file");
+    }
+    if (const auto *expr{GetExpr(context_, *var)}) {
+      if (HasVectorSubscript(*expr)) {
+        context_.Say(parser::FindSourceLocation(*var), // C1201
+            "Internal file must not have a vector subscript"_err_en_US);
       }
     }
     SetSpecifier(IoSpecKind::Unit);
@@ -522,13 +559,36 @@ void IoChecker::Enter(const parser::IoUnit &spec) {
   }
 }
 
-void IoChecker::Enter(const parser::MsgVariable &) {
+void IoChecker::Enter(const parser::MsgVariable &var) {
+  if (stmt_ == IoStmtKind::None) {
+    // allocate, deallocate, image control
+    CheckForDefinableVariable(var, "ERRMSG");
+    return;
+  }
+  CheckForDefinableVariable(var, "IOMSG");
   SetSpecifier(IoSpecKind::Iomsg);
 }
 
-void IoChecker::Enter(const parser::OutputItem &) {
+void IoChecker::Enter(const parser::OutputItem &item) {
   flags_.set(Flag::DataList);
-  // TODO: C1233 - output item must not be a procedure pointer
+  if (const auto *x{std::get_if<parser::Expr>(&item.u)}) {
+    if (const auto *expr{GetExpr(context_, *x)}) {
+      if (evaluate::IsBOZLiteral(*expr)) {
+        context_.Say(parser::FindSourceLocation(*x), // C7109
+            "Output item must not be a BOZ literal constant"_err_en_US);
+      }
+      const Symbol *last{GetLastSymbol(*expr)};
+      if (last && IsProcedurePointer(*last)) {
+        context_.Say(parser::FindSourceLocation(*x),
+            "Output item must not be a procedure pointer"_err_en_US); // C1233
+      }
+      CheckForBadIoComponent(*expr,
+          flags_.test(Flag::FmtOrNml)
+              ? GenericKind::DefinedIo::WriteFormatted
+              : GenericKind::DefinedIo::WriteUnformatted,
+          parser::FindSourceLocation(item));
+    }
+  }
 }
 
 void IoChecker::Enter(const parser::StatusExpr &spec) {
@@ -536,7 +596,7 @@ void IoChecker::Enter(const parser::StatusExpr &spec) {
   if (const std::optional<std::string> charConst{
           GetConstExpr<std::string>(spec)}) {
     // Status values for Open and Close are different.
-    std::string s{parser::ToUpperCaseLetters(*charConst)};
+    std::string s{Normalize(*charConst)};
     if (stmt_ == IoStmtKind::Open) {
       flags_.set(Flag::KnownStatus);
       flags_.set(Flag::StatusNew, s == "NEW");
@@ -555,12 +615,14 @@ void IoChecker::Enter(const parser::StatusExpr &spec) {
   }
 }
 
-void IoChecker::Enter(const parser::StatVariable &) {
+void IoChecker::Enter(const parser::StatVariable &var) {
   if (stmt_ == IoStmtKind::None) {
-    // ALLOCATE & DEALLOCATE
-  } else {
-    SetSpecifier(IoSpecKind::Iostat);
+    // allocate, deallocate, image control
+    CheckForDefinableVariable(var, "STAT");
+    return;
   }
+  CheckForDefinableVariable(var, "IOSTAT");
+  SetSpecifier(IoSpecKind::Iostat);
 }
 
 void IoChecker::Leave(const parser::BackspaceStmt &) {
@@ -797,18 +859,29 @@ void IoChecker::CheckStringValue(IoSpecKind specKind, const std::string &value,
       {IoSpecKind::Status,
           // Open values; Close values are {"DELETE", "KEEP"}.
           {"NEW", "OLD", "REPLACE", "SCRATCH", "UNKNOWN"}},
+      {IoSpecKind::Carriagecontrol, {"LIST", "FORTRAN", "NONE"}},
       {IoSpecKind::Convert, {"BIG_ENDIAN", "LITTLE_ENDIAN", "NATIVE"}},
       {IoSpecKind::Dispose, {"DELETE", "KEEP"}},
   };
-  if (!specValues.at(specKind).count(parser::ToUpperCaseLetters(value))) {
-    context_.Say(source, "Invalid %s value '%s'"_err_en_US,
-        parser::ToUpperCaseLetters(common::EnumToString(specKind)), value);
+  auto upper{Normalize(value)};
+  if (specValues.at(specKind).count(upper) == 0) {
+    if (specKind == IoSpecKind::Access && upper == "APPEND") {
+      if (context_.languageFeatures().ShouldWarn(
+              common::LanguageFeature::OpenAccessAppend)) {
+        context_.Say(source,
+            "ACCESS='%s' interpreted as POSITION='%s'"_port_en_US, value,
+            upper);
+      }
+    } else {
+      context_.Say(source, "Invalid %s value '%s'"_err_en_US,
+          parser::ToUpperCaseLetters(common::EnumToString(specKind)), value);
+    }
   }
 }
 
 // CheckForRequiredSpecifier and CheckForProhibitedSpecifier functions
 // need conditions to check, and string arguments to insert into a message.
-// A IoSpecKind provides both an absence/presence condition and a string
+// An IoSpecKind provides both an absence/presence condition and a string
 // argument (its name).  A (condition, string) pair provides an arbitrary
 // condition and an arbitrary string.
 
@@ -893,10 +966,48 @@ void IoChecker::CheckForProhibitedSpecifier(
   }
 }
 
+template <typename A>
+void IoChecker::CheckForDefinableVariable(
+    const A &variable, const std::string &s) const {
+  if (const auto *var{parser::Unwrap<parser::Variable>(variable)}) {
+    if (auto expr{AnalyzeExpr(context_, *var)}) {
+      auto at{var->GetSource()};
+      if (auto whyNot{WhyNotModifiable(at, *expr, context_.FindScope(at),
+              true /*vectorSubscriptIsOk*/)}) {
+        const Symbol *base{GetFirstSymbol(*expr)};
+        context_
+            .Say(at, "%s variable '%s' must be definable"_err_en_US, s,
+                (base ? base->name() : at).ToString())
+            .Attach(std::move(*whyNot));
+      }
+    }
+  }
+}
+
 void IoChecker::CheckForPureSubprogram() const { // C1597
   CHECK(context_.location());
-  if (FindPureProcedureContaining(context_.FindScope(*context_.location()))) {
-    context_.Say("External I/O is not allowed in a pure subprogram"_err_en_US);
+  if (const Scope *
+      scope{context_.globalScope().FindScope(*context_.location())}) {
+    if (FindPureProcedureContaining(*scope)) {
+      context_.Say(
+          "External I/O is not allowed in a pure subprogram"_err_en_US);
+    }
+  }
+}
+
+// Fortran 2018, 12.6.3 paragraph 7
+void IoChecker::CheckForBadIoComponent(const SomeExpr &expr,
+    GenericKind::DefinedIo which, parser::CharBlock where) const {
+  if (auto type{expr.GetType()}) {
+    if (type->category() == TypeCategory::Derived &&
+        !type->IsUnlimitedPolymorphic()) {
+      if (const Symbol *
+          bad{FindUnsafeIoDirectComponent(
+              which, type->GetDerivedTypeSpec(), &context_.FindScope(where))}) {
+        context_.SayWithDecl(*bad, where,
+            "Derived type in I/O cannot have an allocatable or pointer direct component unless using defined I/O"_err_en_US);
+      }
+    }
   }
 }
 

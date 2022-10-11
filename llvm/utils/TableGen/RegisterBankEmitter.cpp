@@ -17,7 +17,6 @@
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 
-#include "CodeGenHwModes.h"
 #include "CodeGenRegisters.h"
 #include "CodeGenTarget.h"
 
@@ -42,7 +41,7 @@ private:
 
 public:
   RegisterBank(const Record &TheDef)
-      : TheDef(TheDef), RCs(), RCWithLargestRegsSize(nullptr) {}
+      : TheDef(TheDef), RCWithLargestRegsSize(nullptr) {}
 
   /// Get the human-readable name for the bank.
   StringRef getName() const { return TheDef.getValueAsString("Name"); }
@@ -71,10 +70,7 @@ public:
 
   /// Add a register class to the bank without duplicates.
   void addRegisterClass(const CodeGenRegisterClass *RC) {
-    if (std::find_if(RCs.begin(), RCs.end(),
-                     [&RC](const CodeGenRegisterClass *X) {
-                       return X == RC;
-                     }) != RCs.end())
+    if (llvm::is_contained(RCs, RC))
       return;
 
     // FIXME? We really want the register size rather than the spill size
@@ -133,7 +129,7 @@ void RegisterBankEmitter::emitHeader(raw_ostream &OS,
      << "namespace " << TargetName << " {\n"
      << "enum : unsigned {\n";
 
-  OS << "InvalidRegBankID = ~0u,\n";
+  OS << "  InvalidRegBankID = ~0u,\n";
   unsigned ID = 0;
   for (const auto &Bank : Banks)
     OS << "  " << Bank.getEnumeratorName() << " = " << ID++ << ",\n";
@@ -171,21 +167,20 @@ void RegisterBankEmitter::emitBaseClassDefinition(
 ///                to the class.
 static void visitRegisterBankClasses(
     const CodeGenRegBank &RegisterClassHierarchy,
-    const CodeGenRegisterClass *RC, const Twine Kind,
+    const CodeGenRegisterClass *RC, const Twine &Kind,
     std::function<void(const CodeGenRegisterClass *, StringRef)> VisitFn,
     SmallPtrSetImpl<const CodeGenRegisterClass *> &VisitedRCs) {
 
   // Make sure we only visit each class once to avoid infinite loops.
-  if (VisitedRCs.count(RC))
+  if (!VisitedRCs.insert(RC).second)
     return;
-  VisitedRCs.insert(RC);
 
   // Visit each explicitly named class.
   VisitFn(RC, Kind.str());
 
   for (const auto &PossibleSubclass : RegisterClassHierarchy.getRegClasses()) {
     std::string TmpKind =
-        (Twine(Kind) + " (" + PossibleSubclass.getName() + ")").str();
+        (Kind + " (" + PossibleSubclass.getName() + ")").str();
 
     // Visit each subclass of an explicitly named class.
     if (RC != &PossibleSubclass && RC->hasSubClass(&PossibleSubclass))
@@ -270,9 +265,8 @@ void RegisterBankEmitter::emitBaseClassImplementation(
      << "::NumRegisterBanks) {\n"
      << "  // Assert that RegBank indices match their ID's\n"
      << "#ifndef NDEBUG\n"
-     << "  unsigned Index = 0;\n"
-     << "  for (const auto &RB : RegBanks)\n"
-     << "    assert(Index++ == RB->getID() && \"Index != ID\");\n"
+     << "  for (auto RB : enumerate(RegBanks))\n"
+     << "    assert(RB.index() == RB.value()->getID() && \"Index != ID\");\n"
      << "#endif // NDEBUG\n"
      << "}\n"
      << "} // end namespace llvm\n";
@@ -282,6 +276,7 @@ void RegisterBankEmitter::run(raw_ostream &OS) {
   StringRef TargetName = Target.getName();
   const CodeGenRegBank &RegisterClassHierarchy = Target.getRegBank();
 
+  Records.startTimer("Analyze records");
   std::vector<RegisterBank> Banks;
   for (const auto &V : Records.getAllDerivedDefinitions("RegisterBank")) {
     SmallPtrSet<const CodeGenRegisterClass *, 8> VisitedRCs;
@@ -303,6 +298,7 @@ void RegisterBankEmitter::run(raw_ostream &OS) {
   }
 
   // Warn about ambiguous MIR caused by register bank/class name clashes.
+  Records.startTimer("Warn ambiguous");
   for (const auto &Class : RegisterClassHierarchy.getRegClasses()) {
     for (const auto &Bank : Banks) {
       if (Bank.getName().lower() == StringRef(Class.getName()).lower()) {
@@ -315,6 +311,7 @@ void RegisterBankEmitter::run(raw_ostream &OS) {
     }
   }
 
+  Records.startTimer("Emit output");
   emitSourceFileHeader("Register Bank Source Fragments", OS);
   OS << "#ifdef GET_REGBANK_DECLARATIONS\n"
      << "#undef GET_REGBANK_DECLARATIONS\n";

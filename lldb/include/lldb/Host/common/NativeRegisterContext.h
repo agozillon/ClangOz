@@ -16,6 +16,8 @@ namespace lldb_private {
 
 class NativeThreadProtocol;
 
+enum class ExpeditedRegs { Minimal, Full };
+
 class NativeRegisterContext
     : public std::enable_shared_from_this<NativeRegisterContext> {
 public:
@@ -49,7 +51,7 @@ public:
   virtual Status WriteRegister(const RegisterInfo *reg_info,
                                const RegisterValue &reg_value) = 0;
 
-  virtual Status ReadAllRegisterValues(lldb::DataBufferSP &data_sp) = 0;
+  virtual Status ReadAllRegisterValues(lldb::WritableDataBufferSP &data_sp) = 0;
 
   virtual Status WriteAllRegisterValues(const lldb::DataBufferSP &data_sp) = 0;
 
@@ -74,6 +76,8 @@ public:
                                          uint32_t watch_flags);
 
   virtual bool ClearHardwareWatchpoint(uint32_t hw_index);
+
+  virtual Status ClearWatchpointHit(uint32_t hw_index);
 
   virtual Status ClearAllHardwareWatchpoints();
 
@@ -113,6 +117,11 @@ public:
   virtual lldb::tid_t GetThreadID() const;
 
   virtual NativeThreadProtocol &GetThread() { return m_thread; }
+
+  virtual std::vector<uint32_t>
+  GetExpeditedRegisters(ExpeditedRegs expType) const;
+
+  virtual bool RegisterOffsetIsDynamic() const { return false; }
 
   const RegisterInfo *GetRegisterInfoByName(llvm::StringRef reg_name,
                                             uint32_t start_idx = 0);

@@ -8,9 +8,31 @@
 //
 //  This file is based on LLVM's lib/Support/Host.cpp.
 //  It implements the operating system Host concept and builtin
-//  __cpu_model for the compiler_rt library, for x86 only.
+//  __cpu_model for the compiler_rt library for x86 and
+//  __aarch64_have_lse_atomics for AArch64.
 //
 //===----------------------------------------------------------------------===//
+
+#ifndef __has_attribute
+#define __has_attribute(attr) 0
+#endif
+
+#if __has_attribute(constructor)
+#if __GNUC__ >= 9
+// Ordinarily init priorities below 101 are disallowed as they are reserved for the
+// implementation. However, we are the implementation, so silence the diagnostic,
+// since it doesn't apply to us.
+#pragma GCC diagnostic ignored "-Wprio-ctor-dtor"
+#endif
+// We're choosing init priority 90 to force our constructors to run before any
+// constructors in the end user application (starting at priority 101). This value
+// matches the libgcc choice for the same functions.
+#define CONSTRUCTOR_ATTRIBUTE __attribute__((constructor(90)))
+#else
+// FIXME: For MSVC, we should make a function pointer global in .CRT$X?? so that
+// this runs during initialization.
+#define CONSTRUCTOR_ATTRIBUTE
+#endif
 
 #if (defined(__i386__) || defined(_M_IX86) || defined(__x86_64__) ||           \
      defined(_M_X64)) &&                                                       \
@@ -24,10 +46,6 @@
 
 #ifdef _MSC_VER
 #include <intrin.h>
-#endif
-
-#ifndef __has_attribute
-#define __has_attribute(attr) 0
 #endif
 
 enum VendorSignatures {
@@ -57,6 +75,7 @@ enum ProcessorTypes {
   INTEL_GOLDMONT,
   INTEL_GOLDMONT_PLUS,
   INTEL_TREMONT,
+  AMDFAM19H,
   CPU_TYPE_MAX
 };
 
@@ -84,6 +103,10 @@ enum ProcessorSubtypes {
   INTEL_COREI7_CASCADELAKE,
   INTEL_COREI7_TIGERLAKE,
   INTEL_COREI7_COOPERLAKE,
+  INTEL_COREI7_SAPPHIRERAPIDS,
+  INTEL_COREI7_ALDERLAKE,
+  AMDFAM19H_ZNVER3,
+  INTEL_COREI7_ROCKETLAKE,
   CPU_SUBTYPE_MAX
 };
 
@@ -133,7 +156,7 @@ enum ProcessorFeatures {
 // Check motivated by bug reports for OpenSSL crashing on CPUs without CPUID
 // support. Consequently, for i386, the presence of CPUID is checked first
 // via the corresponding eflags bit.
-static bool isCpuIdSupported() {
+static bool isCpuIdSupported(void) {
 #if defined(__GNUC__) || defined(__clang__)
 #if defined(__i386__)
   int __cpuid_supported;
@@ -277,7 +300,7 @@ getIntelProcessorTypeAndSubtype(unsigned Family, unsigned Model,
                                 const unsigned *Features,
                                 unsigned *Type, unsigned *Subtype) {
 #define testFeature(F)                                                         \
-  (Features[F / 32] & (F % 32)) != 0
+  (Features[F / 32] & (1 << (F % 32))) != 0
 
   // We select CPU strings to match the code in Host.cpp, but we don't use them
   // in compiler-rt.
@@ -369,6 +392,13 @@ getIntelProcessorTypeAndSubtype(unsigned Family, unsigned Model,
       *Subtype = INTEL_COREI7_SKYLAKE;
       break;
 
+    // Rocketlake:
+    case 0xa7:
+      CPU = "rocketlake";
+      *Type = INTEL_COREI7;
+      *Subtype = INTEL_COREI7_ROCKETLAKE;
+      break;
+
     // Skylake Xeon:
     case 0x55:
       *Type = INTEL_COREI7;
@@ -399,12 +429,35 @@ getIntelProcessorTypeAndSubtype(unsigned Family, unsigned Model,
       *Subtype = INTEL_COREI7_ICELAKE_CLIENT;
       break;
 
+    // Tigerlake:
+    case 0x8c:
+    case 0x8d:
+      CPU = "tigerlake";
+      *Type = INTEL_COREI7;
+      *Subtype = INTEL_COREI7_TIGERLAKE;
+      break;
+
+    // Alderlake:
+    case 0x97:
+    case 0x9a:
+      CPU = "alderlake";
+      *Type = INTEL_COREI7;
+      *Subtype = INTEL_COREI7_ALDERLAKE;
+      break;
+
     // Icelake Xeon:
     case 0x6a:
     case 0x6c:
       CPU = "icelake-server";
       *Type = INTEL_COREI7;
       *Subtype = INTEL_COREI7_ICELAKE_SERVER;
+      break;
+
+    // Sapphire Rapids:
+    case 0x8f:
+      CPU = "sapphirerapids";
+      *Type = INTEL_COREI7;
+      *Subtype = INTEL_COREI7_SAPPHIRERAPIDS;
       break;
 
     case 0x1c: // Most 45 nm Intel Atom processors
@@ -528,6 +581,14 @@ getAMDProcessorTypeAndSubtype(unsigned Family, unsigned Model,
     if (Model <= 0x0f) {
       *Subtype = AMDFAM17H_ZNVER1;
       break; // 00h-0Fh: Zen1
+    }
+    break;
+  case 25:
+    CPU = "znver3";
+    *Type = AMDFAM19H;
+    if (Model <= 0x0f || Model == 0x21) {
+      *Subtype = AMDFAM19H_ZNVER3;
+      break; // 00h-0Fh, 21h: Zen3
     }
     break;
   default:
@@ -656,16 +717,6 @@ static void getAvailableFeatures(unsigned ECX, unsigned EDX, unsigned MaxLeaf,
 #undef setFeature
 }
 
-#if defined(HAVE_INIT_PRIORITY)
-#define CONSTRUCTOR_ATTRIBUTE __attribute__((__constructor__ 101))
-#elif __has_attribute(__constructor__)
-#define CONSTRUCTOR_ATTRIBUTE __attribute__((__constructor__))
-#else
-// FIXME: For MSVC, we should make a function pointer global in .CRT$X?? so that
-// this runs during initialization.
-#define CONSTRUCTOR_ATTRIBUTE
-#endif
-
 #ifndef _WIN32
 __attribute__((visibility("hidden")))
 #endif
@@ -740,5 +791,64 @@ int CONSTRUCTOR_ATTRIBUTE __cpu_indicator_init(void) {
 
   return 0;
 }
-
+#elif defined(__aarch64__)
+// LSE support detection for out-of-line atomics
+// using HWCAP and Auxiliary vector
+_Bool __aarch64_have_lse_atomics
+    __attribute__((visibility("hidden"), nocommon));
+#if defined(__has_include)
+#if __has_include(<sys/auxv.h>)
+#include <sys/auxv.h>
+#ifndef AT_HWCAP
+#define AT_HWCAP 16
 #endif
+#ifndef HWCAP_ATOMICS
+#define HWCAP_ATOMICS (1 << 8)
+#endif
+#if defined(__ANDROID__)
+#include <string.h>
+#include <sys/system_properties.h>
+#elif defined(__Fuchsia__)
+#include <zircon/features.h>
+#include <zircon/syscalls.h>
+#endif
+static void CONSTRUCTOR_ATTRIBUTE init_have_lse_atomics(void) {
+#if defined(__FreeBSD__)
+  unsigned long hwcap;
+  int result = elf_aux_info(AT_HWCAP, &hwcap, sizeof hwcap);
+  __aarch64_have_lse_atomics = result == 0 && (hwcap & HWCAP_ATOMICS) != 0;
+#elif defined(__Fuchsia__)
+  // This ensures the vDSO is a direct link-time dependency of anything that
+  // needs this initializer code.
+#pragma comment(lib, "zircon")
+  uint32_t features;
+  zx_status_t status = _zx_system_get_features(ZX_FEATURE_KIND_CPU, &features);
+  __aarch64_have_lse_atomics =
+      status == ZX_OK && (features & ZX_ARM64_FEATURE_ISA_ATOMICS) != 0;
+#else
+  unsigned long hwcap = getauxval(AT_HWCAP);
+  _Bool result = (hwcap & HWCAP_ATOMICS) != 0;
+#if defined(__ANDROID__)
+  if (result) {
+    char arch[PROP_VALUE_MAX];
+    if (__system_property_get("ro.arch", arch) > 0 &&
+        strncmp(arch, "exynos9810", sizeof("exynos9810") - 1) == 0) {
+      // Some cores in the Exynos 9810 CPU are ARMv8.2 and others are ARMv8.0;
+      // only the former support LSE atomics.  However, the kernel in the
+      // initial Android 8.0 release of Galaxy S9/S9+ devices incorrectly
+      // reported the feature as being supported.
+      //
+      // The kernel appears to have been corrected to mark it unsupported as of
+      // the Android 9.0 release on those devices, and this issue has not been
+      // observed anywhere else. Thus, this workaround may be removed if
+      // compiler-rt ever drops support for Android 8.0.
+      result = false;
+    }
+  }
+#endif // defined(__ANDROID__)
+  __aarch64_have_lse_atomics = result;
+#endif // defined(__FreeBSD__)
+}
+#endif // defined(__has_include)
+#endif // __has_include(<sys/auxv.h>)
+#endif // defined(__aarch64__)

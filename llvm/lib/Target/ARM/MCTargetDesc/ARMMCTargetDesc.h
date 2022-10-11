@@ -36,11 +36,27 @@ class MCTargetStreamer;
 class StringRef;
 class Target;
 class Triple;
-class raw_ostream;
-class raw_pwrite_stream;
 
 namespace ARM_MC {
 std::string ParseARMTriple(const Triple &TT, StringRef CPU);
+void initLLVMToCVRegMapping(MCRegisterInfo *MRI);
+
+bool isPredicated(const MCInst &MI, const MCInstrInfo *MCII);
+bool isCPSRDefined(const MCInst &MI, const MCInstrInfo *MCII);
+
+template<class Inst>
+bool isLDMBaseRegInList(const Inst &MI) {
+  auto BaseReg = MI.getOperand(0).getReg();
+  for (unsigned I = 1, E = MI.getNumOperands(); I < E; ++I) {
+    const auto &Op = MI.getOperand(I);
+    if (Op.isReg() && Op.getReg() == BaseReg)
+      return true;
+  }
+  return false;
+}
+
+uint64_t evaluateBranchTarget(const MCInstrDesc &InstDesc, uint64_t Addr,
+                              int64_t Imm);
 
 /// Create a ARM MCSubtargetInfo instance. This is exposed so Asm parser, etc.
 /// do not need to go through TargetRegistry.
@@ -55,13 +71,13 @@ MCTargetStreamer *createARMTargetAsmStreamer(MCStreamer &S,
                                              bool isVerboseAsm);
 MCTargetStreamer *createARMObjectTargetStreamer(MCStreamer &S,
                                                 const MCSubtargetInfo &STI);
+MCTargetStreamer *createARMObjectTargetELFStreamer(MCStreamer &S);
+MCTargetStreamer *createARMObjectTargetWinCOFFStreamer(MCStreamer &S);
 
 MCCodeEmitter *createARMLEMCCodeEmitter(const MCInstrInfo &MCII,
-                                        const MCRegisterInfo &MRI,
                                         MCContext &Ctx);
 
 MCCodeEmitter *createARMBEMCCodeEmitter(const MCInstrInfo &MCII,
-                                        const MCRegisterInfo &MRI,
                                         MCContext &Ctx);
 
 MCAsmBackend *createARMLEAsmBackend(const Target &T, const MCSubtargetInfo &STI,
@@ -91,7 +107,7 @@ createARMMachObjectWriter(bool Is64Bit, uint32_t CPUType,
 
 /// Construct an ARM PE/COFF object writer.
 std::unique_ptr<MCObjectTargetWriter>
-createARMWinCOFFObjectWriter(bool Is64Bit);
+createARMWinCOFFObjectWriter();
 
 /// Construct ARM Mach-O relocation info.
 MCRelocationInfo *createARMMachORelocationInfo(MCContext &Ctx);
@@ -123,6 +139,7 @@ bool isCDECoproc(size_t Coproc, const MCSubtargetInfo &STI);
 // Defines symbolic names for the ARM instructions.
 //
 #define GET_INSTRINFO_ENUM
+#define GET_INSTRINFO_MC_HELPER_DECLS
 #include "ARMGenInstrInfo.inc"
 
 #define GET_SUBTARGETINFO_ENUM

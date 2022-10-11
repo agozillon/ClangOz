@@ -8,6 +8,13 @@
 /// statically for an application. The code sequences assume a thread pointer
 /// in r9
 
+/// Reject local-exec TLS relocations for -shared.
+// RUN: not ld.lld -shared %t.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=ERR --implicit-check-not=error:
+
+// ERR: error: relocation R_ARM_TLS_LE32 against x cannot be used with -shared
+// ERR: error: relocation R_ARM_TLS_LE32 against y cannot be used with -shared
+// ERR: error: relocation R_ARM_TLS_LE32 against z cannot be used with -shared
+
  .text
  .syntax unified
  .globl  _start
@@ -71,8 +78,8 @@ x:
 // CHECK-EMPTY:
 // CHECK-NEXT: <_start>:
 /// offset of x from Thread pointer = (TcbSize + 0x0 = 0x8)
-// CHECK-NEXT:   20114:         08 00 00 00
+// CHECK-NEXT:   20114:         00000008   
 /// offset of z from Thread pointer = (TcbSize + 0x8 = 0x10)
-// CHECK-NEXT:   20118:         10 00 00 00
+// CHECK-NEXT:   20118:         00000010   
 /// offset of y from Thread pointer = (TcbSize + 0x4 = 0xc)
-// CHECK-NEXT:   2011c:         0c 00 00 00
+// CHECK-NEXT:   2011c:         0000000c   

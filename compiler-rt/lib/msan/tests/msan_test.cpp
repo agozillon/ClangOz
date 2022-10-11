@@ -33,6 +33,10 @@ int shmdt(const void *);
 }
 #endif
 
+#if defined(__linux__) && !defined(__GLIBC__) && !defined(__ANDROID__)
+#define MUSL 1
+#endif
+
 #include <inttypes.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -139,7 +143,7 @@ typedef signed short S2;
 typedef signed int S4;
 typedef signed long long S8;
 #define NOINLINE      __attribute__((noinline))
-#define INLINE      __attribute__((always_inline))
+#define ALWAYS_INLINE __attribute__((always_inline))
 
 static bool TrackingOrigins() {
   S8 x;
@@ -409,7 +413,7 @@ TEST(MemorySanitizer, AndOr) {
   EXPECT_POISONED(*p | 0x0000ffff);
   EXPECT_POISONED(*p | 0xffff0000);
 
-  EXPECT_POISONED(*GetPoisoned<bool>() & *GetPoisoned<bool>());
+  EXPECT_POISONED((int)*GetPoisoned<bool>() & (int)*GetPoisoned<bool>());
 }
 
 template<class T>
@@ -585,20 +589,6 @@ LargeStruct LargeRetTest() {
   res.x[8] = *GetPoisoned<S4>();
   res.x[9] = *GetPoisoned<S4>();
   return res;
-}
-
-TEST(MemorySanitizer, strcmp) {
-  char s1[10];
-  char s2[10];
-  strncpy(s1, "foo", 10);
-  s2[0] = 'f';
-  s2[1] = 'n';
-  EXPECT_GT(strcmp(s1, s2), 0);
-  s2[1] = 'o';
-  int res;
-  EXPECT_UMR(res = strcmp(s1, s2));
-  EXPECT_NOT_POISONED(res);
-  EXPECT_EQ(strncmp(s1, s2, 1), 0);
 }
 
 TEST(MemorySanitizer, LargeRet) {
@@ -986,8 +976,8 @@ std::vector<int> GetAvailableIpSocketFamilies() {
   return result;
 }
 
-INSTANTIATE_TEST_CASE_P(IpTests, MemorySanitizerIpTest,
-                        ::testing::ValuesIn(GetAvailableIpSocketFamilies()));
+INSTANTIATE_TEST_SUITE_P(IpTests, MemorySanitizerIpTest,
+                         ::testing::ValuesIn(GetAvailableIpSocketFamilies()));
 
 TEST_P(MemorySanitizerIpTest, accept) {
   int listen_socket = CreateSocket(SOCK_STREAM);
@@ -1114,6 +1104,7 @@ TEST_P(MemorySanitizerIpTest, recvmsg) {
   } while (0)
 
 TEST(MemorySanitizer, gethostent) {
+  sethostent(0);
   struct hostent *he = gethostent();
   ASSERT_NE((void *)NULL, he);
   EXPECT_HOSTENT_NOT_POISONED(he);
@@ -1175,8 +1166,9 @@ TEST(MemorySanitizer, gethostbyaddr) {
   EXPECT_HOSTENT_NOT_POISONED(he);
 }
 
-#if !defined(__NetBSD__)
+#if defined(__GLIBC__) || defined(__FreeBSD__)
 TEST(MemorySanitizer, gethostent_r) {
+  sethostent(0);
   char buf[2000];
   struct hostent he;
   struct hostent *result;
@@ -1354,7 +1346,7 @@ TEST(MemorySanitizer, shmat) {
   ASSERT_GT(res, -1);
 }
 
-#if !defined(__FreeBSD__) && !defined(__NetBSD__)
+#ifdef __GLIBC__
 TEST(MemorySanitizer, random_r) {
   int32_t x;
   char z[64];
@@ -1434,7 +1426,7 @@ TEST(MemorySanitizer, realpath_null) {
   free(res);
 }
 
-#if !defined(__FreeBSD__) && !defined(__NetBSD__)
+#ifdef __GLIBC__
 TEST(MemorySanitizer, canonicalize_file_name) {
   const char* relpath = ".";
   char* res = canonicalize_file_name(relpath);
@@ -1568,6 +1560,7 @@ TEST(MemorySanitizer, memccpy_nomatch_positive) {
   char* y = new char[5];
   strcpy(x, "abc");
   EXPECT_UMR(memccpy(y, x, 'd', 5));
+  break_optimization(y);
   delete[] x;
   delete[] y;
 }
@@ -1578,6 +1571,7 @@ TEST(MemorySanitizer, memccpy_match_positive) {
   x[0] = 'a';
   x[2] = 'b';
   EXPECT_UMR(memccpy(y, x, 'b', 5));
+  break_optimization(y);
   delete[] x;
   delete[] y;
 }
@@ -1810,12 +1804,15 @@ TEST_STRTO_INT(strtol, char, )
 TEST_STRTO_INT(strtoll, char, )
 TEST_STRTO_INT(strtoul, char, )
 TEST_STRTO_INT(strtoull, char, )
+#ifndef MUSL
 TEST_STRTO_INT(strtouq, char, )
+#endif
 
 TEST_STRTO_FLOAT(strtof, char, )
 TEST_STRTO_FLOAT(strtod, char, )
 TEST_STRTO_FLOAT(strtold, char, )
 
+#ifndef MUSL
 TEST_STRTO_FLOAT_LOC(strtof_l, char, )
 TEST_STRTO_FLOAT_LOC(strtod_l, char, )
 TEST_STRTO_FLOAT_LOC(strtold_l, char, )
@@ -1824,6 +1821,7 @@ TEST_STRTO_INT_LOC(strtol_l, char, )
 TEST_STRTO_INT_LOC(strtoll_l, char, )
 TEST_STRTO_INT_LOC(strtoul_l, char, )
 TEST_STRTO_INT_LOC(strtoull_l, char, )
+#endif
 
 TEST_STRTO_INT(wcstol, wchar_t, L)
 TEST_STRTO_INT(wcstoll, wchar_t, L)
@@ -1834,6 +1832,7 @@ TEST_STRTO_FLOAT(wcstof, wchar_t, L)
 TEST_STRTO_FLOAT(wcstod, wchar_t, L)
 TEST_STRTO_FLOAT(wcstold, wchar_t, L)
 
+#ifndef MUSL
 TEST_STRTO_FLOAT_LOC(wcstof_l, wchar_t, L)
 TEST_STRTO_FLOAT_LOC(wcstod_l, wchar_t, L)
 TEST_STRTO_FLOAT_LOC(wcstold_l, wchar_t, L)
@@ -1842,6 +1841,7 @@ TEST_STRTO_INT_LOC(wcstol_l, wchar_t, L)
 TEST_STRTO_INT_LOC(wcstoll_l, wchar_t, L)
 TEST_STRTO_INT_LOC(wcstoul_l, wchar_t, L)
 TEST_STRTO_INT_LOC(wcstoull_l, wchar_t, L)
+#endif
 
 
 TEST(MemorySanitizer, strtoimax) {
@@ -1875,20 +1875,20 @@ TEST_STRTO_FLOAT_LOC(__wcstold_l, wchar_t, L)
 #endif  // __GLIBC__
 
 TEST(MemorySanitizer, modf) {
-  double x, y;
-  x = modf(2.1, &y);
+  double y;
+  modf(2.1, &y);
   EXPECT_NOT_POISONED(y);
 }
 
 TEST(MemorySanitizer, modff) {
-  float x, y;
-  x = modff(2.1, &y);
+  float y;
+  modff(2.1, &y);
   EXPECT_NOT_POISONED(y);
 }
 
 TEST(MemorySanitizer, modfl) {
-  long double x, y;
-  x = modfl(2.1, &y);
+  long double y;
+  modfl(2.1, &y);
   EXPECT_NOT_POISONED(y);
 }
 
@@ -1985,7 +1985,7 @@ TEST(MemorySanitizer, lgammal_r) {
 }
 #endif
 
-#if !defined(__FreeBSD__) && !defined(__NetBSD__)
+#ifdef __GLIBC__
 TEST(MemorySanitizer, drand48_r) {
   struct drand48_data buf;
   srand48_r(0, &buf);
@@ -1993,9 +1993,7 @@ TEST(MemorySanitizer, drand48_r) {
   drand48_r(&buf, &d);
   EXPECT_NOT_POISONED(d);
 }
-#endif
 
-#if !defined(__FreeBSD__) && !defined(__NetBSD__)
 TEST(MemorySanitizer, lrand48_r) {
   struct drand48_data buf;
   srand48_r(0, &buf);
@@ -2346,7 +2344,7 @@ TEST(MemorySanitizer, getmntent) {
 }
 #endif
 
-#if !defined(__FreeBSD__) && !defined(__NetBSD__)
+#ifdef __GLIBC__
 TEST(MemorySanitizer, getmntent_r) {
   TempFstabFile fstabtmp;
   ASSERT_TRUE(fstabtmp.Create());
@@ -3108,7 +3106,7 @@ static void GetProgramPath(char *buf, size_t sz) {
   int res = sysctl(mib, 4, buf, &sz, NULL, 0);
   ASSERT_EQ(0, res);
 }
-#elif defined(__GLIBC__)
+#elif defined(__GLIBC__) || defined(MUSL)
 static void GetProgramPath(char *buf, size_t sz) {
   extern char *program_invocation_name;
   int res = snprintf(buf, sz, "%s", program_invocation_name);
@@ -3229,9 +3227,19 @@ TEST(MemorySanitizer, dlopenFailed) {
 #if !defined(__FreeBSD__) && !defined(__NetBSD__)
 TEST(MemorySanitizer, sched_getaffinity) {
   cpu_set_t mask;
-  int res = sched_getaffinity(getpid(), sizeof(mask), &mask);
-  ASSERT_EQ(0, res);
-  EXPECT_NOT_POISONED(mask);
+  if (sched_getaffinity(getpid(), sizeof(mask), &mask) == 0)
+    EXPECT_NOT_POISONED(mask);
+  else {
+    // The call to sched_getaffinity() may have failed because the Affinity
+    // mask is too small for the number of CPUs on the system (i.e. the
+    // system has more than 1024 CPUs). Allocate a mask large enough for
+    // twice as many CPUs.
+    cpu_set_t *DynAffinity;
+    DynAffinity = CPU_ALLOC(2048);
+    int res = sched_getaffinity(getpid(), CPU_ALLOC_SIZE(2048), DynAffinity);
+    ASSERT_EQ(0, res);
+    EXPECT_NOT_POISONED(*DynAffinity);
+  }
 }
 #endif
 
@@ -3274,11 +3282,13 @@ static void *SmallStackThread_threadfn(void* data) {
   return 0;
 }
 
+static int GetThreadStackMin() {
 #ifdef PTHREAD_STACK_MIN
-constexpr int kThreadStackMin = PTHREAD_STACK_MIN;
+  return PTHREAD_STACK_MIN;
 #else
-constexpr int kThreadStackMin = 0;
+  return 0;
 #endif
+}
 
 TEST(MemorySanitizer, SmallStackThread) {
   pthread_attr_t attr;
@@ -3287,7 +3297,8 @@ TEST(MemorySanitizer, SmallStackThread) {
   int res;
   res = pthread_attr_init(&attr);
   ASSERT_EQ(0, res);
-  res = pthread_attr_setstacksize(&attr, std::max(kThreadStackMin, 64 * 1024));
+  res = pthread_attr_setstacksize(&attr,
+                                  std::max(GetThreadStackMin(), 64 * 1024));
   ASSERT_EQ(0, res);
   res = pthread_create(&t, &attr, SmallStackThread_threadfn, NULL);
   ASSERT_EQ(0, res);
@@ -3304,7 +3315,7 @@ TEST(MemorySanitizer, SmallPreAllocatedStackThread) {
   res = pthread_attr_init(&attr);
   ASSERT_EQ(0, res);
   void *stack;
-  const size_t kStackSize = std::max(kThreadStackMin, 32 * 1024);
+  const size_t kStackSize = std::max(GetThreadStackMin(), 32 * 1024);
   res = posix_memalign(&stack, 4096, kStackSize);
   ASSERT_EQ(0, res);
   res = pthread_attr_setstack(&attr, stack, kStackSize);
@@ -3372,7 +3383,7 @@ TEST(MemorySanitizer, pthread_attr_get) {
     EXPECT_NOT_POISONED(v);
     EXPECT_NOT_POISONED(w);
   }
-#if !defined(__NetBSD__)
+#ifdef __GLIBC__
   {
     cpu_set_t v;
     res = pthread_attr_getaffinity_np(&attr, sizeof(v), &v);
@@ -3486,7 +3497,7 @@ TEST(MemorySanitizer, valloc) {
   free(a);
 }
 
-#if !defined(__FreeBSD__) && !defined(__NetBSD__)
+#ifdef __GLIBC__
 TEST(MemorySanitizer, pvalloc) {
   uintptr_t PageSize = GetPageSize();
   void *p = pvalloc(PageSize + 100);
@@ -3537,9 +3548,14 @@ TEST(MemorySanitizer, uname) {
 }
 
 TEST(MemorySanitizer, gethostname) {
-  char buf[100];
-  int res = gethostname(buf, 100);
-  ASSERT_EQ(0, res);
+  char buf[1000];
+  EXPECT_EQ(-1, gethostname(buf, 1));
+  EXPECT_EQ(ENAMETOOLONG, errno);
+  EXPECT_NOT_POISONED(buf[0]);
+  EXPECT_POISONED(buf[1]);
+
+  __msan_poison(buf, sizeof(buf));
+  EXPECT_EQ(0, gethostname(buf, sizeof(buf)));
   EXPECT_NOT_POISONED(strlen(buf));
 }
 
@@ -3597,8 +3613,7 @@ TEST(MemorySanitizer, getpwnam_r_positive) {
   strncpy(s, "abcd", 5);
   __msan_poison(s, 5);
   char buf[10000];
-  int res;
-  EXPECT_UMR(res = getpwnam_r(s, &pwd, buf, sizeof(buf), &pwdres));
+  EXPECT_UMR(getpwnam_r(s, &pwd, buf, sizeof(buf), &pwdres));
 }
 
 TEST(MemorySanitizer, getgrnam_r) {
@@ -3626,6 +3641,7 @@ TEST(MemorySanitizer, getpwent) {
   EXPECT_NOT_POISONED(p->pw_uid);
 }
 
+#ifndef MUSL
 TEST(MemorySanitizer, getpwent_r) {
   struct passwd pwd;
   struct passwd *pwdres;
@@ -3639,8 +3655,9 @@ TEST(MemorySanitizer, getpwent_r) {
   EXPECT_NOT_POISONED(pwd.pw_uid);
   EXPECT_NOT_POISONED(pwdres);
 }
+#endif
 
-#if !defined(__FreeBSD__) && !defined(__NetBSD__)
+#ifdef __GLIBC__
 TEST(MemorySanitizer, fgetpwent) {
   FILE *fp = fopen("/etc/passwd", "r");
   struct passwd *p = fgetpwent(fp);
@@ -3663,7 +3680,7 @@ TEST(MemorySanitizer, getgrent) {
   EXPECT_NOT_POISONED(p->gr_gid);
 }
 
-#if !defined(__FreeBSD__) && !defined(__NetBSD__)
+#ifdef __GLIBC__
 TEST(MemorySanitizer, fgetgrent) {
   FILE *fp = fopen("/etc/group", "r");
   struct group *grp = fgetgrent(fp);
@@ -3680,6 +3697,7 @@ TEST(MemorySanitizer, fgetgrent) {
 }
 #endif
 
+#if defined(__GLIBC__) || defined(__FreeBSD__)
 TEST(MemorySanitizer, getgrent_r) {
   struct group grp;
   struct group *grpres;
@@ -3693,8 +3711,9 @@ TEST(MemorySanitizer, getgrent_r) {
   EXPECT_NOT_POISONED(grp.gr_gid);
   EXPECT_NOT_POISONED(grpres);
 }
+#endif
 
-#if !defined(__FreeBSD__) && !defined(__NetBSD__)
+#ifdef __GLIBC__
 TEST(MemorySanitizer, fgetgrent_r) {
   FILE *fp = fopen("/etc/group", "r");
   struct group grp;
@@ -3736,6 +3755,14 @@ TEST(MemorySanitizer, getgroups_negative) {
   ASSERT_EQ(-1, n);
 }
 
+TEST(MemorySanitizer, wordexp_empty) {
+  wordexp_t w;
+  int res = wordexp("", &w, 0);
+  ASSERT_EQ(0, res);
+  ASSERT_EQ(0U, w.we_wordc);
+  ASSERT_STREQ(nullptr, w.we_wordv[0]);
+}
+
 TEST(MemorySanitizer, wordexp) {
   wordexp_t w;
   int res = wordexp("a b c", &w, 0);
@@ -3744,6 +3771,18 @@ TEST(MemorySanitizer, wordexp) {
   ASSERT_STREQ("a", w.we_wordv[0]);
   ASSERT_STREQ("b", w.we_wordv[1]);
   ASSERT_STREQ("c", w.we_wordv[2]);
+}
+
+TEST(MemorySanitizer, wordexp_initial_offset) {
+  wordexp_t w;
+  w.we_offs = 1;
+  int res = wordexp("a b c", &w, WRDE_DOOFFS);
+  ASSERT_EQ(0, res);
+  ASSERT_EQ(3U, w.we_wordc);
+  ASSERT_EQ(nullptr, w.we_wordv[0]);
+  ASSERT_STREQ("a", w.we_wordv[1]);
+  ASSERT_STREQ("b", w.we_wordv[2]);
+  ASSERT_STREQ("c", w.we_wordv[3]);
 }
 
 template<class T>
@@ -4302,10 +4341,10 @@ TEST(MemorySanitizerOrigins, InitializedStoreDoesNotChangeOrigin) {
 }  // namespace
 
 template<class T, class BinaryOp>
-INLINE
+ALWAYS_INLINE
 void BinaryOpOriginTest(BinaryOp op) {
-  U4 ox = rand();  //NOLINT
-  U4 oy = rand();  //NOLINT
+  U4 ox = rand();
+  U4 oy = rand();
   T *x = GetPoisonedO<T>(0, ox, 0);
   T *y = GetPoisonedO<T>(1, oy, 0);
   T *z = GetPoisonedO<T>(2, 0, 0);
@@ -4335,12 +4374,12 @@ void BinaryOpOriginTest(BinaryOp op) {
   EXPECT_ORIGIN(ox, __msan_get_origin(z));
 }
 
-template<class T> INLINE T XOR(const T &a, const T&b) { return a ^ b; }
-template<class T> INLINE T ADD(const T &a, const T&b) { return a + b; }
-template<class T> INLINE T SUB(const T &a, const T&b) { return a - b; }
-template<class T> INLINE T MUL(const T &a, const T&b) { return a * b; }
-template<class T> INLINE T AND(const T &a, const T&b) { return a & b; }
-template<class T> INLINE T OR (const T &a, const T&b) { return a | b; }
+template<class T> ALWAYS_INLINE T XOR(const T &a, const T&b) { return a ^ b; }
+template<class T> ALWAYS_INLINE T ADD(const T &a, const T&b) { return a + b; }
+template<class T> ALWAYS_INLINE T SUB(const T &a, const T&b) { return a - b; }
+template<class T> ALWAYS_INLINE T MUL(const T &a, const T&b) { return a * b; }
+template<class T> ALWAYS_INLINE T AND(const T &a, const T&b) { return a & b; }
+template<class T> ALWAYS_INLINE T OR (const T &a, const T&b) { return a | b; }
 
 TEST(MemorySanitizerOrigins, BinaryOp) {
   if (!TrackingOrigins()) return;
@@ -4386,7 +4425,8 @@ TEST(MemorySanitizerOrigins, EQ) {
   if (!TrackingOrigins()) return;
   EXPECT_POISONED_O(*GetPoisonedO<S4>(0, __LINE__) <= 11, __LINE__);
   EXPECT_POISONED_O(*GetPoisonedO<S4>(0, __LINE__) == 11, __LINE__);
-  EXPECT_POISONED_O(*GetPoisonedO<float>(0, __LINE__) == 1.1, __LINE__);
+  EXPECT_POISONED_O(*GetPoisonedO<float>(0, __LINE__) == 1.1f, __LINE__);
+  EXPECT_POISONED_O(*GetPoisonedO<double>(0, __LINE__) == 1.1, __LINE__);
 }
 
 TEST(MemorySanitizerOrigins, DIV) {
@@ -4694,7 +4734,7 @@ static void TestBZHI() {
       __builtin_ia32_bzhi_di(0xABCDABCDABCDABCD, Poisoned<U8>(1, 0xFFFFFFFF00000000ULL)));
 }
 
-inline U4 bextr_imm(U4 start, U4 len) {
+ALWAYS_INLINE U4 bextr_imm(U4 start, U4 len) {
   start &= 0xFF;
   len &= 0xFF;
   return (len << 8) | start;
@@ -4818,7 +4858,7 @@ TEST(MemorySanitizer, throw_catch) {
     // __gxx_personality_v0 is instrumented, libgcc_s is not; as a result,
     // __msan_param_tls is not updated and __gxx_personality_v0 can find
     // leftover poison from the previous call.
-    // A suppression in msan_blacklist.txt makes it work.
+    // A suppression in msan_ignorelist.txt makes it work.
     throw_stuff();
   } catch (const int &e) {
     // pass

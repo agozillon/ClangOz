@@ -3,19 +3,17 @@
 // RUN: llvm-profdata merge %S/Inputs/misexpect-switch.proftext -o %t.profdata
 // RUN: %clang_cc1 %s -O2 -o - -emit-llvm -fprofile-instrument-use-path=%t.profdata -verify -Wmisexpect -debug-info-kind=line-tables-only
 
-int sum(int *buff, int size);
-int random_sample(int *buff, int size);
-int rand();
-void init_arry();
-
-const int inner_loop = 1000;
-const int outer_loop = 20;
-const int arry_size = 25;
+#define inner_loop 1000
+#define outer_loop 20
+#define arry_size 25
 
 int arry[arry_size] = {0};
 
+int rand();
+int sum(int *buff, int size);
+int random_sample(int *buff, int size);
+
 int main() {
-  init_arry();
   int val = 0;
 
   int j, k;

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -x c++ -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=nullability-assign | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -x c++ -triple x86_64-apple-darwin10 -emit-llvm -o - %s -fsanitize=nullability-assign | FileCheck %s
 
 struct S1 {
   int *_Nonnull p;
@@ -13,7 +13,7 @@ union U1 {
   S2 s2;
 };
 
-// CHECK-LABEL: define void @{{.*}}f1
+// CHECK-LABEL: define{{.*}} void @{{.*}}f1
 void f1(int *p) {
   U1 u;
 

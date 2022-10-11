@@ -48,6 +48,7 @@ public:
     assert(isValidTypeForSymbol(r->getValueType()));
   }
 
+  LLVM_ATTRIBUTE_RETURNS_NONNULL
   const TypedValueRegion* getRegion() const { return R; }
 
   static void Profile(llvm::FoldingSetNodeID& profile, const TypedValueRegion* R) {
@@ -58,6 +59,8 @@ public:
   void Profile(llvm::FoldingSetNodeID& profile) override {
     Profile(profile, R);
   }
+
+  StringRef getKindStr() const override;
 
   void dumpToStream(raw_ostream &os) const override;
   const MemRegion *getOriginRegion() const override { return getRegion(); }
@@ -93,11 +96,15 @@ public:
     assert(isValidTypeForSymbol(t));
   }
 
+  /// It might return null.
   const Stmt *getStmt() const { return S; }
   unsigned getCount() const { return Count; }
+  /// It might return null.
   const void *getTag() const { return SymbolTag; }
 
   QualType getType() const override;
+
+  StringRef getKindStr() const override;
 
   void dumpToStream(raw_ostream &os) const override;
 
@@ -136,10 +143,14 @@ public:
     assert(isValidTypeForSymbol(r->getValueType()));
   }
 
+  LLVM_ATTRIBUTE_RETURNS_NONNULL
   SymbolRef getParentSymbol() const { return parentSymbol; }
+  LLVM_ATTRIBUTE_RETURNS_NONNULL
   const TypedValueRegion *getRegion() const { return R; }
 
   QualType getType() const override;
+
+  StringRef getKindStr() const override;
 
   void dumpToStream(raw_ostream &os) const override;
   const MemRegion *getOriginRegion() const override { return getRegion(); }
@@ -173,9 +184,12 @@ public:
     assert(r);
   }
 
+  LLVM_ATTRIBUTE_RETURNS_NONNULL
   const SubRegion *getRegion() const { return R; }
 
   QualType getType() const override;
+
+  StringRef getKindStr() const override;
 
   void dumpToStream(raw_ostream &os) const override;
 
@@ -218,27 +232,37 @@ public:
       assert(tag);
     }
 
-  const MemRegion *getRegion() const { return R; }
-  const Stmt *getStmt() const { return S; }
-  const LocationContext *getLocationContext() const { return LCtx; }
-  unsigned getCount() const { return Count; }
-  const void *getTag() const { return Tag; }
+    LLVM_ATTRIBUTE_RETURNS_NONNULL
+    const MemRegion *getRegion() const { return R; }
 
-  QualType getType() const override;
+    LLVM_ATTRIBUTE_RETURNS_NONNULL
+    const Stmt *getStmt() const { return S; }
 
-  void dumpToStream(raw_ostream &os) const override;
+    LLVM_ATTRIBUTE_RETURNS_NONNULL
+    const LocationContext *getLocationContext() const { return LCtx; }
 
-  static void Profile(llvm::FoldingSetNodeID& profile, const MemRegion *R,
-                      const Stmt *S, QualType T, const LocationContext *LCtx,
-                      unsigned Count, const void *Tag) {
-    profile.AddInteger((unsigned) SymbolMetadataKind);
-    profile.AddPointer(R);
-    profile.AddPointer(S);
-    profile.Add(T);
-    profile.AddPointer(LCtx);
-    profile.AddInteger(Count);
-    profile.AddPointer(Tag);
-  }
+    unsigned getCount() const { return Count; }
+
+    LLVM_ATTRIBUTE_RETURNS_NONNULL
+    const void *getTag() const { return Tag; }
+
+    QualType getType() const override;
+
+    StringRef getKindStr() const override;
+
+    void dumpToStream(raw_ostream &os) const override;
+
+    static void Profile(llvm::FoldingSetNodeID &profile, const MemRegion *R,
+                        const Stmt *S, QualType T, const LocationContext *LCtx,
+                        unsigned Count, const void *Tag) {
+      profile.AddInteger((unsigned)SymbolMetadataKind);
+      profile.AddPointer(R);
+      profile.AddPointer(S);
+      profile.Add(T);
+      profile.AddPointer(LCtx);
+      profile.AddInteger(Count);
+      profile.AddPointer(Tag);
+    }
 
   void Profile(llvm::FoldingSetNodeID& profile) override {
     Profile(profile, R, S, T, LCtx, Count, Tag);
@@ -277,6 +301,7 @@ public:
 
   QualType getType() const override { return ToTy; }
 
+  LLVM_ATTRIBUTE_RETURNS_NONNULL
   const SymExpr *getOperand() const { return Operand; }
 
   void dumpToStream(raw_ostream &os) const override;
@@ -296,6 +321,55 @@ public:
   // Implement isa<T> support.
   static bool classof(const SymExpr *SE) {
     return SE->getKind() == SymbolCastKind;
+  }
+};
+
+/// Represents a symbolic expression involving a unary operator.
+class UnarySymExpr : public SymExpr {
+  const SymExpr *Operand;
+  UnaryOperator::Opcode Op;
+  QualType T;
+
+public:
+  UnarySymExpr(const SymExpr *In, UnaryOperator::Opcode Op, QualType T)
+      : SymExpr(UnarySymExprKind), Operand(In), Op(Op), T(T) {
+    // Note, some unary operators are modeled as a binary operator. E.g. ++x is
+    // modeled as x + 1.
+    assert((Op == UO_Minus || Op == UO_Not) && "non-supported unary expression");
+    // Unary expressions are results of arithmetic. Pointer arithmetic is not
+    // handled by unary expressions, but it is instead handled by applying
+    // sub-regions to regions.
+    assert(isValidTypeForSymbol(T) && "non-valid type for unary symbol");
+    assert(!Loc::isLocType(T) && "unary symbol should be nonloc");
+  }
+
+  unsigned computeComplexity() const override {
+    if (Complexity == 0)
+      Complexity = 1 + Operand->computeComplexity();
+    return Complexity;
+  }
+
+  const SymExpr *getOperand() const { return Operand; }
+  UnaryOperator::Opcode getOpcode() const { return Op; }
+  QualType getType() const override { return T; }
+
+  void dumpToStream(raw_ostream &os) const override;
+
+  static void Profile(llvm::FoldingSetNodeID &ID, const SymExpr *In,
+                      UnaryOperator::Opcode Op, QualType T) {
+    ID.AddInteger((unsigned)UnarySymExprKind);
+    ID.AddPointer(In);
+    ID.AddInteger(Op);
+    ID.Add(T);
+  }
+
+  void Profile(llvm::FoldingSetNodeID &ID) override {
+    Profile(ID, Operand, Op, T);
+  }
+
+  // Implement isa<T> support.
+  static bool classof(const SymExpr *SE) {
+    return SE->getKind() == UnarySymExprKind;
   }
 };
 
@@ -476,6 +550,9 @@ public:
   const SymSymExpr *getSymSymExpr(const SymExpr *lhs, BinaryOperator::Opcode op,
                                   const SymExpr *rhs, QualType t);
 
+  const UnarySymExpr *getUnarySymExpr(const SymExpr *operand,
+                                      UnaryOperator::Opcode op, QualType t);
+
   QualType getType(const SymExpr *SE) const {
     return SE->getType();
   }
@@ -525,11 +602,12 @@ public:
                SymbolManager &symmgr, StoreManager &storeMgr)
       : LCtx(Ctx), Loc(s), SymMgr(symmgr), reapedStore(nullptr, storeMgr) {}
 
+  /// It might return null.
   const LocationContext *getLocationContext() const { return LCtx; }
 
   bool isLive(SymbolRef sym);
   bool isLiveRegion(const MemRegion *region);
-  bool isLive(const Stmt *ExprVal, const LocationContext *LCtx) const;
+  bool isLive(const Expr *ExprVal, const LocationContext *LCtx) const;
   bool isLive(const VarRegion *VR, bool includeStoreBindings = false) const;
 
   /// Unconditionally marks a symbol as live.

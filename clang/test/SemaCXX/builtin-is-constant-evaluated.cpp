@@ -1,5 +1,7 @@
 // RUN: %clang_cc1 -std=c++2a -verify %s -fcxx-exceptions -Wno-constant-evaluated -triple=x86_64-linux-gnu
 
+#define fold(x) (__builtin_constant_p(x) ? (x) : (x))
+
 using size_t = decltype(sizeof(int));
 
 namespace std {
@@ -24,7 +26,7 @@ static_assert(cn == 11);
 constexpr int bn = __builtin_is_constant_evaluated() ? dummy : 42; // expected-note {{non-const variable 'dummy' is not allowed}}
 
 const int n2 = __builtin_is_constant_evaluated() ? dummy : 42; // expected-note {{declared here}}
-static_assert(n2 == 42);                                       // expected-error {{static_assert expression is not an integral constant}}
+static_assert(n2 == 42);                                       // expected-error {{static assertion expression is not an integral constant}}
 // expected-note@-1 {{initializer of 'n2' is not a constant expression}}
 
 template <bool V, bool Default = std::is_constant_evaluated()>
@@ -119,3 +121,25 @@ struct TestConditionalExplicit {
 };
 TestConditionalExplicit e = 42;
 #endif
+
+namespace fold_initializer {
+  // Global 'f' has a constant initializer.
+  const float f = __builtin_is_constant_evaluated();
+  static_assert(fold(f == 1.0f));
+
+  void g() {
+    // Local static 'sf' has a constant initializer.
+    static const float sf = __builtin_is_constant_evaluated();
+    static_assert(fold(sf == 1.0f));
+
+    // Local non-static 'f' has a non-constant initializer.
+    const float f = __builtin_is_constant_evaluated();
+    static_assert(fold(f == 0.0f));
+  }
+
+  struct A {
+    static const float f;
+  };
+  const float A::f = __builtin_is_constant_evaluated();
+  static_assert(fold(A::f == 1.0f));
+}

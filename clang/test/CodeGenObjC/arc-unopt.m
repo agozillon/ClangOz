@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -emit-llvm -fobjc-runtime-has-weak -fblocks -fobjc-arc -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-apple-darwin10 -emit-llvm -fobjc-runtime-has-weak -fblocks -fobjc-arc -o - %s | FileCheck %s
 
 // A test to ensure that we generate fused calls at -O0.
 
@@ -55,7 +55,7 @@ void test5(void) {
   if ((x = y))
     y = 0;
 
-// CHECK-LABEL:    define void @test5()
+// CHECK-LABEL:    define{{.*}} void @test5()
 // CHECK:      [[X:%.*]] = alloca [[TEST5:%.*]]*,
 // CHECK-NEXT: [[Y:%.*]] = alloca [[TEST5:%.*]]*,
 // CHECK-NEXT: store [[TEST5]]* null, [[TEST5]]** [[X]],

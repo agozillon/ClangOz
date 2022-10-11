@@ -114,11 +114,11 @@ uint8_t *SectionMemoryManager::allocateSection(
 
   // Copy the address to all the other groups, if they have not
   // been initialized.
-  if (CodeMem.Near.base() == 0)
+  if (CodeMem.Near.base() == nullptr)
     CodeMem.Near = MB;
-  if (RODataMem.Near.base() == 0)
+  if (RODataMem.Near.base() == nullptr)
     RODataMem.Near = MB;
-  if (RWDataMem.Near.base() == 0)
+  if (RWDataMem.Near.base() == nullptr)
     RWDataMem.Near = MB;
 
   // Remember that we allocated this memory
@@ -218,11 +218,9 @@ SectionMemoryManager::applyMemoryGroupPermissions(MemoryGroup &MemGroup,
   }
 
   // Remove all blocks which are now empty
-  MemGroup.FreeMem.erase(remove_if(MemGroup.FreeMem,
-                                   [](FreeMemBlock &FreeMB) {
-                                     return FreeMB.Free.allocatedSize() == 0;
-                                   }),
-                         MemGroup.FreeMem.end());
+  erase_if(MemGroup.FreeMem, [](FreeMemBlock &FreeMB) {
+    return FreeMB.Free.allocatedSize() == 0;
+  });
 
   return std::error_code();
 }
@@ -240,7 +238,7 @@ SectionMemoryManager::~SectionMemoryManager() {
   }
 }
 
-SectionMemoryManager::MemoryMapper::~MemoryMapper() {}
+SectionMemoryManager::MemoryMapper::~MemoryMapper() = default;
 
 void SectionMemoryManager::anchor() {}
 

@@ -6,9 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Pass.h"
+#include "llvm/PassRegistry.h"
 #include <gtest/gtest.h>
 #include <llvm/ADT/SmallString.h>
-#include "llvm/IR/LegacyPassManager.h"
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassInstrumentation.h>
@@ -134,8 +136,8 @@ TEST(TimePassesTest, CustomOut) {
   // Pretending that passes are running to trigger the timers.
   PI.runBeforePass(Pass1, M);
   PI.runBeforePass(Pass2, M);
-  PI.runAfterPass(Pass2, M);
-  PI.runAfterPass(Pass1, M);
+  PI.runAfterPass(Pass2, M, PreservedAnalyses::all());
+  PI.runAfterPass(Pass1, M, PreservedAnalyses::all());
 
   // Generating report.
   TimePasses->print();
@@ -154,7 +156,7 @@ TEST(TimePassesTest, CustomOut) {
 
   // Now trigger just a single pass to populate timers again.
   PI.runBeforePass(Pass2, M);
-  PI.runAfterPass(Pass2, M);
+  PI.runAfterPass(Pass2, M, PreservedAnalyses::all());
 
   // Generate report by deleting the handler.
   TimePasses.reset();

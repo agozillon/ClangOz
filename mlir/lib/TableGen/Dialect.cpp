@@ -11,11 +11,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "mlir/TableGen/Dialect.h"
+#include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
 
 using namespace mlir;
 using namespace mlir::tblgen;
 Dialect::Dialect(const llvm::Record *def) : def(def) {
+  if (def == nullptr)
+    return;
   for (StringRef dialect : def->getValueAsListOfStrings("dependentDialects"))
     dependentDialects.push_back(dialect);
 }
@@ -29,14 +32,14 @@ StringRef Dialect::getCppNamespace() const {
 std::string Dialect::getCppClassName() const {
   // Simply use the name and remove any '_' tokens.
   std::string cppName = def->getName().str();
-  llvm::erase_if(cppName, [](char c) { return c == '_'; });
+  llvm::erase_value(cppName, '_');
   return cppName;
 }
 
 static StringRef getAsStringOrEmpty(const llvm::Record &record,
                                     StringRef fieldName) {
-  if (auto valueInit = record.getValueInit(fieldName)) {
-    if (llvm::isa<llvm::CodeInit, llvm::StringInit>(valueInit))
+  if (auto *valueInit = record.getValueInit(fieldName)) {
+    if (llvm::isa<llvm::StringInit>(valueInit))
       return record.getValueAsString(fieldName);
   }
   return "";
@@ -59,8 +62,16 @@ llvm::Optional<StringRef> Dialect::getExtraClassDeclaration() const {
   return value.empty() ? llvm::Optional<StringRef>() : value;
 }
 
+bool Dialect::hasCanonicalizer() const {
+  return def->getValueAsBit("hasCanonicalizer");
+}
+
 bool Dialect::hasConstantMaterializer() const {
   return def->getValueAsBit("hasConstantMaterializer");
+}
+
+bool Dialect::hasNonDefaultDestructor() const {
+  return def->getValueAsBit("hasNonDefaultDestructor");
 }
 
 bool Dialect::hasOperationAttrVerify() const {
@@ -73,6 +84,30 @@ bool Dialect::hasRegionArgAttrVerify() const {
 
 bool Dialect::hasRegionResultAttrVerify() const {
   return def->getValueAsBit("hasRegionResultAttrVerify");
+}
+
+bool Dialect::hasOperationInterfaceFallback() const {
+  return def->getValueAsBit("hasOperationInterfaceFallback");
+}
+
+bool Dialect::useDefaultAttributePrinterParser() const {
+  return def->getValueAsBit("useDefaultAttributePrinterParser");
+}
+
+bool Dialect::useDefaultTypePrinterParser() const {
+  return def->getValueAsBit("useDefaultTypePrinterParser");
+}
+
+Dialect::EmitPrefix Dialect::getEmitAccessorPrefix() const {
+  int prefix = def->getValueAsInt("emitAccessorPrefix");
+  if (prefix < 0 || prefix > static_cast<int>(EmitPrefix::Both))
+    PrintFatalError(def->getLoc(), "Invalid accessor prefix value");
+
+  return static_cast<EmitPrefix>(prefix);
+}
+
+bool Dialect::isExtensible() const {
+  return def->getValueAsBit("isExtensible");
 }
 
 bool Dialect::operator==(const Dialect &other) const {

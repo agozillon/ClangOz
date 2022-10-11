@@ -35,7 +35,7 @@
   "na", nullptr, 8, 0, lldb::eEncodingUint, lldb::eFormatHex,                  \
       {LLDB_INVALID_REGNUM, LLDB_INVALID_REGNUM, LLDB_INVALID_REGNUM,          \
        LLDB_INVALID_REGNUM, LLDB_INVALID_REGNUM},                              \
-      nullptr, nullptr, nullptr, 0
+      nullptr, nullptr
 
 #define DECLARE_REGISTER_INFOS_ARM64_STRUCT
 
@@ -52,7 +52,7 @@ using namespace lldb_private;
 LLDB_PLUGIN_DEFINE_ADV(EmulateInstructionARM64, InstructionARM64)
 
 static bool LLDBTableGetRegisterInfo(uint32_t reg_num, RegisterInfo &reg_info) {
-  if (reg_num >= llvm::array_lengthof(g_register_infos_arm64_le))
+  if (reg_num >= std::size(g_register_infos_arm64_le))
     return false;
   reg_info = g_register_infos_arm64_le[reg_num];
   return true;
@@ -117,17 +117,7 @@ void EmulateInstructionARM64::Terminate() {
   PluginManager::UnregisterPlugin(CreateInstance);
 }
 
-ConstString EmulateInstructionARM64::GetPluginNameStatic() {
-  ConstString g_plugin_name("lldb.emulate-instruction.arm64");
-  return g_plugin_name;
-}
-
-lldb_private::ConstString EmulateInstructionARM64::GetPluginName() {
-  static ConstString g_plugin_name("EmulateInstructionARM64");
-  return g_plugin_name;
-}
-
-const char *EmulateInstructionARM64::GetPluginDescriptionStatic() {
+llvm::StringRef EmulateInstructionARM64::GetPluginDescriptionStatic() {
   return "Emulate instructions for the ARM64 architecture.";
 }
 
@@ -370,7 +360,7 @@ EmulateInstructionARM64::GetOpcodeForInstruction(const uint32_t opcode) {
        "TBNZ <R><t>, #<imm>, <label>"},
 
   };
-  static const size_t k_num_arm_opcodes = llvm::array_lengthof(g_opcodes);
+  static const size_t k_num_arm_opcodes = std::size(g_opcodes);
 
   for (size_t i = 0; i < k_num_arm_opcodes; ++i) {
     if ((g_opcodes[i].mask & opcode) == g_opcodes[i].value)
@@ -643,7 +633,7 @@ bool EmulateInstructionARM64::EmulateADDSUBImm(const uint32_t opcode) {
     imm = imm12;
     break;
   case 1:
-    imm = imm12 << 12;
+    imm = static_cast<uint64_t>(imm12) << 12;
     break;
   default:
     return false; // UNDEFINED;

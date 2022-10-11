@@ -1,13 +1,9 @@
-
 import gdbremote_testcase
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
 from lldbsuite.test import lldbutil
 
-
 class TestGdbRemoteThreadName(gdbremote_testcase.GdbRemoteTestCaseBase):
-
-    mydir = TestBase.compute_mydir(__file__)
 
     def run_and_check_name(self, expected_name):
         self.test_sequence.add_log_lines(["read packet: $vCont;c#a8",
@@ -29,10 +25,8 @@ class TestGdbRemoteThreadName(gdbremote_testcase.GdbRemoteTestCaseBase):
         self.assertEqual(expected_name, kv_dict.get("name"))
 
     @skipIfWindows # the test is not updated for Windows.
-    @llgs_test
     def test(self):
         """ Make sure lldb-server can retrieve inferior thread name"""
-        self.init_llgs_test()
         self.build()
         self.set_inferior_startup_launch()
         procs = self.prep_debug_monitor_and_inferior()

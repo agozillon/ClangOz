@@ -261,9 +261,9 @@ public:
 
   void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
                           StringRef FileName, bool IsAngled,
-                          CharSourceRange FilenameRange, const FileEntry *File,
-                          StringRef SearchPath, StringRef RelativePath,
-                          const Module *Imported,
+                          CharSourceRange FilenameRange,
+                          Optional<FileEntryRef> File, StringRef SearchPath,
+                          StringRef RelativePath, const Module *Imported,
                           SrcMgr::CharacteristicKind FileType) override {
     bool isImport = (IncludeTok.is(tok::identifier) &&
             IncludeTok.getIdentifierInfo()->getPPKeywordID() == tok::pp_import);
@@ -508,8 +508,11 @@ static CXErrorCode clang_indexSourceFile_Impl(
   if (source_filename)
     Args->push_back(source_filename);
 
+  CreateInvocationOptions CIOpts;
+  CIOpts.Diags = Diags;
+  CIOpts.ProbePrecompiled = true; // FIXME: historical default. Needed?
   std::shared_ptr<CompilerInvocation> CInvok =
-      createInvocationFromCommandLine(*Args, Diags);
+      createInvocation(*Args, std::move(CIOpts));
 
   if (!CInvok)
     return CXError_Failure;
@@ -617,9 +620,7 @@ static CXErrorCode clang_indexSourceFile_Impl(
       std::move(CInvok), CXXIdx->getPCHContainerOperations(), Diags,
       IndexAction.get(), UPtr, Persistent, CXXIdx->getClangResourcesPath(),
       OnlyLocalDecls, CaptureDiagnostics, PrecompilePreambleAfterNParses,
-      CacheCodeCompletionResults,
-      /*IncludeBriefCommentsInCodeCompletion=*/false,
-      /*UserFilesAreVolatile=*/true);
+      CacheCodeCompletionResults, /*UserFilesAreVolatile=*/true);
   if (DiagTrap.hasErrorOccurred() && CXXIdx->getDisplayDiagnostics())
     printDiagsToStderr(UPtr);
 

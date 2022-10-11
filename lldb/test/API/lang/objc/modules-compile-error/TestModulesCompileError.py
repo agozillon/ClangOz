@@ -5,9 +5,7 @@ from lldbsuite.test import lldbutil
 
 class TestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
-    @skipUnlessDarwin
+    @skipIf(compiler="clang", compiler_version=['<', '11.0'])
     def test(self):
         self.build()
         lldbutil.run_to_source_breakpoint(self, "// break here", lldb.SBFileSpec("main.m"))

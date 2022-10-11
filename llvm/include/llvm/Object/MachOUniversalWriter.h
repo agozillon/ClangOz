@@ -14,12 +14,22 @@
 #ifndef LLVM_OBJECT_MACHOUNIVERSALWRITER_H
 #define LLVM_OBJECT_MACHOUNIVERSALWRITER_H
 
-#include "llvm/Object/Archive.h"
-#include "llvm/Object/Binary.h"
-#include "llvm/Object/MachO.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/BinaryFormat/MachO.h"
+#include "llvm/Support/Error.h"
+#include <cstdint>
+#include <string>
 
 namespace llvm {
+class LLVMContext;
+
 namespace object {
+class Archive;
+class Binary;
+class IRObjectFile;
+class MachOObjectFile;
 
 class Slice {
   const Binary *B;
@@ -32,12 +42,24 @@ class Slice {
   // file size can be calculated before creating the output buffer.
   uint32_t P2Alignment;
 
+  Slice(const IRObjectFile &IRO, uint32_t CPUType, uint32_t CPUSubType,
+        std::string ArchName, uint32_t Align);
+
 public:
   explicit Slice(const MachOObjectFile &O);
 
   Slice(const MachOObjectFile &O, uint32_t Align);
 
-  static Expected<Slice> create(const Archive *A);
+  /// This constructor takes pre-specified \param CPUType , \param CPUSubType ,
+  /// \param ArchName , \param Align instead of inferring them from the archive
+  /// members.
+  Slice(const Archive &A, uint32_t CPUType, uint32_t CPUSubType,
+        std::string ArchName, uint32_t Align);
+
+  static Expected<Slice> create(const Archive &A,
+                                LLVMContext *LLVMCtx = nullptr);
+
+  static Expected<Slice> create(const IRObjectFile &IRO, uint32_t Align);
 
   void setP2Alignment(uint32_t Align) { P2Alignment = Align; }
 
@@ -76,6 +98,8 @@ public:
 };
 
 Error writeUniversalBinary(ArrayRef<Slice> Slices, StringRef OutputFileName);
+
+Error writeUniversalBinaryToStream(ArrayRef<Slice> Slices, raw_ostream &Out);
 
 } // end namespace object
 

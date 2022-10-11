@@ -1,5 +1,5 @@
-; RUN: opt -S -name-anon-globals < %s | FileCheck %s
-; RUN: opt -prepare-for-thinlto -O0 -module-summary -o %t.bc < %s
+; RUN: opt -S -passes=name-anon-globals %s | FileCheck %s
+; RUN: opt -passes='thinlto-pre-link<O0>,require<module-summary>' -o %t.bc < %s
 
 
 ; foo contribute to the unique hash for the module

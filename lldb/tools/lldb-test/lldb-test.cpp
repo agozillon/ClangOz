@@ -22,6 +22,7 @@
 #include "lldb/Symbol/CompileUnit.h"
 #include "lldb/Symbol/LineTable.h"
 #include "lldb/Symbol/SymbolFile.h"
+#include "lldb/Symbol/Symtab.h"
 #include "lldb/Symbol/TypeList.h"
 #include "lldb/Symbol/TypeMap.h"
 #include "lldb/Symbol/VariableList.h"
@@ -29,6 +30,7 @@
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/DataExtractor.h"
+#include "lldb/Utility/LLDBAssert.h"
 #include "lldb/Utility/State.h"
 #include "lldb/Utility/StreamString.h"
 
@@ -56,12 +58,16 @@ static cl::SubCommand BreakpointSubcommand("breakpoints",
 cl::SubCommand ObjectFileSubcommand("object-file",
                                     "Display LLDB object file information");
 cl::SubCommand SymbolsSubcommand("symbols", "Dump symbols for an object file");
+cl::SubCommand SymTabSubcommand("symtab",
+                                "Test symbol table functionality");
 cl::SubCommand IRMemoryMapSubcommand("ir-memory-map", "Test IRMemoryMap");
+cl::SubCommand AssertSubcommand("assert", "Test assert handling");
 
 cl::opt<std::string> Log("log", cl::desc("Path to a log file"), cl::init(""),
                          cl::sub(BreakpointSubcommand),
                          cl::sub(ObjectFileSubcommand),
                          cl::sub(SymbolsSubcommand),
+                         cl::sub(SymTabSubcommand),
                          cl::sub(IRMemoryMapSubcommand));
 
 /// Create a target using the file pointed to by \p Filename, or abort.
@@ -99,6 +105,48 @@ cl::list<std::string> InputFilenames(cl::Positional, cl::desc("<input files>"),
                                      cl::OneOrMore,
                                      cl::sub(ObjectFileSubcommand));
 } // namespace object
+
+namespace symtab {
+
+/// The same enum as Mangled::NamePreference but with a default
+/// 'None' case. This is needed to disambiguate wheter "ManglingPreference" was
+/// explicitly set or not.
+enum class ManglingPreference {
+  None,
+  Mangled,
+  Demangled,
+  MangledWithoutArguments,
+};
+
+static cl::opt<std::string> FindSymbolsByRegex(
+    "find-symbols-by-regex",
+    cl::desc(
+        "Dump symbols found in the symbol table matching the specified regex."),
+    cl::sub(SymTabSubcommand));
+
+static cl::opt<ManglingPreference> ManglingPreference(
+    "mangling-preference",
+    cl::desc("Preference on mangling scheme the regex should match against and "
+             "dumped."),
+    cl::values(
+        clEnumValN(ManglingPreference::Mangled, "mangled", "Prefer mangled"),
+        clEnumValN(ManglingPreference::Demangled, "demangled",
+                   "Prefer demangled"),
+        clEnumValN(ManglingPreference::MangledWithoutArguments,
+                   "demangled-without-args", "Prefer mangled without args")),
+    cl::sub(SymTabSubcommand));
+
+static cl::opt<std::string> InputFile(cl::Positional, cl::desc("<input file>"),
+                                      cl::Required, cl::sub(SymTabSubcommand));
+
+/// Validate that the options passed make sense.
+static llvm::Optional<llvm::Error> validate();
+
+/// Transforms the selected mangling preference into a Mangled::NamePreference
+static Mangled::NamePreference getNamePreference();
+
+static int handleSymtabCommand(Debugger &Dbg);
+} // namespace symtab
 
 namespace symbols {
 static cl::opt<std::string> InputFile(cl::Positional, cl::desc("<input file>"),
@@ -236,6 +284,9 @@ bool evalFree(StringRef Line, IRMemoryMapTestState &State);
 int evaluateMemoryMapCommands(Debugger &Dbg);
 } // namespace irmemorymap
 
+namespace assert {
+int lldb_assert(Debugger &Dbg);
+} // namespace assert
 } // namespace opts
 
 std::vector<CompilerContext> parseCompilerContext() {
@@ -350,7 +401,7 @@ std::string opts::breakpoint::substitute(StringRef Cmd) {
         OS << sys::path::parent_path(breakpoint::CommandFile);
         break;
       }
-      LLVM_FALLTHROUGH;
+      [[fallthrough]];
     default:
       size_t pos = Cmd.find('%');
       OS << Cmd.substr(0, pos);
@@ -454,8 +505,9 @@ Error opts::symbols::findFunctions(lldb_private::Module &Module) {
         ContextOr->IsValid() ? *ContextOr : CompilerDeclContext();
 
     List.Clear();
-    Symfile.FindFunctions(ConstString(Name), ContextPtr, getFunctionNameFlags(),
-                         true, List);
+    Module::LookupInfo lookup_info(ConstString(Name), getFunctionNameFlags(),
+                                   eLanguageTypeUnknown);
+    Symfile.FindFunctions(lookup_info, ContextPtr, true, List);
   }
   outs() << formatv("Found {0} functions:\n", List.GetSize());
   StreamString Stream;
@@ -809,6 +861,57 @@ Expected<Error (*)(lldb_private::Module &)> opts::symbols::getAction() {
   llvm_unreachable("Unsupported symbol action.");
 }
 
+llvm::Optional<llvm::Error> opts::symtab::validate() {
+  if (ManglingPreference != ManglingPreference::None &&
+      FindSymbolsByRegex.empty())
+    return make_string_error("Mangling preference set but no regex specified.");
+
+  return {};
+}
+
+static Mangled::NamePreference opts::symtab::getNamePreference() {
+  switch (ManglingPreference) {
+  case ManglingPreference::None:
+  case ManglingPreference::Mangled:
+    return Mangled::ePreferMangled;
+  case ManglingPreference::Demangled:
+    return Mangled::ePreferDemangled;
+  case ManglingPreference::MangledWithoutArguments:
+    return Mangled::ePreferDemangledWithoutArguments;
+  }
+  llvm_unreachable("Fully covered switch above!");
+}
+
+int opts::symtab::handleSymtabCommand(Debugger &Dbg) {
+  if (auto error = validate()) {
+    logAllUnhandledErrors(std::move(error.value()), WithColor::error(), "");
+    return 1;
+  }
+
+  if (!FindSymbolsByRegex.empty()) {
+    ModuleSpec Spec{FileSpec(InputFile)};
+
+    auto ModulePtr = std::make_shared<lldb_private::Module>(Spec);
+    auto *Symtab = ModulePtr->GetSymtab();
+    auto NamePreference = getNamePreference();
+    std::vector<uint32_t> Indexes;
+
+    Symtab->FindAllSymbolsMatchingRexExAndType(
+        RegularExpression(FindSymbolsByRegex), lldb::eSymbolTypeAny,
+        Symtab::eDebugAny, Symtab::eVisibilityAny, Indexes, NamePreference);
+    for (auto i : Indexes) {
+      auto *symbol = Symtab->SymbolAtIndex(i);
+      if (symbol) {
+        StreamString stream;
+        symbol->Dump(&stream, nullptr, i, NamePreference);
+        outs() << stream.GetString();
+      }
+    }
+  }
+
+  return 0;
+}
+
 int opts::symbols::dumpSymbols(Debugger &Dbg) {
   auto ActionOr = getAction();
   if (!ActionOr) {
@@ -920,7 +1023,7 @@ static int dumpObjectFiles(Debugger &Dbg) {
       for (size_t I = 0; I < Files.GetSize(); ++I) {
         AutoIndent Indent(Printer, 2);
         Printer.formatLine("Name: {0}",
-                           Files.GetFileSpecAtIndex(I).GetCString());
+                           Files.GetFileSpecAtIndex(I).GetPath());
       }
       Printer.NewLine();
     }
@@ -1077,6 +1180,11 @@ int opts::irmemorymap::evaluateMemoryMapCommands(Debugger &Dbg) {
   return 0;
 }
 
+int opts::assert::lldb_assert(Debugger &Dbg) {
+  lldbassert(false && "lldb-test assert");
+  return 1;
+}
+
 int main(int argc, const char *argv[]) {
   StringRef ToolName = argv[0];
   sys::PrintStackTraceOnErrorSignal(ToolName);
@@ -1105,9 +1213,12 @@ int main(int argc, const char *argv[]) {
   Dbg->GetCommandInterpreter().HandleCommand(
       "settings set target.inherit-tcc true",
       /*add_to_history*/ eLazyBoolNo, Result);
+  Dbg->GetCommandInterpreter().HandleCommand(
+      "settings set target.detach-on-error false",
+      /*add_to_history*/ eLazyBoolNo, Result);
 
   if (!opts::Log.empty())
-    Dbg->EnableLog("lldb", {"all"}, opts::Log, 0, errs());
+    Dbg->EnableLog("lldb", {"all"}, opts::Log, 0, 0, eLogHandlerStream, errs());
 
   if (opts::BreakpointSubcommand)
     return opts::breakpoint::evaluateBreakpoints(*Dbg);
@@ -1115,8 +1226,12 @@ int main(int argc, const char *argv[]) {
     return dumpObjectFiles(*Dbg);
   if (opts::SymbolsSubcommand)
     return opts::symbols::dumpSymbols(*Dbg);
+  if (opts::SymTabSubcommand)
+    return opts::symtab::handleSymtabCommand(*Dbg);
   if (opts::IRMemoryMapSubcommand)
     return opts::irmemorymap::evaluateMemoryMapCommands(*Dbg);
+  if (opts::AssertSubcommand)
+    return opts::assert::lldb_assert(*Dbg);
 
   WithColor::error() << "No command specified.\n";
   return 1;

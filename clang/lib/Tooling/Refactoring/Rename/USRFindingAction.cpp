@@ -80,6 +80,22 @@ public:
     } else if (const auto *TemplateDecl =
                    dyn_cast<ClassTemplateDecl>(FoundDecl)) {
       handleClassTemplateDecl(TemplateDecl);
+    } else if (const auto *FD = dyn_cast<FunctionDecl>(FoundDecl)) {
+      USRSet.insert(getUSRForDecl(FD));
+      if (const auto *FTD = FD->getPrimaryTemplate())
+        handleFunctionTemplateDecl(FTD);
+    } else if (const auto *FD = dyn_cast<FunctionTemplateDecl>(FoundDecl)) {
+      handleFunctionTemplateDecl(FD);
+    } else if (const auto *VTD = dyn_cast<VarTemplateDecl>(FoundDecl)) {
+      handleVarTemplateDecl(VTD);
+    } else if (const auto *VD =
+                   dyn_cast<VarTemplateSpecializationDecl>(FoundDecl)) {
+      // FIXME: figure out why FoundDecl can be a VarTemplateSpecializationDecl.
+      handleVarTemplateDecl(VD->getSpecializedTemplate());
+    } else if (const auto *VD = dyn_cast<VarDecl>(FoundDecl)) {
+      USRSet.insert(getUSRForDecl(VD));
+      if (const auto *VTD = VD->getDescribedVarTemplate())
+        handleVarTemplateDecl(VTD);
     } else {
       USRSet.insert(getUSRForDecl(FoundDecl));
     }
@@ -93,12 +109,6 @@ public:
       OverriddenMethods.push_back(MethodDecl);
     if (MethodDecl->getInstantiatedFromMemberFunction())
       InstantiatedMethods.push_back(MethodDecl);
-    return true;
-  }
-
-  bool VisitClassTemplatePartialSpecializationDecl(
-      const ClassTemplatePartialSpecializationDecl *PartialSpec) {
-    PartialSpecs.push_back(PartialSpec);
     return true;
   }
 
@@ -118,12 +128,29 @@ private:
   void handleClassTemplateDecl(const ClassTemplateDecl *TemplateDecl) {
     for (const auto *Specialization : TemplateDecl->specializations())
       addUSRsOfCtorDtors(Specialization);
-
-    for (const auto *PartialSpec : PartialSpecs) {
-      if (PartialSpec->getSpecializedTemplate() == TemplateDecl)
-        addUSRsOfCtorDtors(PartialSpec);
-    }
+    SmallVector<ClassTemplatePartialSpecializationDecl *, 4> PartialSpecs;
+    TemplateDecl->getPartialSpecializations(PartialSpecs);
+    for (const auto *Spec : PartialSpecs)
+      addUSRsOfCtorDtors(Spec);
     addUSRsOfCtorDtors(TemplateDecl->getTemplatedDecl());
+  }
+
+  void handleFunctionTemplateDecl(const FunctionTemplateDecl *FTD) {
+    USRSet.insert(getUSRForDecl(FTD));
+    USRSet.insert(getUSRForDecl(FTD->getTemplatedDecl()));
+    for (const auto *S : FTD->specializations())
+      USRSet.insert(getUSRForDecl(S));
+  }
+
+  void handleVarTemplateDecl(const VarTemplateDecl *VTD) {
+    USRSet.insert(getUSRForDecl(VTD));
+    USRSet.insert(getUSRForDecl(VTD->getTemplatedDecl()));
+    for (const auto *Spec : VTD->specializations())
+      USRSet.insert(getUSRForDecl(Spec));
+    SmallVector<VarTemplatePartialSpecializationDecl *, 4> PartialSpecs;
+    VTD->getPartialSpecializations(PartialSpecs);
+    for (const auto *Spec : PartialSpecs)
+      USRSet.insert(getUSRForDecl(Spec));
   }
 
   void addUSRsOfCtorDtors(const CXXRecordDecl *RD) {
@@ -184,7 +211,6 @@ private:
   std::set<std::string> USRSet;
   std::vector<const CXXMethodDecl *> OverriddenMethods;
   std::vector<const CXXMethodDecl *> InstantiatedMethods;
-  std::vector<const ClassTemplatePartialSpecializationDecl *> PartialSpecs;
 };
 } // namespace
 

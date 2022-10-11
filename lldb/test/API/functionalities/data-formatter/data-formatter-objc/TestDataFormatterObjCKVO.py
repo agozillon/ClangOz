@@ -14,13 +14,14 @@ from ObjCDataFormatterTestCase import ObjCDataFormatterTestCase
 
 class ObjCDataFormatterKVO(ObjCDataFormatterTestCase):
 
-    @skipUnlessDarwin
     def test_kvo_with_run_command(self):
         """Test the behavior of formatters when KVO is in use."""
         self.build()
         self.target, process, thread, bkpt = lldbutil.run_to_source_breakpoint(
             self, '// Set break point at this line.',
             lldb.SBFileSpec('main.m', False))
+
+        self.runCmd('settings set target.prefer-dynamic-value no-dynamic-values')
 
         # The stop reason of the thread should be breakpoint.
         self.expect(
@@ -57,7 +58,7 @@ class ObjCDataFormatterKVO(ObjCDataFormatterTestCase):
                 ' 21 key/value pairs'
             ])
 
-        lldbutil.run_break_set_by_regexp(self, 'setAtoms')
+        lldbutil.run_break_set_by_symbol(self, '-[Molecule setAtoms:]')
 
         self.runCmd("continue")
         self.expect("frame variable _cmd", substrs=['setAtoms:'])

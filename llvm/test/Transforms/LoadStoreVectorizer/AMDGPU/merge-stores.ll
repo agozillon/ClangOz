@@ -1,4 +1,4 @@
-; RUN: opt -mtriple=amdgcn-amd-amdhsa -load-store-vectorizer -S -o - %s | FileCheck %s
+; RUN: opt -mtriple=amdgcn-amd-amdhsa --mcpu=hawaii -load-store-vectorizer -S -o - %s | FileCheck %s
 ; Copy of test/CodeGen/AMDGPU/merge-stores.ll with some additions
 
 target datalayout = "e-p:64:64-p1:64:64-p2:32:32-p3:32:32-p4:64:64-p5:32:32-p6:32:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-S32-A5"
@@ -221,7 +221,7 @@ define amdgpu_kernel void @merge_global_store_4_constants_i64(i64 addrspace(1)* 
 ; CHECK: [[LOAD:%[^ ]+]] = load <2 x i32>
 ; CHECK: [[ELT0:%[^ ]+]] = extractelement <2 x i32> [[LOAD]], i32 0
 ; CHECK: [[ELT1:%[^ ]+]] = extractelement <2 x i32> [[LOAD]], i32 1
-; CHECK: [[INSERT0:%[^ ]+]] = insertelement <2 x i32> undef, i32 [[ELT0]], i32 0
+; CHECK: [[INSERT0:%[^ ]+]] = insertelement <2 x i32> poison, i32 [[ELT0]], i32 0
 ; CHECK: [[INSERT1:%[^ ]+]] = insertelement <2 x i32> [[INSERT0]], i32 [[ELT1]], i32 1
 ; CHECK: store <2 x i32> [[INSERT1]]
 define amdgpu_kernel void @merge_global_store_2_adjacent_loads_i32(i32 addrspace(1)* %out, i32 addrspace(1)* %in) #0 {
@@ -260,7 +260,7 @@ define amdgpu_kernel void @merge_global_store_2_adjacent_loads_i32_nonzero_base(
 ; CHECK: [[LOAD:%[^ ]+]] = load <2 x i32>
 ; CHECK: [[ELT0:%[^ ]+]] = extractelement <2 x i32> [[LOAD]], i32 0
 ; CHECK: [[ELT1:%[^ ]+]] = extractelement <2 x i32> [[LOAD]], i32 1
-; CHECK: [[INSERT0:%[^ ]+]] = insertelement <2 x i32> undef, i32 [[ELT1]], i32 0
+; CHECK: [[INSERT0:%[^ ]+]] = insertelement <2 x i32> poison, i32 [[ELT1]], i32 0
 ; CHECK: [[INSERT1:%[^ ]+]] = insertelement <2 x i32> [[INSERT0]], i32 [[ELT0]], i32 1
 ; CHECK: store <2 x i32> [[INSERT1]]
 define amdgpu_kernel void @merge_global_store_2_adjacent_loads_shuffle_i32(i32 addrspace(1)* %out, i32 addrspace(1)* %in) #0 {
@@ -526,7 +526,8 @@ define amdgpu_kernel void @merge_local_store_2_constants_i32_align_2(i32 addrspa
 }
 
 ; CHECK-LABEL: @merge_local_store_4_constants_i32
-; CHECK: store <4 x i32> <i32 1234, i32 123, i32 456, i32 333>, <4 x i32> addrspace(3)*
+; CHECK: store <2 x i32> <i32 456, i32 333>, <2 x i32> addrspace(3)* %1, align 4
+; CHECK: store <2 x i32> <i32 1234, i32 123>, <2 x i32> addrspace(3)* %2, align 4
 define amdgpu_kernel void @merge_local_store_4_constants_i32(i32 addrspace(3)* %out) #0 {
   %out.gep.1 = getelementptr i32, i32 addrspace(3)* %out, i32 1
   %out.gep.2 = getelementptr i32, i32 addrspace(3)* %out, i32 2

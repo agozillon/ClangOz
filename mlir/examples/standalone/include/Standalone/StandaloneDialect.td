@@ -23,14 +23,14 @@ def Standalone_Dialect : Dialect {
         illustrate the basic setup required to develop MLIR-based tools without
         working inside of the LLVM source tree.
     }];
-    let cppNamespace = "standalone";
+    let cppNamespace = "::mlir::standalone";
 }
 
 //===----------------------------------------------------------------------===//
 // Base standalone operation definition.
 //===----------------------------------------------------------------------===//
 
-class Standalone_Op<string mnemonic, list<OpTrait> traits = []> :
+class Standalone_Op<string mnemonic, list<Trait> traits = []> :
         Op<Standalone_Dialect, mnemonic, traits>;
 
 #endif // STANDALONE_DIALECT

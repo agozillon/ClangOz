@@ -11,16 +11,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/CodeGen/SwiftCallingConv.h"
-#include "clang/Basic/TargetInfo.h"
+#include "ABIInfo.h"
 #include "CodeGenModule.h"
 #include "TargetInfo.h"
+#include "clang/Basic/TargetInfo.h"
 
 using namespace clang;
 using namespace CodeGen;
 using namespace swiftcall;
 
 static const SwiftABIInfo &getSwiftABIInfo(CodeGenModule &CGM) {
-  return cast<SwiftABIInfo>(CGM.getTargetCodeGenInfo().getABIInfo());
+  return CGM.getTargetCodeGenInfo().getSwiftABIInfo();
 }
 
 static bool isPowerOf2(unsigned n) {
@@ -93,11 +94,24 @@ void SwiftAggLowering::addTypedData(QualType type, CharUnits begin) {
     // Just add it all as opaque.
     addOpaqueData(begin, begin + CGM.getContext().getTypeSizeInChars(type));
 
-  // Everything else is scalar and should not convert as an LLVM aggregate.
+    // Atomic types.
+  } else if (const auto *atomicType = type->getAs<AtomicType>()) {
+    auto valueType = atomicType->getValueType();
+    auto atomicSize = CGM.getContext().getTypeSizeInChars(atomicType);
+    auto valueSize = CGM.getContext().getTypeSizeInChars(valueType);
+
+    addTypedData(atomicType->getValueType(), begin);
+
+    // Add atomic padding.
+    auto atomicPadding = atomicSize - valueSize;
+    if (atomicPadding > CharUnits::Zero())
+      addOpaqueData(begin + valueSize, begin + atomicSize);
+
+    // Everything else is scalar and should not convert as an LLVM aggregate.
   } else {
     // We intentionally convert as !ForMem because we want to preserve
     // that a type was an i1.
-    auto llvmType = CGM.getTypes().ConvertType(type);
+    auto *llvmType = CGM.getTypes().ConvertType(type);
     addTypedData(llvmType, begin);
   }
 }
@@ -110,7 +124,7 @@ void SwiftAggLowering::addTypedData(const RecordDecl *record, CharUnits begin,
                                     const ASTRecordLayout &layout) {
   // Unions are a special case.
   if (record->isUnion()) {
-    for (auto field : record->fields()) {
+    for (auto *field : record->fields()) {
       if (field->isBitField()) {
         addBitFieldData(field, begin, 0);
       } else {
@@ -147,7 +161,7 @@ void SwiftAggLowering::addTypedData(const RecordDecl *record, CharUnits begin,
   }
 
   // Add fields.
-  for (auto field : record->fields()) {
+  for (auto *field : record->fields()) {
     auto fieldOffsetInBits = layout.getFieldOffset(field->getFieldIndex());
     if (field->isBitField()) {
       addBitFieldData(field, begin, fieldOffsetInBits);
@@ -320,9 +334,12 @@ restartAfterSplit:
   // If we have a vector type, split it.
   if (auto vecTy = dyn_cast_or_null<llvm::VectorType>(type)) {
     auto eltTy = vecTy->getElementType();
-    CharUnits eltSize = (end - begin) / vecTy->getNumElements();
+    CharUnits eltSize =
+        (end - begin) / cast<llvm::FixedVectorType>(vecTy)->getNumElements();
     assert(eltSize == getTypeStoreSize(CGM, eltTy));
-    for (unsigned i = 0, e = vecTy->getNumElements(); i != e; ++i) {
+    for (unsigned i = 0,
+                  e = cast<llvm::FixedVectorType>(vecTy)->getNumElements();
+         i != e; ++i) {
       addEntry(eltTy, begin, begin + eltSize);
       begin += eltSize;
     }
@@ -614,9 +631,8 @@ bool SwiftAggLowering::shouldPassIndirectly(bool asReturnValue) const {
 
   // Avoid copying the array of types when there's just a single element.
   if (Entries.size() == 1) {
-    return getSwiftABIInfo(CGM).shouldPassIndirectlyForSwift(
-                                                           Entries.back().Type,
-                                                             asReturnValue);
+    return getSwiftABIInfo(CGM).shouldPassIndirectly(Entries.back().Type,
+                                                     asReturnValue);
   }
 
   SmallVector<llvm::Type*, 8> componentTys;
@@ -624,15 +640,13 @@ bool SwiftAggLowering::shouldPassIndirectly(bool asReturnValue) const {
   for (auto &entry : Entries) {
     componentTys.push_back(entry.Type);
   }
-  return getSwiftABIInfo(CGM).shouldPassIndirectlyForSwift(componentTys,
-                                                           asReturnValue);
+  return getSwiftABIInfo(CGM).shouldPassIndirectly(componentTys, asReturnValue);
 }
 
 bool swiftcall::shouldPassIndirectly(CodeGenModule &CGM,
                                      ArrayRef<llvm::Type*> componentTys,
                                      bool asReturnValue) {
-  return getSwiftABIInfo(CGM).shouldPassIndirectlyForSwift(componentTys,
-                                                           asReturnValue);
+  return getSwiftABIInfo(CGM).shouldPassIndirectly(componentTys, asReturnValue);
 }
 
 CharUnits swiftcall::getMaximumVoluntaryIntegerSize(CodeGenModule &CGM) {
@@ -674,21 +688,21 @@ bool swiftcall::isLegalIntegerType(CodeGenModule &CGM,
 
 bool swiftcall::isLegalVectorType(CodeGenModule &CGM, CharUnits vectorSize,
                                   llvm::VectorType *vectorTy) {
-  return isLegalVectorType(CGM, vectorSize, vectorTy->getElementType(),
-                           vectorTy->getNumElements());
+  return isLegalVectorType(
+      CGM, vectorSize, vectorTy->getElementType(),
+      cast<llvm::FixedVectorType>(vectorTy)->getNumElements());
 }
 
 bool swiftcall::isLegalVectorType(CodeGenModule &CGM, CharUnits vectorSize,
                                   llvm::Type *eltTy, unsigned numElts) {
   assert(numElts > 1 && "illegal vector length");
-  return getSwiftABIInfo(CGM)
-           .isLegalVectorTypeForSwift(vectorSize, eltTy, numElts);
+  return getSwiftABIInfo(CGM).isLegalVectorType(vectorSize, eltTy, numElts);
 }
 
 std::pair<llvm::Type*, unsigned>
 swiftcall::splitLegalVectorType(CodeGenModule &CGM, CharUnits vectorSize,
                                 llvm::VectorType *vectorTy) {
-  auto numElts = vectorTy->getNumElements();
+  auto numElts = cast<llvm::FixedVectorType>(vectorTy)->getNumElements();
   auto eltTy = vectorTy->getElementType();
 
   // Try to split the vector type in half.
@@ -710,7 +724,7 @@ void swiftcall::legalizeVectorType(CodeGenModule &CGM, CharUnits origVectorSize,
   }
 
   // Try to split the vector into legal subvectors.
-  auto numElts = origVectorTy->getNumElements();
+  auto numElts = cast<llvm::FixedVectorType>(origVectorTy)->getNumElements();
   auto eltTy = origVectorTy->getElementType();
   assert(numElts != 1);
 

@@ -16,13 +16,13 @@
 ; SECTIONS_CFI: .cfi_def_cfa_register %rbp
 ; SECTIONS_CFI: .cfi_endproc
 
-; SECTIONS_CFI: _Z2f3b.1:
+; SECTIONS_CFI: _Z2f3b.__part.1:
 ; SECTIONS_CFI-NEXT: .cfi_startproc
 ; SECTIONS_CFI-NEXT: .cfi_def_cfa %rbp, 16
 ; SECTIONS_CFI-NEXT: .cfi_offset %rbp, -16
 ; SECTIONS_CFI: .cfi_endproc
 
-; SECTIONS_CFI: _Z2f3b.2:
+; SECTIONS_CFI: _Z2f3b.__part.2:
 ; SECTIONS_CFI-NEXT: .cfi_startproc
 ; SECTIONS_CFI-NEXT: .cfi_def_cfa %rbp, 16
 ; SECTIONS_CFI-NEXT: .cfi_offset %rbp, -16
@@ -35,12 +35,12 @@
 ; SECTIONS_NOFP_CFI: .cfi_def_cfa_offset 16
 ; SECTIONS_NOFP_CFI: .cfi_endproc
 
-; SECTIONS_NOFP_CFI: _Z2f3b.1:
+; SECTIONS_NOFP_CFI: _Z2f3b.__part.1:
 ; SECTIONS_NOFP_CFI-NEXT: .cfi_startproc
 ; SECTIONS_NOFP_CFI-NEXT: .cfi_def_cfa %rsp, 16
 ; SECTIONS_NOFP_CFI: .cfi_endproc
 
-; SECTIONS_NOFP_CFI: _Z2f3b.2:
+; SECTIONS_NOFP_CFI: _Z2f3b.__part.2:
 ; SECTIONS_NOFP_CFI-NEXT: .cfi_startproc
 ; SECTIONS_NOFP_CFI-NEXT: .cfi_def_cfa %rsp, 16
 ; SECTIONS_NOFP_CFI: .cfi_endproc
@@ -70,8 +70,8 @@ define dso_local void @_Z2f3b(i1 zeroext %b) {
 entry:
   %b.addr = alloca i8, align 1
   %frombool = zext i1 %b to i8
-  store i8 %frombool, i8* %b.addr, align 1
-  %0 = load i8, i8* %b.addr, align 1
+  store i8 %frombool, ptr %b.addr, align 1
+  %0 = load i8, ptr %b.addr, align 1
   %tobool = trunc i8 %0 to i1
   br i1 %tobool, label %if.then, label %if.end
 

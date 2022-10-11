@@ -33,6 +33,7 @@ class InstSI <dag outs, dag ins, string asm = "",
   field bit VINTRP = 0;
   field bit SDWA = 0;
   field bit DPP = 0;
+  field bit TRANS = 0;
 
   // Memory instruction formats.
   field bit MUBUF = 0;
@@ -46,6 +47,12 @@ class InstSI <dag outs, dag ins, string asm = "",
   // Pseudo instruction formats.
   field bit VGPRSpill = 0;
   field bit SGPRSpill = 0;
+
+  // LDSDIR instruction format.
+  field bit LDSDIR = 0;
+
+  // VINTERP instruction format.
+  field bit VINTERP = 0;
 
   // High bits - other information.
   field bit VM_CNT = 0;
@@ -78,7 +85,7 @@ class InstSI <dag outs, dag ins, string asm = "",
   field bit VOPAsmPrefer32Bit = 0;
 
   // This bit indicates that this is a VOP3 opcode which supports op_sel
-  // modifier (gfx9 only).
+  // modifier.
   field bit VOP3_OPSEL = 0;
 
   // Is it possible for this instruction to be atomic?
@@ -110,9 +117,9 @@ class InstSI <dag outs, dag ins, string asm = "",
   // This bit indicates that this is a D16 buffer instruction.
   field bit D16Buf = 0;
 
-  // This field indicates that FLAT instruction accesses FLAT_GLBL or
-  // FLAT_SCRATCH segment. Must be 0 for non-FLAT instructions.
-  field bit IsNonFlatSeg = 0;
+  // This field indicates that FLAT instruction accesses FLAT_GLBL segment.
+  // Must be 0 for non-FLAT instructions.
+  field bit FlatGlobal = 0;
 
   // Reads the mode register, usually for FP environment.
   field bit ReadsModeReg = 0;
@@ -129,6 +136,19 @@ class InstSI <dag outs, dag ins, string asm = "",
 
   // This bit indicates that this is one of DOT instructions.
   field bit IsDOT = 0;
+
+  // This field indicates that FLAT instruction accesses FLAT_SCRATCH segment.
+  // Must be 0 for non-FLAT instructions.
+  field bit FlatScratch = 0;
+
+  // Atomic without a return.
+  field bit IsAtomicNoRet = 0;
+
+  // Atomic with return.
+  field bit IsAtomicRet = 0;
+
+  // This bit indicates that this is one of WMMA instructions.
+  field bit IsWMMA = 0;
 
   // These need to be kept in sync with the enum in SIInstrFlags.
   let TSFlags{0} = SALU;
@@ -149,17 +169,21 @@ class InstSI <dag outs, dag ins, string asm = "",
   let TSFlags{13} = VINTRP;
   let TSFlags{14} = SDWA;
   let TSFlags{15} = DPP;
+  let TSFlags{16} = TRANS;
 
-  let TSFlags{16} = MUBUF;
-  let TSFlags{17} = MTBUF;
-  let TSFlags{18} = SMRD;
-  let TSFlags{19} = MIMG;
-  let TSFlags{20} = EXP;
-  let TSFlags{21} = FLAT;
-  let TSFlags{22} = DS;
+  let TSFlags{17} = MUBUF;
+  let TSFlags{18} = MTBUF;
+  let TSFlags{19} = SMRD;
+  let TSFlags{20} = MIMG;
+  let TSFlags{21} = EXP;
+  let TSFlags{22} = FLAT;
+  let TSFlags{23} = DS;
 
-  let TSFlags{23} = VGPRSpill;
-  let TSFlags{24} = SGPRSpill;
+  let TSFlags{24} = VGPRSpill;
+  let TSFlags{25} = SGPRSpill;
+
+  let TSFlags{26} = LDSDIR;
+  let TSFlags{27} = VINTERP;
 
   let TSFlags{32} = VM_CNT;
   let TSFlags{33} = EXP_CNT;
@@ -187,7 +211,7 @@ class InstSI <dag outs, dag ins, string asm = "",
 
   let TSFlags{50} = D16Buf;
 
-  let TSFlags{51} = IsNonFlatSeg;
+  let TSFlags{51} = FlatGlobal;
 
   let TSFlags{52} = FPDPRounding;
 
@@ -197,17 +221,20 @@ class InstSI <dag outs, dag ins, string asm = "",
 
   let TSFlags{55} = IsDOT;
 
+  let TSFlags{56} = FlatScratch;
+
+  let TSFlags{57} = IsAtomicNoRet;
+
+  let TSFlags{58} = IsAtomicRet;
+
+  let TSFlags{59} = IsWMMA;
+
   let SchedRW = [Write32Bit];
 
-  field bits<1> DisableSIDecoder = 0;
-  field bits<1> DisableVIDecoder = 0;
-  field bits<1> DisableDecoder = 0;
-
-  let isAsmParserOnly = !if(!eq(DisableDecoder{0}, {0}), 0, 1);
   let AsmVariantName = AMDGPUAsmVariants.Default;
 
   // Avoid changing source registers in a way that violates constant bus read limitations.
-  let hasExtraSrcRegAllocReq = !if(VOP1,1,!if(VOP2,1,!if(VOP3,1,!if(VOPC,1,!if(SDWA,1, !if(VALU,1,0))))));
+  let hasExtraSrcRegAllocReq = !or(VOP1, VOP2, VOP3, VOPC, SDWA, VALU);
 }
 
 class PseudoInstSI<dag outs, dag ins, list<dag> pattern = [], string asm = "">
@@ -248,6 +275,18 @@ class Enc64 {
   int Size = 8;
 }
 
+class Enc96 {
+  field bits<96> Inst;
+  int Size = 12;
+}
+
+def CPolBit {
+  int GLC = 0;
+  int SLC = 1;
+  int DLC = 2;
+  int SCC = 4;
+}
+
 class VOPDstOperand <RegisterClass rc> : RegisterOperand <rc, "printVOPDst">;
 
 class VINTRPe <bits<2> op> : Enc32 {
@@ -264,65 +303,111 @@ class VINTRPe <bits<2> op> : Enc32 {
   let Inst{31-26} = 0x32; // encoding
 }
 
-class MIMGe : Enc64 {
-  bits<8> vdata;
+class MIMGe_gfxpre11 : Enc64 {
+  bits<10> vdata;
   bits<4> dmask;
   bits<1> unorm;
-  bits<1> glc;
+  bits<5> cpol;
   bits<1> r128;
   bits<1> tfe;
   bits<1> lwe;
-  bits<1> slc;
   bit d16;
   bits<7> srsrc;
   bits<7> ssamp;
 
   let Inst{11-8} = dmask;
   let Inst{12} = unorm;
-  let Inst{13} = glc;
+  let Inst{13} = cpol{CPolBit.GLC};
   let Inst{15} = r128;
-  let Inst{16} = tfe;
   let Inst{17} = lwe;
-  let Inst{25} = slc;
+  let Inst{25} = cpol{CPolBit.SLC};
   let Inst{31-26} = 0x3c;
-  let Inst{47-40} = vdata;
+  let Inst{47-40} = vdata{7-0};
   let Inst{52-48} = srsrc{6-2};
   let Inst{57-53} = ssamp{6-2};
   let Inst{63} = d16;
 }
 
-class MIMGe_gfx6789 <bits<8> op> : MIMGe {
+class MIMGe_gfx6789 <bits<8> op> : MIMGe_gfxpre11 {
   bits<8> vaddr;
   bits<1> da;
 
   let Inst{0} = op{7};
+  let Inst{7} = cpol{CPolBit.SCC};
   let Inst{14} = da;
+  let Inst{16} = tfe;
   let Inst{24-18} = op{6-0};
   let Inst{39-32} = vaddr;
 }
 
-class MIMGe_gfx10 <bits<8> op> : MIMGe {
+class MIMGe_gfx90a <bits<8> op> : MIMGe_gfxpre11 {
+  bits<8> vaddr;
+  bits<1> da;
+
+  let Inst{0} = op{7};
+  let Inst{7} = cpol{CPolBit.SCC};
+  let Inst{14} = da;
+  let Inst{16} = vdata{9}; // ACC bit
+  let Inst{24-18} = op{6-0};
+  let Inst{39-32} = vaddr;
+}
+
+class MIMGe_gfx10 <bits<8> op> : MIMGe_gfxpre11 {
   bits<8> vaddr0;
   bits<3> dim;
   bits<2> nsa;
-  bits<1> dlc;
   bits<1> a16;
 
   let Inst{0} = op{7};
   let Inst{2-1} = nsa;
   let Inst{5-3} = dim;
-  let Inst{7} = dlc;
+  let Inst{7} = cpol{CPolBit.DLC};
+  let Inst{16} = tfe;
   let Inst{24-18} = op{6-0};
   let Inst{39-32} = vaddr0;
   let Inst{62} = a16;
 }
 
+class MIMGe_gfx11 <bits<8> op> : Enc64 {
+  bits<8> vdata;
+  bits<4> dmask;
+  bits<1> unorm;
+  bits<5> cpol;
+  bits<1> r128;
+  bits<1> tfe;
+  bits<1> lwe;
+  bits<7> srsrc;
+  bits<7> ssamp;
+  bit d16;
+  bits<1> a16;
+  bits<8> vaddr0;
+  bits<3> dim;
+  bits<1> nsa;
+
+  let Inst{0} = nsa;
+  let Inst{4-2} = dim;
+  let Inst{7} = unorm;
+  let Inst{11-8} = dmask;
+  let Inst{12} = cpol{CPolBit.SLC};
+  let Inst{13} = cpol{CPolBit.DLC};
+  let Inst{14} = cpol{CPolBit.GLC};
+  let Inst{15} = r128;
+  let Inst{16} = a16;
+  let Inst{17} = d16;
+  let Inst{25-18} = op;
+  let Inst{31-26} = 0x3c;
+  let Inst{39-32} = vaddr0;
+  let Inst{47-40} = vdata;
+  let Inst{52-48} = srsrc{6-2};
+  let Inst{53} = tfe;
+  let Inst{54} = lwe;
+  let Inst{62-58} = ssamp{6-2};
+}
+
 class EXPe : Enc64 {
   bits<4> en;
   bits<6> tgt;
-  bits<1> compr;
   bits<1> done;
-  bits<1> vm;
   bits<8> src0;
   bits<8> src1;
   bits<8> src2;
@@ -330,14 +415,28 @@ class EXPe : Enc64 {
 
   let Inst{3-0} = en;
   let Inst{9-4} = tgt;
-  let Inst{10} = compr;
   let Inst{11} = done;
-  let Inst{12} = vm;
   let Inst{31-26} = 0x3e;
   let Inst{39-32} = src0;
   let Inst{47-40} = src1;
   let Inst{55-48} = src2;
   let Inst{63-56} = src3;
+}
+
+// Pre-GFX11 encoding has compr and vm bits.
+class EXPe_ComprVM : EXPe {
+  bits<1> compr;
+  bits<1> vm;
+
+  let Inst{10} = compr;
+  let Inst{12} = vm;
+}
+
+// GFX11+ encoding has row bit.
+class EXPe_Row : EXPe {
+  bits<1> row;
+
+  let Inst{13} = row;
 }
 
 let Uses = [EXEC] in {
@@ -360,17 +459,6 @@ class VINTRPCommon <dag outs, dag ins, string asm, list<dag> pattern> :
   let mayStore = 0;
   let hasSideEffects = 0;
   let VALU = 1;
-}
-
-class EXPCommon<dag outs, dag ins, string asm, list<dag> pattern> :
-  InstSI<outs, ins, asm, pattern> {
-  let EXP = 1;
-  let EXP_CNT = 1;
-  let mayLoad = 0; // Set to 1 if done bit is set.
-  let mayStore = 1;
-  let UseNamedOperandTable = 1;
-  let Uses = [EXEC];
-  let SchedRW = [WriteExport];
 }
 
 } // End Uses = [EXEC]

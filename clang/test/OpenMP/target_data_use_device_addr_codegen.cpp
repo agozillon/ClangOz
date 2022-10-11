@@ -1,10 +1,10 @@
-// RUN: %clang_cc1 -DCK1 -verify -fopenmp -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s
-// RUN: %clang_cc1 -DCK1 -fopenmp -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -DCK1 -verify -fopenmp -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -DCK1 -fopenmp -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -no-opaque-pointers -fopenmp -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s
 
-// RUN: %clang_cc1 -DCK1 -verify -fopenmp-simd -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck --check-prefix SIMD-ONLY0 %s
-// RUN: %clang_cc1 -DCK1 -fopenmp-simd -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp-simd -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck --check-prefix SIMD-ONLY0 %s
+// RUN: %clang_cc1 -no-opaque-pointers -DCK1 -verify -fopenmp-simd -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck --check-prefix SIMD-ONLY0 %s
+// RUN: %clang_cc1 -no-opaque-pointers -DCK1 -fopenmp-simd -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -no-opaque-pointers -fopenmp-simd -fopenmp-version=50 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck --check-prefix SIMD-ONLY0 %s
 // SIMD-ONLY0-NOT: {{__kmpc|__tgt}}
 // expected-no-diagnostics
 
@@ -12,11 +12,12 @@
 #define HEADER
 
 // CHECK-DAG: [[SIZES1:@.+]] = private unnamed_addr constant [5 x i64] zeroinitializer
-// 96 = 0x60 = OMP_MAP_TARGET_PARAM | OMP_MAP_RETURN_PARAM
-// CHECK-DAG: [[MAPTYPES1:@.+]] = private unnamed_addr constant [5 x i64] [i64 96, i64 96, i64 96, i64 96, i64 96]
-// 32 = 0x20 = OMP_MAP_TARGET_PARAM
+// 64 = 0x40 = OMP_MAP_RETURN_PARAM
+// CHECK-DAG: [[MAPTYPES1:@.+]] = private unnamed_addr constant [5 x i64] [i64 64, i64 64, i64 64, i64 64, i64 64]
+// CHECK-DAG: [[SIZES2:@.+]] = private unnamed_addr constant [5 x i64] zeroinitializer
+// 0 = OMP_MAP_NONE
 // 281474976710720 = 0x1000000000040 = OMP_MAP_MEMBER_OF | OMP_MAP_RETURN_PARAM
-// CHECK-DAG: [[MAPTYPES2:@.+]] = private unnamed_addr constant [5 x i64] [i64 32, i64 281474976710720, i64 281474976710720, i64 281474976710720, i64 281474976710720]
+// CHECK-DAG: [[MAPTYPES2:@.+]] = private unnamed_addr constant [5 x i64] [i64 0, i64 281474976710720, i64 281474976710720, i64 281474976710720, i64 281474976710720]
 struct S {
   int a = 0;
   int *ptr = &a;
@@ -85,12 +86,12 @@ int main() {
 // CHECK: store float* [[VLA_ADDR]], float** [[PTR4_VLA_ADDR]],
 // CHECK: [[BPTR:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[BPTRS]], i32 0, i32 0
 // CHECK: [[PTR:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[PTRS]], i32 0, i32 0
-// CHECK: call void @__tgt_target_data_begin_mapper(i64 -1, i32 5, i8** [[BPTR]], i8** [[PTR]], i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[SIZES1]], i32 0, i32 0), i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[MAPTYPES1]], i32 0, i32 0), i8** null)
+// CHECK: call void @__tgt_target_data_begin_mapper(%struct.ident_t* @{{.+}}, i64 -1, i32 5, i8** [[BPTR]], i8** [[PTR]], i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[SIZES1]], i32 0, i32 0), i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[MAPTYPES1]], i32 0, i32 0), i8** null, i8** null)
 // CHECK: [[A_REF:%.+]] = load float*, float** [[BPTR0_A_ADDR]],
 // CHECK: [[REF_REF:%.+]] = load float*, float** [[BPTR2_REF_ADDR]],
 // CHECK: store float* [[REF_REF]], float** [[TMP_REF_ADDR:%.+]],
-// CHECK: [[ARR:%.+]] = load float*, float** [[BPTR3_ARR_ADDR]],
-// CHECK: [[ARR_REF:%.+]] = bitcast float* [[ARR]] to [4 x float]*
+// CHECK: [[BPTR3_ARR_ADDR_CAST:%.+]] = bitcast float** [[BPTR3_ARR_ADDR]] to [4 x float]**
+// CHECK: [[ARR_REF:%.+]] = load [4 x float]*, [4 x float]** [[BPTR3_ARR_ADDR_CAST]],
 // CHECK: [[VLA_REF:%.+]] = load float*, float** [[BPTR4_VLA_ADDR]],
 // CHECK: [[A:%.+]] = load float, float* [[A_REF]],
 // CHECK: [[INC:%.+]] = fadd float [[A]], 1.000000e+00
@@ -113,7 +114,7 @@ int main() {
 // CHECK: store float [[INC]], float* [[VLA0_ADDR]],
 // CHECK: [[BPTR:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[BPTRS]], i32 0, i32 0
 // CHECK: [[PTR:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[PTRS]], i32 0, i32 0
-// CHECK: call void @__tgt_target_data_end_mapper(i64 -1, i32 5, i8** [[BPTR]], i8** [[PTR]], i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[SIZES1]], i32 0, i32 0), i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[MAPTYPES1]], i32 0, i32 0), i8** null)
+// CHECK: call void @__tgt_target_data_end_mapper(%struct.ident_t* @{{.+}}, i64 -1, i32 5, i8** [[BPTR]], i8** [[PTR]], i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[SIZES1]], i32 0, i32 0), i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[MAPTYPES1]], i32 0, i32 0), i8** null, i8** null)
 
 // CHECK: foo
 // %this.addr = alloca %struct.S*, align 8
@@ -158,36 +159,28 @@ int main() {
 // CHECK: [[PTR1:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[PTRS]], i32 0, i32 1
 // CHECK: [[PTR1_A_ADDR:%.+]] = bitcast i8** [[PTR1]] to i32**
 // CHECK: store i32* [[A_ADDR2]], i32** [[PTR1_A_ADDR]],
-// CHECK: [[SIZE1:%.+]] = getelementptr inbounds [5 x i64], [5 x i64]* [[SIZES]], i32 0, i32 1
-// CHECK: store i64 0, i64* [[SIZE1]],
 // CHECK: [[BPTR2:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[BPTRS]], i32 0, i32 2
 // CHECK: [[BPTR2_PTR_ADDR:%.+]] = bitcast i8** [[BPTR2]] to i32***
 // CHECK: store i32** [[PTR_ADDR]], i32*** [[BPTR2_PTR_ADDR]],
 // CHECK: [[PTR2:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[PTRS]], i32 0, i32 2
 // CHECK: [[PTR2_PTR_ADDR:%.+]] = bitcast i8** [[PTR2]] to i32***
 // CHECK: store i32** [[PTR_ADDR]], i32*** [[PTR2_PTR_ADDR]],
-// CHECK: [[SIZE2:%.+]] = getelementptr inbounds [5 x i64], [5 x i64]* [[SIZES]], i32 0, i32 2
-// CHECK: store i64 0, i64* [[SIZE2]],
 // CHECK: [[BPTR3:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[BPTRS]], i32 0, i32 3
 // CHECK: [[BPTR3_REF_PTR:%.+]] = bitcast i8** [[BPTR3]] to i32**
 // CHECK: store i32* [[REF_PTR]], i32** [[BPTR3_REF_PTR]],
 // CHECK: [[PTR3:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[PTRS]], i32 0, i32 3
 // CHECK: [[PTR3_REF_PTR:%.+]] = bitcast i8** [[PTR3]] to i32**
 // CHECK: store i32* [[REF_PTR]], i32** [[PTR3_REF_PTR]],
-// CHECK: [[SIZE3:%.+]] = getelementptr inbounds [5 x i64], [5 x i64]* [[SIZES]], i32 0, i32 3
-// CHECK: store i64 0, i64* [[SIZE3]],
 // CHECK: [[BPTR4:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[BPTRS]], i32 0, i32 4
 // CHECK: [[BPTR4_ARR_ADDR:%.+]] = bitcast i8** [[BPTR4]] to [4 x i32]**
 // CHECK: store [4 x i32]* [[ARR_ADDR2]], [4 x i32]** [[BPTR4_ARR_ADDR]],
 // CHECK: [[PTR4:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[PTRS]], i32 0, i32 4
 // CHECK: [[PTR4_ARR_ADDR:%.+]] = bitcast i8** [[PTR4]] to [4 x i32]**
 // CHECK: store [4 x i32]* [[ARR_ADDR2]], [4 x i32]** [[PTR4_ARR_ADDR]],
-// CHECK: [[SIZE4:%.+]] = getelementptr inbounds [5 x i64], [5 x i64]* [[SIZES]], i32 0, i32 4
-// CHECK: store i64 0, i64* [[SIZE4]],
 // CHECK: [[BPTR:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[BPTRS]], i32 0, i32 0
 // CHECK: [[PTR:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[PTRS]], i32 0, i32 0
 // CHECK: [[SIZE:%.+]] = getelementptr inbounds [5 x i64], [5 x i64]* [[SIZES]], i32 0, i32 0
-// CHECK: call void @__tgt_target_data_begin_mapper(i64 -1, i32 5, i8** [[BPTR]], i8** [[PTR]], i64* [[SIZE]], i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[MAPTYPES2]], i32 0, i32 0), i8** null)
+// CHECK: call void @__tgt_target_data_begin_mapper(%struct.ident_t* @{{.+}}, i64 -1, i32 5, i8** [[BPTR]], i8** [[PTR]], i64* [[SIZE]], i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[MAPTYPES2]], i32 0, i32 0), i8** null, i8** null)
 // CHECK: [[A_ADDR:%.+]] = load i32*, i32** [[BPTR1_A_ADDR]],
 // CHECK: store i32* [[A_ADDR]], i32** [[A_REF:%.+]],
 // CHECK: [[PTR_ADDR:%.+]] = load i32**, i32*** [[BPTR2_PTR_ADDR]],
@@ -219,6 +212,6 @@ int main() {
 // CHECK: [[BPTR:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[BPTRS]], i32 0, i32 0
 // CHECK: [[PTR:%.+]] = getelementptr inbounds [5 x i8*], [5 x i8*]* [[PTRS]], i32 0, i32 0
 // CHECK: [[SIZE:%.+]] = getelementptr inbounds [5 x i64], [5 x i64]* [[SIZES]], i32 0, i32 0
-// CHECK: call void @__tgt_target_data_end_mapper(i64 -1, i32 5, i8** [[BPTR]], i8** [[PTR]], i64* [[SIZE]], i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[MAPTYPES2]], i32 0, i32 0), i8** null)
+// CHECK: call void @__tgt_target_data_end_mapper(%struct.ident_t* @{{.+}}, i64 -1, i32 5, i8** [[BPTR]], i8** [[PTR]], i64* [[SIZE]], i64* getelementptr inbounds ([5 x i64], [5 x i64]* [[MAPTYPES2]], i32 0, i32 0), i8** null, i8** null)
 
 #endif

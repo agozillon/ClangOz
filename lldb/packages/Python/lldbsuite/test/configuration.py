@@ -29,7 +29,7 @@ categories_list = None
 # set to true if we are going to use categories for cherry-picking test cases
 use_categories = False
 # Categories we want to skip
-skip_categories = ["darwin-log"]
+skip_categories = []
 # Categories we expect to fail
 xfail_categories = []
 # use this to track per-category failures
@@ -51,8 +51,7 @@ sdkroot = None
 dwarf_version = 0
 
 # Any overridden settings.
-# Always disable default dynamic types for testing purposes.
-settings = [('target.prefer-dynamic-value', 'no-dynamic-values')]
+settings = []
 
 # Path to the FileCheck testing tool. Not optional.
 filecheck = None
@@ -75,20 +74,6 @@ regexp = None
 # Sets of tests which are excluded at runtime
 skip_tests = None
 xfail_tests = None
-
-# By default, recorded session info for errored/failed test are dumped into its
-# own file under a session directory named after the timestamp of the test suite
-# run.  Use '-s session-dir-name' to specify a specific dir name.
-sdir_name = None
-
-# Valid options:
-# f - test file name (without extension)
-# n - test class name
-# m - test method name
-# a - architecture
-# c - compiler path
-# The default is to write all fields.
-session_file_format = 'fnmac'
 
 # Set this flag if there is any session info dumped during the test run.
 sdir_has_content = False
@@ -131,19 +116,15 @@ clang_module_cache_dir = None
 # Test results handling globals
 test_result = None
 
-# Reproducers
-capture_path = None
-replay_path = None
-
-# Test rerun configuration vars
-rerun_all_issues = False
-
 # The names of all tests. Used to assert we don't have two tests with the
 # same base name.
 all_tests = set()
 
 # LLDB library directory.
 lldb_libs_dir = None
+
+libcxx_include_dir = None
+libcxx_library_dir = None
 
 # A plugin whose tests will be enabled, like intel-pt.
 enabled_plugins = []
@@ -175,18 +156,3 @@ def get_yaml2obj_path():
     """
     if yaml2obj and os.path.lexists(yaml2obj):
         return yaml2obj
-
-def is_reproducer_replay():
-    """
-    Returns true when dotest is being replayed from a reproducer. Never use
-    this method to guard SB API calls as it will cause a divergence between
-    capture and replay.
-    """
-    return replay_path is not None
-
-def is_reproducer():
-    """
-    Returns true when dotest is capturing a reproducer or is being replayed
-    from a reproducer. Use this method to guard SB API calls.
-    """
-    return capture_path or replay_path

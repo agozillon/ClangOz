@@ -12,32 +12,20 @@
 ##===----------------------------------------------------------------------===##
 
 ################################################################################
-
-if(NOT LIBOMPTARGET_DEP_LIBELF_FOUND)
-  libomptarget_say("Not building AMDGPU plugin: LIBELF not found")
+set(LIBOMPTARGET_BUILD_AMDGPU_PLUGIN TRUE CACHE BOOL
+  "Whether to build AMDGPU plugin")
+if (NOT LIBOMPTARGET_BUILD_AMDGPU_PLUGIN)
+  libomptarget_say("Not building AMDGPU offloading plugin: LIBOMPTARGET_BUILD_AMDGPU_PLUGIN is false")
   return()
 endif()
 
-if(NOT ROCM_DIR)
-  libomptarget_say("Not building AMDGPU plugin: ROCM_DIR is not set")
-  return()
-endif()
-
-set(LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS ${ROCM_DIR}/hsa/include ${ROCM_DIR}/hsa/include/hsa)
-set(LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS ${ROCM_DIR}/hsa/lib)
-set(LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS ${ROCM_DIR}/lib)
-
-mark_as_advanced( LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS)
+# as of rocm-3.7, hsa is installed with cmake packages and kmt is found via hsa
+find_package(hsa-runtime64 QUIET 1.2.0 HINTS ${CMAKE_INSTALL_PREFIX} PATHS /opt/rocm)
 
 if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(ppc64le)|(aarch64)$" AND CMAKE_SYSTEM_NAME MATCHES "Linux")
-  libomptarget_say("Not building amdgpu plugin: only support amdgpu in Linux x86_64, ppc64le, or aarch64 hosts.")
+  libomptarget_say("Not building AMDGPU plugin: only support AMDGPU in Linux x86_64, ppc64le, or aarch64 hosts")
   return()
 endif()
-libomptarget_say("Building amdgpu offloading plugin using ROCM_DIR = ${ROCM_DIR}")
-
-libomptarget_say("LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS: ${LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS}")
-libomptarget_say("LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS ${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS}")
-libomptarget_say("LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS: ${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS}")
 
 ################################################################################
 # Define the suffix for the runtime messaging dumps.
@@ -50,35 +38,84 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
   add_definitions(-DDEBUG)
 endif()
 
-include_directories(
-  ${LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS}
+set(LIBOMPTARGET_DLOPEN_LIBHSA OFF)
+option(LIBOMPTARGET_FORCE_DLOPEN_LIBHSA "Build with dlopened libhsa" ${LIBOMPTARGET_DLOPEN_LIBHSA})
+
+if (${hsa-runtime64_FOUND} AND NOT LIBOMPTARGET_FORCE_DLOPEN_LIBHSA)
+  libomptarget_say("Building AMDGPU plugin linked against libhsa")
+  set(LIBOMPTARGET_EXTRA_SOURCE)
+  set(LIBOMPTARGET_DEP_LIBRARIES hsa-runtime64::hsa-runtime64)
+else()
+  libomptarget_say("Building AMDGPU plugin for dlopened libhsa")
+  include_directories(dynamic_hsa)
+  set(LIBOMPTARGET_EXTRA_SOURCE dynamic_hsa/hsa.cpp)
+  set(LIBOMPTARGET_DEP_LIBRARIES)
+endif()
+
+if(CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
+  # On FreeBSD, the 'environ' symbol is undefined at link time, but resolved by
+  # the dynamic linker at runtime. Therefore, allow the symbol to be undefined
+  # when creating a shared library.
+  set(LDFLAGS_UNDEFINED "-Wl,--allow-shlib-undefined")
+else()
+  set(LDFLAGS_UNDEFINED "-Wl,-z,defs")
+endif()
+
+add_llvm_library(omptarget.rtl.amdgpu SHARED
+  impl/impl.cpp
+  impl/interop_hsa.cpp
+  impl/data.cpp
+  impl/get_elf_mach_gfx_name.cpp
+  impl/system.cpp
+  impl/msgpack.cpp
+  src/rtl.cpp
+  ${LIBOMPTARGET_EXTRA_SOURCE}
+
+  ADDITIONAL_HEADER_DIRS
+  ${LIBOMPTARGET_INCLUDE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/impl
+
+  LINK_COMPONENTS
+  Support
+  Object
+
+  LINK_LIBS 
+  PRIVATE
+  elf_common
+  ${LIBOMPTARGET_DEP_LIBRARIES}
+  ${OPENMP_PTHREAD_LIB}
+  "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../exports"
+  ${LDFLAGS_UNDEFINED}
+
+  NO_INSTALL_RPATH
+)
+add_dependencies(omptarget.rtl.amdgpu omptarget.devicertl.amdgpu)
+
+target_include_directories(
+  omptarget.rtl.amdgpu
+  PRIVATE
+  ${LIBOMPTARGET_INCLUDE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/impl
 )
 
-add_library(omptarget.rtl.amdgpu SHARED
-      impl/atmi.cpp
-      impl/atmi_interop_hsa.cpp
-      impl/data.cpp
-      impl/machine.cpp
-      impl/system.cpp
-      impl/utils.cpp
-      impl/msgpack.cpp
-      src/rtl.cpp 
-      )
 
 # Install plugin under the lib destination folder.
-# When we build for debug, OPENMP_LIBDIR_SUFFIX get set to -debug
-install(TARGETS omptarget.rtl.amdgpu LIBRARY DESTINATION "lib${OPENMP_LIBDIR_SUFFIX}")
+install(TARGETS omptarget.rtl.amdgpu LIBRARY DESTINATION "${OPENMP_INSTALL_LIBDIR}")
+set_target_properties(omptarget.rtl.amdgpu PROPERTIES 
+  INSTALL_RPATH "$ORIGIN" BUILD_RPATH "$ORIGIN:${CMAKE_CURRENT_BINARY_DIR}/..")
 
-target_link_libraries(
-  omptarget.rtl.amdgpu
-  -lpthread -ldl -Wl,-rpath,${OPENMP_INSTALL_LIBDIR}
-  -L${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS} -L${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS} -lhsa-runtime64 -lhsakmt -Wl,-rpath,${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS},-rpath,${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS}
-  -lelf
-  "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../exports"
-  "-Wl,-z,defs"
-  )
-
-# Report to the parent scope that we are building a plugin for amdgpu
-set(LIBOMPTARGET_SYSTEM_TARGETS "${LIBOMPTARGET_SYSTEM_TARGETS} amdgcn-amd-amdhsa" PARENT_SCOPE)
+# Report to the parent scope that we are building a plugin for hsa.
+# This controls whether tests are run for the nvptx offloading target
+# Run them if libhsa is available, or if the user explicitly asked for dlopen
+# Otherwise this plugin is being built speculatively and there may be no hsa available
+if (${hsa-runtime64_FOUND} OR LIBOMPTARGET_FORCE_DLOPEN_LIBHSA)
+  # Report to the parent scope that we are building a plugin for amdgpu
+  set(LIBOMPTARGET_SYSTEM_TARGETS "${LIBOMPTARGET_SYSTEM_TARGETS} amdgcn-amd-amdhsa amdgcn-amd-amdhsa-oldDriver" PARENT_SCOPE)
+  set(LIBOMPTARGET_SYSTEM_TARGETS "${LIBOMPTARGET_SYSTEM_TARGETS} amdgcn-amd-amdhsa amdgcn-amd-amdhsa-LTO" PARENT_SCOPE)
+  list(APPEND LIBOMPTARGET_TESTED_PLUGINS "omptarget.rtl.amdgpu")
+  set(LIBOMPTARGET_TESTED_PLUGINS "${LIBOMPTARGET_TESTED_PLUGINS}" PARENT_SCOPE)
+else()
+  libomptarget_say("Not generating amdgcn test targets as libhsa is not linkable")
+  return()
+endif()
 

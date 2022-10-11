@@ -1,6 +1,10 @@
 ; RUN: llvm-as < %s | llvm-dis > %t.orig
-; RUN: llvm-as < %s | llvm-c-test --echo > %t.echo
+; RUN: llvm-as < %s | llvm-c-test --echo --no-opaque-pointers > %t.echo
 ; RUN: diff -w %t.orig %t.echo
+;
+; RUN: llvm-as -opaque-pointers < %s | llvm-dis > %t.orig_opaque
+; RUN: llvm-as -opaque-pointers < %s | llvm-c-test --echo > %t.echo_opaque
+; RUN: diff -w %t.orig_opaque %t.echo_opaque
 
 source_filename = "/test/Bindings/echo.ll"
 target datalayout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
@@ -23,17 +27,20 @@ module asm "classical GAS"
 @align = global i32 31, align 4
 @nullptr = global i32* null
 
+@const_gep = global i32* getelementptr (i32, i32* @var, i64 2)
+@const_inbounds_gep = global i32* getelementptr inbounds (i32, i32* @var, i64 1)
+
 @aliased1 = alias i32, i32* @var
 @aliased2 = internal alias i32, i32* @var
 @aliased3 = external alias i32, i32* @var
 @aliased4 = weak alias i32, i32* @var
 @aliased5 = weak_odr alias i32, i32* @var
 
-@ifunc = ifunc i32 (i32), i64 ()* @ifunc_resolver
+@ifunc = ifunc i32 (i32), i32 (i32)* ()* @ifunc_resolver
 
-define i64 @ifunc_resolver() {
+define i32 (i32)* @ifunc_resolver() {
 entry:
-  ret i64 0
+  ret i32 (i32)* null
 }
 
 define { i64, %S* } @unpackrepack(%S %s) {
@@ -148,12 +155,43 @@ define void @memops(i8* %ptr) {
   store volatile i8 0, i8* %ptr
   store i8 0, i8* %ptr, align 8
   store atomic i8 0, i8* %ptr release, align 32
-  %e = atomicrmw add i8* %ptr, i8 0 monotonic
-  %f = atomicrmw volatile xchg i8* %ptr, i8 0 acq_rel
-  %g = cmpxchg i8* %ptr, i8 1, i8 2 seq_cst acquire
-  %h = cmpxchg weak i8* %ptr, i8 1, i8 2 seq_cst acquire
-  %i = cmpxchg volatile i8* %ptr, i8 1, i8 2 monotonic monotonic
+  %e = atomicrmw add i8* %ptr, i8 0 monotonic, align 1
+  %f = atomicrmw volatile xchg i8* %ptr, i8 0 acq_rel, align 8
+  %g = cmpxchg i8* %ptr, i8 1, i8 2 seq_cst acquire, align 1
+  %h = cmpxchg weak i8* %ptr, i8 1, i8 2 seq_cst acquire, align 8
+  %i = cmpxchg volatile i8* %ptr, i8 1, i8 2 monotonic monotonic, align 16
   ret void
+}
+
+define i32 @vectorops(i32, i32) {
+  %a = insertelement <4 x i32> undef, i32 %0, i32 0
+  %b = insertelement <4 x i32> %a, i32 %1, i32 2
+  %c = shufflevector <4 x i32> %b, <4 x i32> undef, <4 x i32> zeroinitializer
+  %d = shufflevector <4 x i32> %c, <4 x i32> %b, <4 x i32> <i32 1, i32 2, i32 3, i32 0>
+  %e = add <4 x i32> %d, %a
+  %f = mul <4 x i32> %e, %b
+  %g = xor <4 x i32> %f, %d
+  %h = or <4 x i32> %f, %e
+  %i = lshr <4 x i32> %h, <i32 2, i32 2, i32 2, i32 2>
+  %j = shl <4 x i32> %i, <i32 2, i32 3, i32 4, i32 5>
+  %k = shufflevector <4 x i32> %j, <4 x i32> %i, <4 x i32> <i32 2, i32 3, i32 undef, i32 undef>
+  %m = shufflevector <4 x i32> %k, <4 x i32> undef, <1 x i32> <i32 1>
+  %n = shufflevector <4 x i32> %j, <4 x i32> undef, <8 x i32> <i32 0, i32 0, i32 1, i32 2, i32 undef, i32 3, i32 undef, i32 undef>
+  %p = extractelement <8 x i32> %n, i32 5
+  ret i32 %p
+}
+
+define i32 @scalablevectorops(i32, <vscale x 4 x i32>) {
+  %a = insertelement <vscale x 4 x i32> undef, i32 %0, i32 0
+  %b = insertelement <vscale x 4 x i32> %a, i32 %0, i32 2
+  %c = shufflevector <vscale x 4 x i32> %b, <vscale x 4 x i32> undef, <vscale x 4 x i32> zeroinitializer
+  %e = add <vscale x 4 x i32> %a, %1
+  %f = mul <vscale x 4 x i32> %e, %b
+  %g = xor <vscale x 4 x i32> %f, %e
+  %h = or <vscale x 4 x i32> %g, %e
+  %i = lshr <vscale x 4 x i32> %h, undef
+  %j = extractelement <vscale x 4 x i32> %i, i32 3
+  ret i32 %j
 }
 
 declare void @personalityFn()
@@ -203,10 +241,9 @@ declare void @llvm.lifetime.end.p0i8(i64, i8*)
 define void @test_intrinsics() {
 entry:
   %sp = call i8* @llvm.stacksave()
-  %x = alloca i32, align 4
-  %0 = bitcast i32* %x to i8*
-  call void @llvm.lifetime.start.p0i8(i64 4, i8* %0)
-  call void @llvm.lifetime.end.p0i8(i64 4, i8* %0)
+  %0 = alloca i8, align 1
+  call void @llvm.lifetime.start.p0i8(i64 1, i8* %0)
+  call void @llvm.lifetime.end.p0i8(i64 1, i8* %0)
   call void @llvm.stackrestore(i8* %sp)
   ret void
 }

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple x86_64-pc-linux -emit-llvm %s -o - | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-pc-linux -emit-llvm %s -o - | FileCheck %s
 
 extern void foo_alias (void) __asm ("foo");
 inline void foo (void) {
@@ -30,9 +30,9 @@ void f(void) {
   memchr("", '.', 0);
 }
 
-// CHECK-LABEL: define void @f()
+// CHECK-LABEL: define{{.*}} void @f()
 // CHECK: call void @foo()
-// CHECK: call i32 @abs(i32 0)
+// CHECK: call i32 @abs(i32 noundef 0)
 // CHECK: call i8* @strrchr(
 // CHECK: call void @llvm.prefetch.p0i8(
 // CHECK: call i8* @memchr(
@@ -40,6 +40,6 @@ void f(void) {
 
 // CHECK: declare void @foo()
 // CHECK: declare i32 @abs(i32
-// CHECK: declare i8* @strrchr(i8*, i32)
+// CHECK: declare i8* @strrchr(i8* noundef, i32 noundef)
 // CHECK: declare i8* @memchr(
 // CHECK: declare void @llvm.prefetch.p0i8(

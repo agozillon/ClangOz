@@ -7,11 +7,24 @@
 //===----------------------------------------------------------------------===//
 
 #include "Plugins/ScriptInterpreter/Lua/Lua.h"
+#include "Plugins/ScriptInterpreter/Lua/SWIGLuaBridge.h"
 #include "gtest/gtest.h"
 
 using namespace lldb_private;
 
 extern "C" int luaopen_lldb(lua_State *L) { return 0; }
+
+llvm::Expected<bool> lldb_private::LLDBSwigLuaBreakpointCallbackFunction(
+    lua_State *L, lldb::StackFrameSP stop_frame_sp,
+    lldb::BreakpointLocationSP bp_loc_sp,
+    const StructuredDataImpl &extra_args_impl) {
+  return false;
+}
+
+llvm::Expected<bool> lldb_private::LLDBSwigLuaWatchpointCallbackFunction(
+    lua_State *L, lldb::StackFrameSP stop_frame_sp, lldb::WatchpointSP wp_sp) {
+  return false;
+}
 
 TEST(LuaTest, RunValid) {
   Lua lua;

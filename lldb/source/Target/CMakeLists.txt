@@ -9,6 +9,7 @@ lldb_tablegen(TargetPropertiesEnum.inc -gen-lldb-property-enum-defs
 add_lldb_library(lldbTarget
   ABI.cpp
   AssertFrameRecognizer.cpp
+  DynamicRegisterInfo.cpp
   ExecutionContext.cpp
   InstrumentationRuntime.cpp
   InstrumentationRuntimeStopInfo.cpp
@@ -19,11 +20,13 @@ add_lldb_library(lldbTarget
   Memory.cpp
   MemoryHistory.cpp
   MemoryRegionInfo.cpp
+  MemoryTagMap.cpp
   ModuleCache.cpp
   OperatingSystem.cpp
   PathMappingList.cpp
   Platform.cpp
   Process.cpp
+  ProcessTrace.cpp
   Queue.cpp
   QueueItem.cpp
   QueueList.cpp
@@ -37,6 +40,7 @@ add_lldb_library(lldbTarget
   StackFrameList.cpp
   StackFrameRecognizer.cpp
   StackID.cpp
+  Statistics.cpp
   StopInfo.cpp
   StructuredDataPlugin.cpp
   SystemRuntime.cpp
@@ -65,6 +69,10 @@ add_lldb_library(lldbTarget
   ThreadPlanTracer.cpp
   ThreadPlanStack.cpp
   ThreadSpec.cpp
+  Trace.cpp
+  TraceCursor.cpp
+  TraceExporter.cpp
+  TraceDumper.cpp
   UnixSignals.cpp
   UnwindAssembly.cpp
   UnwindLLDB.cpp
@@ -77,7 +85,6 @@ add_lldb_library(lldbTarget
     lldbInterpreter
     lldbSymbol
     lldbUtility
-    lldbPluginExpressionParserClang
     lldbPluginProcessUtility
 
   LINK_COMPONENTS

@@ -10,14 +10,11 @@ from lldbsuite.test import lldbutil
 
 class TestObjCGlobalVar(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
         self.main_source = lldb.SBFileSpec("main.m")
 
-    @skipUnlessDarwin
     @add_test_categories(['pyapi'])
     def test_with_python_api(self):
         """Test that a global ObjC object found before the process is started updates correctly."""
@@ -32,9 +29,9 @@ class TestObjCGlobalVar(TestBase):
 
         # Before we launch, make an SBValue for our global object pointer:
         g_obj_ptr = target.FindFirstGlobalVariable("g_obj_ptr")
-        self.assertTrue(g_obj_ptr.GetError().Success(), "Made the g_obj_ptr")
-        self.assertTrue(
-            g_obj_ptr.GetValueAsUnsigned(10) == 0,
+        self.assertSuccess(g_obj_ptr.GetError(), "Made the g_obj_ptr")
+        self.assertEqual(
+            g_obj_ptr.GetValueAsUnsigned(10), 0,
             "g_obj_ptr is initially null")
 
         # Now launch the process, and do not stop at entry point.

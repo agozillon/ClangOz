@@ -9,10 +9,7 @@ import re
 import subprocess
 import sys
 import os
-
-# Third-party modules
-import six
-from six.moves.urllib import parse as urlparse
+from urllib.parse import urlparse
 
 # LLDB modules
 from . import configuration
@@ -56,18 +53,13 @@ def _run_adb_command(cmd, device_id):
 
 
 def target_is_android():
-    if not hasattr(target_is_android, 'result'):
-        triple = lldb.selected_platform.GetTriple()
-        match = re.match(".*-.*-.*-android", triple)
-        target_is_android.result = match is not None
-    return target_is_android.result
-
+    return configuration.lldb_platform_name == "remote-android"
 
 def android_device_api():
     if not hasattr(android_device_api, 'result'):
         assert configuration.lldb_platform_url is not None
         device_id = None
-        parsed_url = urlparse.urlparse(configuration.lldb_platform_url)
+        parsed_url = urlparse(configuration.lldb_platform_url)
         host_name = parsed_url.netloc.split(":")[0]
         if host_name != 'localhost':
             device_id = host_name
@@ -114,7 +106,7 @@ def getHostPlatform():
     elif sys.platform.startswith('win32') or sys.platform.startswith('cygwin'):
         return 'windows'
     elif sys.platform.startswith('darwin'):
-        return 'darwin'
+        return 'macosx'
     elif sys.platform.startswith('freebsd'):
         return 'freebsd'
     elif sys.platform.startswith('netbsd'):
@@ -124,8 +116,7 @@ def getHostPlatform():
 
 
 def getDarwinOSTriples():
-    return ['darwin', 'macosx', 'ios', 'watchos', 'tvos', 'bridgeos']
-
+    return lldbplatform.translate(lldbplatform.darwin_all)
 
 def getPlatform():
     """Returns the target platform which the tests are running on."""
@@ -139,18 +130,16 @@ def getPlatform():
             platform = 'ios'
         return platform
 
-    # Use the triple to determine the platform if set.
-    triple = lldb.selected_platform.GetTriple()
-    if triple:
-        platform = triple.split('-')[2]
-        if platform.startswith('freebsd'):
-            platform = 'freebsd'
-        elif platform.startswith('netbsd'):
-            platform = 'netbsd'
-        return platform
-
-    # It still might be an unconnected remote platform.
-    return ''
+    platform = configuration.lldb_platform_name
+    if platform is None:
+        platform = "host"
+    if platform == "qemu-user":
+        platform = "host"
+    if platform == "host":
+        return getHostPlatform()
+    if platform.startswith("remote-"):
+        return platform[7:]
+    return platform
 
 
 def platformIsDarwin():

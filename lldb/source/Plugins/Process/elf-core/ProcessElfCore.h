@@ -19,7 +19,7 @@
 #include <list>
 #include <vector>
 
-#include "lldb/Target/Process.h"
+#include "lldb/Target/PostMortemProcess.h"
 #include "lldb/Utility/ConstString.h"
 #include "lldb/Utility/Status.h"
 
@@ -28,20 +28,21 @@
 
 struct ThreadData;
 
-class ProcessElfCore : public lldb_private::Process {
+class ProcessElfCore : public lldb_private::PostMortemProcess {
 public:
   // Constructors and Destructors
   static lldb::ProcessSP
   CreateInstance(lldb::TargetSP target_sp, lldb::ListenerSP listener_sp,
-                 const lldb_private::FileSpec *crash_file_path);
+                 const lldb_private::FileSpec *crash_file_path,
+                 bool can_connect);
 
   static void Initialize();
 
   static void Terminate();
 
-  static lldb_private::ConstString GetPluginNameStatic();
+  static llvm::StringRef GetPluginNameStatic() { return "elf-core"; }
 
-  static const char *GetPluginDescriptionStatic();
+  static llvm::StringRef GetPluginDescriptionStatic();
 
   // Constructors and Destructors
   ProcessElfCore(lldb::TargetSP target_sp, lldb::ListenerSP listener_sp,
@@ -59,9 +60,7 @@ public:
   lldb_private::DynamicLoader *GetDynamicLoader() override;
 
   // PluginInterface protocol
-  lldb_private::ConstString GetPluginName() override;
-
-  uint32_t GetPluginVersion() override;
+  llvm::StringRef GetPluginName() override { return GetPluginNameStatic(); }
 
   // Process Control
   lldb_private::Status DoDestroy() override;
@@ -70,9 +69,8 @@ public:
 
   lldb_private::Status WillResume() override {
     lldb_private::Status error;
-    error.SetErrorStringWithFormat(
-        "error: %s does not support resuming processes",
-        GetPluginName().GetCString());
+    error.SetErrorStringWithFormatv(
+        "error: {0} does not support resuming processes", GetPluginName());
     return error;
   }
 
@@ -88,9 +86,10 @@ public:
   size_t DoReadMemory(lldb::addr_t addr, void *buf, size_t size,
                       lldb_private::Status &error) override;
 
-  lldb_private::Status
-  GetMemoryRegionInfo(lldb::addr_t load_addr,
-                      lldb_private::MemoryRegionInfo &region_info) override;
+  // We do not implement DoReadMemoryTags. Instead all the work is done in
+  // ReadMemoryTags which avoids having to unpack and repack tags.
+  llvm::Expected<std::vector<lldb::addr_t>> ReadMemoryTags(lldb::addr_t addr,
+                                                           size_t len) override;
 
   lldb::addr_t GetImageInfoAddress() override;
 
@@ -104,8 +103,14 @@ public:
 protected:
   void Clear();
 
-  bool UpdateThreadList(lldb_private::ThreadList &old_thread_list,
-                        lldb_private::ThreadList &new_thread_list) override;
+  bool DoUpdateThreadList(lldb_private::ThreadList &old_thread_list,
+                          lldb_private::ThreadList &new_thread_list) override;
+
+  lldb_private::Status
+  DoGetMemoryRegionInfo(lldb::addr_t load_addr,
+                        lldb_private::MemoryRegionInfo &region_info) override;
+
+  bool SupportsMemoryTagging() override { return !m_core_tag_ranges.IsEmpty(); }
 
 private:
   struct NT_FILE_Entry {
@@ -125,8 +130,6 @@ private:
   lldb::ModuleSP m_core_module_sp;
   lldb_private::FileSpec m_core_file;
   std::string m_dyld_plugin_name;
-  ProcessElfCore(const ProcessElfCore &) = delete;
-  const ProcessElfCore &operator=(const ProcessElfCore &) = delete;
 
   // True if m_thread_contexts contains valid entries
   bool m_thread_data_valid = false;
@@ -143,13 +146,16 @@ private:
   // Permissions for all ranges
   VMRangeToPermissions m_core_range_infos;
 
+  // Memory tag ranges found in the core
+  VMRangeToFileOffset m_core_tag_ranges;
+
   // NT_FILE entries found from the NOTE segment
   std::vector<NT_FILE_Entry> m_nt_file_entries;
 
   // Parse thread(s) data structures(prstatus, prpsinfo) from given NOTE segment
   llvm::Error ParseThreadContextsFromNoteSegment(
       const elf::ELFProgramHeader &segment_header,
-      lldb_private::DataExtractor segment_data);
+      const lldb_private::DataExtractor &segment_data);
 
   // Returns number of thread contexts stored in the core file
   uint32_t GetNumThreadContexts();
@@ -157,6 +163,10 @@ private:
   // Parse a contiguous address range of the process from LOAD segment
   lldb::addr_t
   AddAddressRangeFromLoadSegment(const elf::ELFProgramHeader &header);
+
+  // Parse a contiguous address range from a memory tag segment
+  lldb::addr_t
+  AddAddressRangeFromMemoryTagSegment(const elf::ELFProgramHeader &header);
 
   llvm::Expected<std::vector<lldb_private::CoreNote>>
   parseSegment(const lldb_private::DataExtractor &segment);

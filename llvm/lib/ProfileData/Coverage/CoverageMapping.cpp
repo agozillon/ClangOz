@@ -25,7 +25,6 @@
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -123,13 +122,15 @@ Counter CounterExpressionBuilder::simplify(Counter ExpressionTree) {
   return C;
 }
 
-Counter CounterExpressionBuilder::add(Counter LHS, Counter RHS) {
-  return simplify(get(CounterExpression(CounterExpression::Add, LHS, RHS)));
+Counter CounterExpressionBuilder::add(Counter LHS, Counter RHS, bool Simplify) {
+  auto Cnt = get(CounterExpression(CounterExpression::Add, LHS, RHS));
+  return Simplify ? simplify(Cnt) : Cnt;
 }
 
-Counter CounterExpressionBuilder::subtract(Counter LHS, Counter RHS) {
-  return simplify(
-      get(CounterExpression(CounterExpression::Subtract, LHS, RHS)));
+Counter CounterExpressionBuilder::subtract(Counter LHS, Counter RHS,
+                                           bool Simplify) {
+  auto Cnt = get(CounterExpression(CounterExpression::Subtract, LHS, RHS));
+  return Simplify ? simplify(Cnt) : Cnt;
 }
 
 void CounterMappingContext::dump(const Counter &C, raw_ostream &OS) const {
@@ -186,6 +187,22 @@ Expected<int64_t> CounterMappingContext::evaluate(const Counter &C) const {
   llvm_unreachable("Unhandled CounterKind");
 }
 
+unsigned CounterMappingContext::getMaxCounterID(const Counter &C) const {
+  switch (C.getKind()) {
+  case Counter::Zero:
+    return 0;
+  case Counter::CounterValueReference:
+    return C.getCounterID();
+  case Counter::Expression: {
+    if (C.getExpressionID() >= Expressions.size())
+      return 0;
+    const auto &E = Expressions[C.getExpressionID()];
+    return std::max(getMaxCounterID(E.LHS), getMaxCounterID(E.RHS));
+  }
+  }
+  llvm_unreachable("Unhandled CounterKind");
+}
+
 void FunctionRecordIterator::skipOtherFiles() {
   while (Current != Records.end() && !Filename.empty() &&
          Filename != Current->Filenames[0])
@@ -201,6 +218,15 @@ ArrayRef<unsigned> CoverageMapping::getImpreciseRecordIndicesForFilename(
   if (RecordIt == FilenameHash2RecordIndices.end())
     return {};
   return RecordIt->second;
+}
+
+static unsigned getMaxCounterID(const CounterMappingContext &Ctx,
+                                const CoverageMappingRecord &Record) {
+  unsigned MaxCounterID = 0;
+  for (const auto &Region : Record.MappingRegions) {
+    MaxCounterID = std::max(MaxCounterID, Ctx.getMaxCounterID(Region.Count));
+  }
+  return MaxCounterID;
 }
 
 Error CoverageMapping::loadFunctionRecord(
@@ -227,7 +253,7 @@ Error CoverageMapping::loadFunctionRecord(
       return Error::success();
     } else if (IPE != instrprof_error::unknown_function)
       return make_error<InstrProfError>(IPE);
-    Counts.assign(Record.MappingRegions.size(), 0);
+    Counts.assign(getMaxCounterID(Ctx, Record) + 1, 0);
   }
   Ctx.setCounts(Counts);
 
@@ -249,7 +275,12 @@ Error CoverageMapping::loadFunctionRecord(
       consumeError(std::move(E));
       return Error::success();
     }
-    Function.pushRegion(Region, *ExecutionCount);
+    Expected<int64_t> AltExecutionCount = Ctx.evaluate(Region.FalseCount);
+    if (auto E = AltExecutionCount.takeError()) {
+      consumeError(std::move(E));
+      return Error::success();
+    }
+    Function.pushRegion(Region, *ExecutionCount, *AltExecutionCount);
   }
 
   // Don't create records for (filenames, function) pairs we've already seen.
@@ -276,21 +307,29 @@ Error CoverageMapping::loadFunctionRecord(
   return Error::success();
 }
 
+// This function is for memory optimization by shortening the lifetimes
+// of CoverageMappingReader instances.
+Error CoverageMapping::loadFromReaders(
+    ArrayRef<std::unique_ptr<CoverageMappingReader>> CoverageReaders,
+    IndexedInstrProfReader &ProfileReader, CoverageMapping &Coverage) {
+  for (const auto &CoverageReader : CoverageReaders) {
+    for (auto RecordOrErr : *CoverageReader) {
+      if (Error E = RecordOrErr.takeError())
+        return E;
+      const auto &Record = *RecordOrErr;
+      if (Error E = Coverage.loadFunctionRecord(Record, ProfileReader))
+        return E;
+    }
+  }
+  return Error::success();
+}
+
 Expected<std::unique_ptr<CoverageMapping>> CoverageMapping::load(
     ArrayRef<std::unique_ptr<CoverageMappingReader>> CoverageReaders,
     IndexedInstrProfReader &ProfileReader) {
   auto Coverage = std::unique_ptr<CoverageMapping>(new CoverageMapping());
-
-  for (const auto &CoverageReader : CoverageReaders) {
-    for (auto RecordOrErr : *CoverageReader) {
-      if (Error E = RecordOrErr.takeError())
-        return std::move(E);
-      const auto &Record = *RecordOrErr;
-      if (Error E = Coverage->loadFunctionRecord(Record, ProfileReader))
-        return std::move(E);
-    }
-  }
-
+  if (Error E = loadFromReaders(CoverageReaders, ProfileReader, *Coverage))
+    return std::move(E);
   return std::move(Coverage);
 }
 
@@ -306,39 +345,48 @@ static Error handleMaybeNoDataFoundError(Error E) {
 
 Expected<std::unique_ptr<CoverageMapping>>
 CoverageMapping::load(ArrayRef<StringRef> ObjectFilenames,
-                      StringRef ProfileFilename, ArrayRef<StringRef> Arches) {
+                      StringRef ProfileFilename, ArrayRef<StringRef> Arches,
+                      StringRef CompilationDir) {
   auto ProfileReaderOrErr = IndexedInstrProfReader::create(ProfileFilename);
   if (Error E = ProfileReaderOrErr.takeError())
-    return std::move(E);
+    return createFileError(ProfileFilename, std::move(E));
   auto ProfileReader = std::move(ProfileReaderOrErr.get());
+  auto Coverage = std::unique_ptr<CoverageMapping>(new CoverageMapping());
+  bool DataFound = false;
 
-  SmallVector<std::unique_ptr<CoverageMappingReader>, 4> Readers;
-  SmallVector<std::unique_ptr<MemoryBuffer>, 4> Buffers;
   for (const auto &File : llvm::enumerate(ObjectFilenames)) {
-    auto CovMappingBufOrErr = MemoryBuffer::getFileOrSTDIN(File.value());
+    auto CovMappingBufOrErr = MemoryBuffer::getFileOrSTDIN(
+        File.value(), /*IsText=*/false, /*RequiresNullTerminator=*/false);
     if (std::error_code EC = CovMappingBufOrErr.getError())
-      return errorCodeToError(EC);
+      return createFileError(File.value(), errorCodeToError(EC));
     StringRef Arch = Arches.empty() ? StringRef() : Arches[File.index()];
     MemoryBufferRef CovMappingBufRef =
         CovMappingBufOrErr.get()->getMemBufferRef();
-    auto CoverageReadersOrErr =
-        BinaryCoverageReader::create(CovMappingBufRef, Arch, Buffers);
+    SmallVector<std::unique_ptr<MemoryBuffer>, 4> Buffers;
+    auto CoverageReadersOrErr = BinaryCoverageReader::create(
+        CovMappingBufRef, Arch, Buffers, CompilationDir);
     if (Error E = CoverageReadersOrErr.takeError()) {
       E = handleMaybeNoDataFoundError(std::move(E));
       if (E)
-        return std::move(E);
+        return createFileError(File.value(), std::move(E));
       // E == success (originally a no_data_found error).
       continue;
     }
+
+    SmallVector<std::unique_ptr<CoverageMappingReader>, 4> Readers;
     for (auto &Reader : CoverageReadersOrErr.get())
       Readers.push_back(std::move(Reader));
-    Buffers.push_back(std::move(CovMappingBufOrErr.get()));
+    DataFound |= !Readers.empty();
+    if (Error E = loadFromReaders(Readers, *ProfileReader, *Coverage))
+      return createFileError(File.value(), std::move(E));
   }
   // If no readers were created, either no objects were provided or none of them
   // had coverage data. Return an error in the latter case.
-  if (Readers.empty() && !ObjectFilenames.empty())
-    return make_error<CoverageMapError>(coveragemap_error::no_data_found);
-  return load(Readers, *ProfileReader);
+  if (!DataFound && !ObjectFilenames.empty())
+    return createFileError(
+        join(ObjectFilenames.begin(), ObjectFilenames.end(), ", "),
+        make_error<CoverageMapError>(coveragemap_error::no_data_found));
+  return std::move(Coverage);
 }
 
 namespace {
@@ -485,9 +533,15 @@ class SegmentBuilder {
       if (CurStartLoc == CR.value().endLoc()) {
         // Avoid making zero-length regions active. If it's the last region,
         // emit a skipped segment. Otherwise use its predecessor's count.
-        const bool Skipped = (CR.index() + 1) == Regions.size();
+        const bool Skipped =
+            (CR.index() + 1) == Regions.size() ||
+            CR.value().Kind == CounterMappingRegion::SkippedRegion;
         startSegment(ActiveRegions.empty() ? CR.value() : *ActiveRegions.back(),
                      CurStartLoc, !GapRegion, Skipped);
+        // If it is skipped segment, create a segment with last pushed
+        // regions's count at CurStartLoc.
+        if (Skipped && !ActiveRegions.empty())
+          startSegment(*ActiveRegions.back(), CurStartLoc, false);
         continue;
       }
       if (CR.index() + 1 == Regions.size() ||
@@ -587,6 +641,8 @@ public:
       const auto &L = Segments[I - 1];
       const auto &R = Segments[I];
       if (!(L.Line < R.Line) && !(L.Line == R.Line && L.Col < R.Col)) {
+        if (L.Line == R.Line && L.Col == R.Col && !L.HasCount)
+          continue;
         LLVM_DEBUG(dbgs() << " ! Segment " << L.Line << ":" << L.Col
                           << " followed by " << R.Line << ":" << R.Col << "\n");
         assert(false && "Coverage segments not unique or sorted");
@@ -603,8 +659,7 @@ public:
 std::vector<StringRef> CoverageMapping::getUniqueSourceFiles() const {
   std::vector<StringRef> Filenames;
   for (const auto &Function : getCoveredFunctions())
-    Filenames.insert(Filenames.end(), Function.Filenames.begin(),
-                     Function.Filenames.end());
+    llvm::append_range(Filenames, Function.Filenames);
   llvm::sort(Filenames);
   auto Last = std::unique(Filenames.begin(), Filenames.end());
   Filenames.erase(Last, Filenames.end());
@@ -664,6 +719,10 @@ CoverageData CoverageMapping::getCoverageForFile(StringRef Filename) const {
         if (MainFileID && isExpansion(CR, *MainFileID))
           FileCoverage.Expansions.emplace_back(CR, Function);
       }
+    // Capture branch regions specific to the function (excluding expansions).
+    for (const auto &CR : Function.CountedBranchRegions)
+      if (FileIDs.test(CR.FileID) && (CR.FileID == CR.ExpandedFileID))
+        FileCoverage.BranchRegions.push_back(CR);
   }
 
   LLVM_DEBUG(dbgs() << "Emitting segments for file: " << Filename << "\n");
@@ -711,6 +770,10 @@ CoverageMapping::getCoverageForFunction(const FunctionRecord &Function) const {
       if (isExpansion(CR, *MainFileID))
         FunctionCoverage.Expansions.emplace_back(CR, Function);
     }
+  // Capture branch regions specific to the function (excluding expansions).
+  for (const auto &CR : Function.CountedBranchRegions)
+    if (CR.FileID == *MainFileID)
+      FunctionCoverage.BranchRegions.push_back(CR);
 
   LLVM_DEBUG(dbgs() << "Emitting segments for function: " << Function.Name
                     << "\n");
@@ -730,6 +793,10 @@ CoverageData CoverageMapping::getCoverageForExpansion(
       if (isExpansion(CR, Expansion.FileID))
         ExpansionCoverage.Expansions.emplace_back(CR, Expansion.Function);
     }
+  for (const auto &CR : Expansion.Function.CountedBranchRegions)
+    // Capture branch regions that only pertain to the corresponding expansion.
+    if (CR.FileID == Expansion.FileID)
+      ExpansionCoverage.BranchRegions.push_back(CR);
 
   LLVM_DEBUG(dbgs() << "Emitting segments for expansion of file "
                     << Expansion.FileID << "\n");
@@ -770,7 +837,6 @@ LineCoverageStats::LineCoverageStats(
     ExecutionCount = WrappedSegment->Count;
   if (!MinRegionCount)
     return;
-  ExecutionCount = 0;
   for (const auto *LS : LineSegments)
     if (isStartOfRegion(LS))
       ExecutionCount = std::max(ExecutionCount, LS->Count);
@@ -808,6 +874,8 @@ static std::string getCoverageMapErrString(coveragemap_error Err) {
     return "Malformed coverage data";
   case coveragemap_error::decompression_failed:
     return "Failed to decompress coverage data (zlib)";
+  case coveragemap_error::invalid_or_missing_arch_specifier:
+    return "`-arch` specifier is invalid or missing for universal binary";
   }
   llvm_unreachable("A value of coveragemap_error has no message.");
 }
@@ -830,10 +898,9 @@ std::string CoverageMapError::message() const {
   return getCoverageMapErrString(Err);
 }
 
-static ManagedStatic<CoverageMappingErrorCategoryType> ErrorCategory;
-
 const std::error_category &llvm::coverage::coveragemap_category() {
-  return *ErrorCategory;
+  static CoverageMappingErrorCategoryType ErrorCategory;
+  return ErrorCategory;
 }
 
 char CoverageMapError::ID = 0;

@@ -19,7 +19,7 @@ namespace google {
 /// replaces them with equivalent names containing "suite".
 ///
 /// For the user-facing documentation see:
-/// https://clang.llvm.org/extra/clang-tidy/checks/google-upgrade-googletest-case.html
+/// https://clang.llvm.org/extra/clang-tidy/checks/google/upgrade-googletest-case.html
 class UpgradeGoogletestCaseCheck : public ClangTidyCheck {
 public:
   UpgradeGoogletestCaseCheck(StringRef Name, ClangTidyContext *Context)
@@ -33,7 +33,7 @@ public:
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
 
 private:
-  llvm::DenseSet<unsigned> MatchedTemplateLocations;
+  llvm::DenseSet<SourceLocation> MatchedTemplateLocations;
 };
 
 } // namespace google

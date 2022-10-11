@@ -176,7 +176,7 @@ bool AArch64RedundantCopyElimination::knownRegValInBlock(
     case AArch64::ADDSWri:
     case AArch64::ADDSXri:
       IsCMN = true;
-      LLVM_FALLTHROUGH;
+      [[fallthrough]];
     // CMP is an alias for SUBS with a dead destination register.
     case AArch64::SUBSWri:
     case AArch64::SUBSXri: {
@@ -407,6 +407,11 @@ bool AArch64RedundantCopyElimination::optimizeBlock(MachineBasicBlock *MBB) {
                   return !O.isDead() && O.isReg() && O.isDef() &&
                          O.getReg() != CmpReg;
                 }))
+              continue;
+
+            // Don't remove a move immediate that implicitly defines the upper
+            // bits as different.
+            if (TRI->isSuperRegister(DefReg, KnownReg.Reg) && KnownReg.Imm < 0)
               continue;
           }
 

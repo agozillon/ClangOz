@@ -12,6 +12,7 @@
                        // source/Host/macosx/cfcpp utilities
 
 #include "lldb/Breakpoint/BreakpointLocation.h"
+#include "lldb/Core/Debugger.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleList.h"
 #include "lldb/Core/ModuleSpec.h"
@@ -26,7 +27,9 @@
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/ArchSpec.h"
+#include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/FileSpec.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/Utility/StreamString.h"
@@ -38,6 +41,8 @@
 #include <memory>
 
 #include "Host/macosx/cfcpp/CFCBundle.h"
+#include "Plugins/DynamicLoader/Darwin-Kernel/DynamicLoaderDarwinKernel.h"
+#include "Plugins/ObjectContainer/Mach-O-Fileset/ObjectContainerMachOFileset.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -69,7 +74,7 @@ void PlatformDarwinKernel::Terminate() {
 
 PlatformSP PlatformDarwinKernel::CreateInstance(bool force,
                                                 const ArchSpec *arch) {
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_PLATFORM));
+  Log *log = GetLog(LLDBLog::Platform);
   if (log) {
     const char *arch_name;
     if (arch && arch->GetArchitectureName())
@@ -166,12 +171,7 @@ PlatformSP PlatformDarwinKernel::CreateInstance(bool force,
   return PlatformSP();
 }
 
-lldb_private::ConstString PlatformDarwinKernel::GetPluginNameStatic() {
-  static ConstString g_name("darwin-kernel");
-  return g_name;
-}
-
-const char *PlatformDarwinKernel::GetDescriptionStatic() {
+llvm::StringRef PlatformDarwinKernel::GetDescriptionStatic() {
   return "Darwin Kernel platform plug-in.";
 }
 
@@ -197,14 +197,7 @@ public:
     m_collection_sp->Initialize(g_platformdarwinkernel_properties);
   }
 
-  virtual ~PlatformDarwinKernelProperties() {}
-
-  bool GetSearchForKexts() const {
-    const uint32_t idx = ePropertySearchForKexts;
-    return m_collection_sp->GetPropertyAtIndexAsBoolean(
-        NULL, idx,
-        g_platformdarwinkernel_properties[idx].default_uint_value != 0);
-  }
+  ~PlatformDarwinKernelProperties() override = default;
 
   FileSpecList GetKextDirectories() const {
     const uint32_t idx = ePropertyKextDirectories;
@@ -216,14 +209,9 @@ public:
   }
 };
 
-typedef std::shared_ptr<PlatformDarwinKernelProperties>
-    PlatformDarwinKernelPropertiesSP;
-
-static const PlatformDarwinKernelPropertiesSP &GetGlobalProperties() {
-  static PlatformDarwinKernelPropertiesSP g_settings_sp;
-  if (!g_settings_sp)
-    g_settings_sp = std::make_shared<PlatformDarwinKernelProperties>();
-  return g_settings_sp;
+static PlatformDarwinKernelProperties &GetGlobalProperties() {
+  static PlatformDarwinKernelProperties g_settings;
+  return g_settings;
 }
 
 void PlatformDarwinKernel::DebuggerInitialize(
@@ -232,7 +220,7 @@ void PlatformDarwinKernel::DebuggerInitialize(
           debugger, PlatformDarwinKernelProperties::GetSettingName())) {
     const bool is_global_setting = true;
     PluginManager::CreateSettingForPlatformPlugin(
-        debugger, GetGlobalProperties()->GetValueProperties(),
+        debugger, GetGlobalProperties().GetValueProperties(),
         ConstString("Properties for the PlatformDarwinKernel plug-in."),
         is_global_setting);
   }
@@ -245,21 +233,19 @@ PlatformDarwinKernel::PlatformDarwinKernel(
       m_name_to_kext_path_map_with_dsyms(),
       m_name_to_kext_path_map_without_dsyms(), m_search_directories(),
       m_search_directories_no_recursing(), m_kernel_binaries_with_dsyms(),
-      m_kernel_binaries_without_dsyms(),
-      m_ios_debug_session(is_ios_debug_session)
+      m_kernel_binaries_without_dsyms(), m_kernel_dsyms_no_binaries(),
+      m_kernel_dsyms_yaas(), m_ios_debug_session(is_ios_debug_session)
 
 {
-  if (GetGlobalProperties()->GetSearchForKexts()) {
-    CollectKextAndKernelDirectories();
-    SearchForKextsAndKernelsRecursively();
-  }
+  CollectKextAndKernelDirectories();
+  SearchForKextsAndKernelsRecursively();
 }
 
 /// Destructor.
 ///
 /// The destructor is virtual since this class is designed to be
 /// inherited from by the plug-in instance.
-PlatformDarwinKernel::~PlatformDarwinKernel() {}
+PlatformDarwinKernel::~PlatformDarwinKernel() = default;
 
 void PlatformDarwinKernel::GetStatus(Stream &strm) {
   Platform::GetStatus(strm);
@@ -293,8 +279,12 @@ void PlatformDarwinKernel::GetStatus(Stream &strm) {
               (int)m_kernel_binaries_with_dsyms.size());
   strm.Printf(" Number of Kernel binaries without dSYMs indexed: %d\n",
               (int)m_kernel_binaries_without_dsyms.size());
+  strm.Printf(" Number of Kernel dSYMs with no binaries indexed: %d\n",
+              (int)m_kernel_dsyms_no_binaries.size());
+  strm.Printf(" Number of Kernel dSYM.yaa's indexed: %d\n",
+              (int)m_kernel_dsyms_yaas.size());
 
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_PLATFORM));
+  Log *log = GetLog(LLDBLog::Platform);
   if (log) {
     LLDB_LOGF(log, "\nkexts with dSYMs");
     for (auto pos : m_name_to_kext_path_map_with_dsyms) {
@@ -305,12 +295,20 @@ void PlatformDarwinKernel::GetStatus(Stream &strm) {
     for (auto pos : m_name_to_kext_path_map_without_dsyms) {
       LLDB_LOGF(log, "%s", pos.second.GetPath().c_str());
     }
-    LLDB_LOGF(log, "\nkernels with dSYMS");
+    LLDB_LOGF(log, "\nkernel binaries with dSYMS");
     for (auto fs : m_kernel_binaries_with_dsyms) {
       LLDB_LOGF(log, "%s", fs.GetPath().c_str());
     }
-    LLDB_LOGF(log, "\nkernels without dSYMS");
+    LLDB_LOGF(log, "\nkernel binaries without dSYMS");
     for (auto fs : m_kernel_binaries_without_dsyms) {
+      LLDB_LOGF(log, "%s", fs.GetPath().c_str());
+    }
+    LLDB_LOGF(log, "\nkernel dSYMS with no binaries");
+    for (auto fs : m_kernel_dsyms_no_binaries) {
+      LLDB_LOGF(log, "%s", fs.GetPath().c_str());
+    }
+    LLDB_LOGF(log, "\nkernels .dSYM.yaa's");
+    for (auto fs : m_kernel_dsyms_yaas) {
       LLDB_LOGF(log, "%s", fs.GetPath().c_str());
     }
     LLDB_LOGF(log, "\n");
@@ -374,7 +372,7 @@ void PlatformDarwinKernel::CollectKextAndKernelDirectories() {
 }
 
 void PlatformDarwinKernel::GetUserSpecifiedDirectoriesToSearch() {
-  FileSpecList user_dirs(GetGlobalProperties()->GetKextDirectories());
+  FileSpecList user_dirs(GetGlobalProperties().GetKextDirectories());
   std::vector<FileSpec> possible_sdk_dirs;
 
   const uint32_t user_dirs_count = user_dirs.GetSize();
@@ -490,70 +488,90 @@ PlatformDarwinKernel::GetKernelsAndKextsInDirectoryHelper(
   FileSpec file_spec(path);
   ConstString file_spec_extension = file_spec.GetFileNameExtension();
 
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_PLATFORM));
-  Log *log_verbose(GetLogIfAllCategoriesSet(LIBLLDB_LOG_PLATFORM | LLDB_LOG_OPTION_VERBOSE));
+  Log *log = GetLog(LLDBLog::Platform);
 
-  LLDB_LOGF(log_verbose, "PlatformDarwinKernel examining '%s'",
-            file_spec.GetPath().c_str());
+  LLDB_LOGV(log, "PlatformDarwinKernel examining '{0}'", file_spec);
 
   PlatformDarwinKernel *thisp = (PlatformDarwinKernel *)baton;
+
+  llvm::StringRef filename = file_spec.GetFilename().GetStringRef();
+  bool is_kernel_filename =
+      filename.startswith("kernel") || filename.startswith("mach");
+  bool is_dsym_yaa = filename.endswith(".dSYM.yaa");
+
   if (ft == llvm::sys::fs::file_type::regular_file ||
       ft == llvm::sys::fs::file_type::symlink_file) {
-    ConstString filename = file_spec.GetFilename();
-    if ((strncmp(filename.GetCString(), "kernel", 6) == 0 ||
-         strncmp(filename.GetCString(), "mach", 4) == 0) &&
-        file_spec_extension != g_dsym_suffix) {
-      if (KernelHasdSYMSibling(file_spec))
-      {
-        LLDB_LOGF(log,
-                  "PlatformDarwinKernel registering kernel binary '%s' with "
-                  "dSYM sibling",
-                  file_spec.GetPath().c_str());
-        thisp->m_kernel_binaries_with_dsyms.push_back(file_spec);
+    if (is_kernel_filename) {
+      if (file_spec_extension != g_dsym_suffix && !is_dsym_yaa) {
+        if (KernelHasdSYMSibling(file_spec)) {
+          LLDB_LOGF(log,
+                    "PlatformDarwinKernel registering kernel binary '%s' with "
+                    "dSYM sibling",
+                    file_spec.GetPath().c_str());
+          thisp->m_kernel_binaries_with_dsyms.push_back(file_spec);
+        } else {
+          LLDB_LOGF(
+              log,
+              "PlatformDarwinKernel registering kernel binary '%s', no dSYM",
+              file_spec.GetPath().c_str());
+          thisp->m_kernel_binaries_without_dsyms.push_back(file_spec);
+        }
       }
-      else
-      {
-        LLDB_LOGF(
-            log, "PlatformDarwinKernel registering kernel binary '%s', no dSYM",
-            file_spec.GetPath().c_str());
-        thisp->m_kernel_binaries_without_dsyms.push_back(file_spec);
+      if (is_dsym_yaa) {
+        LLDB_LOGF(log, "PlatformDarwinKernel registering kernel .dSYM.yaa '%s'",
+                  file_spec.GetPath().c_str());
+        thisp->m_kernel_dsyms_yaas.push_back(file_spec);
       }
       return FileSystem::eEnumerateDirectoryResultNext;
     }
-  } else if (ft == llvm::sys::fs::file_type::directory_file &&
-             file_spec_extension == g_kext_suffix) {
-    AddKextToMap(thisp, file_spec);
-    // Look to see if there is a PlugIns subdir with more kexts
-    FileSpec contents_plugins(file_spec.GetPath() + "/Contents/PlugIns");
-    std::string search_here_too;
-    if (FileSystem::Instance().IsDirectory(contents_plugins)) {
-      search_here_too = contents_plugins.GetPath();
-    } else {
-      FileSpec plugins(file_spec.GetPath() + "/PlugIns");
-      if (FileSystem::Instance().IsDirectory(plugins)) {
-        search_here_too = plugins.GetPath();
+  } else {
+    if (ft == llvm::sys::fs::file_type::directory_file) {
+      if (file_spec_extension == g_kext_suffix) {
+        AddKextToMap(thisp, file_spec);
+        // Look to see if there is a PlugIns subdir with more kexts
+        FileSpec contents_plugins(file_spec.GetPath() + "/Contents/PlugIns");
+        std::string search_here_too;
+        if (FileSystem::Instance().IsDirectory(contents_plugins)) {
+          search_here_too = contents_plugins.GetPath();
+        } else {
+          FileSpec plugins(file_spec.GetPath() + "/PlugIns");
+          if (FileSystem::Instance().IsDirectory(plugins)) {
+            search_here_too = plugins.GetPath();
+          }
+        }
+
+        if (!search_here_too.empty()) {
+          const bool find_directories = true;
+          const bool find_files = false;
+          const bool find_other = false;
+          FileSystem::Instance().EnumerateDirectory(
+              search_here_too.c_str(), find_directories, find_files, find_other,
+              recurse ? GetKernelsAndKextsInDirectoryWithRecursion
+                      : GetKernelsAndKextsInDirectoryNoRecursion,
+              baton);
+        }
+        return FileSystem::eEnumerateDirectoryResultNext;
+      }
+      // Do we have a kernel dSYM with no kernel binary?
+      if (is_kernel_filename && file_spec_extension == g_dsym_suffix) {
+        if (KerneldSYMHasNoSiblingBinary(file_spec)) {
+          LLDB_LOGF(log,
+                    "PlatformDarwinKernel registering kernel dSYM '%s' with "
+                    "no binary sibling",
+                    file_spec.GetPath().c_str());
+          thisp->m_kernel_dsyms_no_binaries.push_back(file_spec);
+          return FileSystem::eEnumerateDirectoryResultNext;
+        }
       }
     }
-
-    if (!search_here_too.empty()) {
-      const bool find_directories = true;
-      const bool find_files = false;
-      const bool find_other = false;
-      FileSystem::Instance().EnumerateDirectory(
-          search_here_too.c_str(), find_directories, find_files, find_other,
-          recurse ? GetKernelsAndKextsInDirectoryWithRecursion
-                  : GetKernelsAndKextsInDirectoryNoRecursion,
-          baton);
-    }
-    return FileSystem::eEnumerateDirectoryResultNext;
   }
+
   // Don't recurse into dSYM/kext/bundle directories
   if (recurse && file_spec_extension != g_dsym_suffix &&
       file_spec_extension != g_kext_suffix &&
       file_spec_extension != g_bundle_suffix) {
-    LLDB_LOGF(log_verbose,
-              "PlatformDarwinKernel descending into directory '%s'",
-              file_spec.GetPath().c_str());
+    LLDB_LOGV(log, "PlatformDarwinKernel descending into directory '{0}'",
+              file_spec);
     return FileSystem::eEnumerateDirectoryResultEnter;
   } else {
     return FileSystem::eEnumerateDirectoryResultNext;
@@ -562,7 +580,7 @@ PlatformDarwinKernel::GetKernelsAndKextsInDirectoryHelper(
 
 void PlatformDarwinKernel::AddKextToMap(PlatformDarwinKernel *thisp,
                                         const FileSpec &file_spec) {
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_PLATFORM));
+  Log *log = GetLog(LLDBLog::Platform);
   CFCBundle bundle(file_spec.GetPath().c_str());
   CFStringRef bundle_id(bundle.GetIdentifier());
   if (bundle_id && CFGetTypeID(bundle_id) == CFStringGetTypeID()) {
@@ -601,7 +619,7 @@ bool PlatformDarwinKernel::KextHasdSYMSibling(
   FileSpec dsym_fspec = kext_bundle_filepath;
   std::string filename = dsym_fspec.GetFilename().AsCString();
   filename += ".dSYM";
-  dsym_fspec.GetFilename() = ConstString(filename);
+  dsym_fspec.SetFilename(filename);
   if (FileSystem::Instance().IsDirectory(dsym_fspec)) {
     return true;
   }
@@ -638,14 +656,70 @@ bool PlatformDarwinKernel::KernelHasdSYMSibling(const FileSpec &kernel_binary) {
   FileSpec kernel_dsym = kernel_binary;
   std::string filename = kernel_binary.GetFilename().AsCString();
   filename += ".dSYM";
-  kernel_dsym.GetFilename() = ConstString(filename);
+  kernel_dsym.SetFilename(filename);
   return FileSystem::Instance().IsDirectory(kernel_dsym);
+}
+
+// Given a FileSpec of /dir/dir/mach.development.t7004.dSYM
+// Return true if only the dSYM exists, no binary next to it.
+//    /dir/dir/mach.development.t7004.dSYM
+//    but no
+//    /dir/dir/mach.development.t7004
+bool PlatformDarwinKernel::KerneldSYMHasNoSiblingBinary(
+    const FileSpec &kernel_dsym) {
+  static ConstString g_dsym_suffix = ConstString(".dSYM");
+  std::string possible_path = kernel_dsym.GetPath();
+  if (kernel_dsym.GetFileNameExtension() != g_dsym_suffix)
+    return false;
+
+  FileSpec binary_filespec = kernel_dsym;
+  // Chop off the '.dSYM' extension on the filename
+  binary_filespec.SetFilename(binary_filespec.GetFileNameStrippingExtension());
+
+  // Is there a binary next to this this?  Then return false.
+  if (FileSystem::Instance().Exists(binary_filespec))
+    return false;
+
+  // If we have at least one binary in the DWARF subdir, then
+  // this is a properly formed dSYM and it has no binary next
+  // to it.
+  if (GetDWARFBinaryInDSYMBundle(kernel_dsym).size() > 0)
+    return true;
+
+  return false;
+}
+
+// TODO: This method returns a vector of FileSpec's because a
+// dSYM bundle may contain multiple DWARF binaries, but it
+// only implements returning the base name binary for now;
+// it should iterate over every binary in the DWARF subdir
+// and return them all.
+std::vector<FileSpec>
+PlatformDarwinKernel::GetDWARFBinaryInDSYMBundle(FileSpec dsym_bundle) {
+  std::vector<FileSpec> results;
+  static ConstString g_dsym_suffix = ConstString(".dSYM");
+  if (dsym_bundle.GetFileNameExtension() != g_dsym_suffix) {
+    return results;
+  }
+  // Drop the '.dSYM' from the filename
+  std::string filename =
+      dsym_bundle.GetFileNameStrippingExtension().GetCString();
+  std::string dirname = dsym_bundle.GetDirectory().GetCString();
+
+  std::string binary_filepath = dsym_bundle.GetPath();
+  binary_filepath += "/Contents/Resources/DWARF/";
+  binary_filepath += filename;
+
+  FileSpec binary_fspec(binary_filepath);
+  if (FileSystem::Instance().Exists(binary_fspec))
+    results.push_back(binary_fspec);
+  return results;
 }
 
 Status PlatformDarwinKernel::GetSharedModule(
     const ModuleSpec &module_spec, Process *process, ModuleSP &module_sp,
-    const FileSpecList *module_search_paths_ptr, ModuleSP *old_module_sp_ptr,
-    bool *did_create_ptr) {
+    const FileSpecList *module_search_paths_ptr,
+    llvm::SmallVectorImpl<ModuleSP> *old_modules, bool *did_create_ptr) {
   Status error;
   module_sp.reset();
   const FileSpec &platform_file = module_spec.GetFileSpec();
@@ -653,114 +727,144 @@ Status PlatformDarwinKernel::GetSharedModule(
   // Treat the file's path as a kext bundle ID (e.g.
   // "com.apple.driver.AppleIRController") and search our kext index.
   std::string kext_bundle_id = platform_file.GetPath();
-  if (!kext_bundle_id.empty()) {
-    ConstString kext_bundle_cs(kext_bundle_id.c_str());
 
-    // First look through the kext bundles that had a dsym next to them
-    if (m_name_to_kext_path_map_with_dsyms.count(kext_bundle_cs) > 0) {
-      for (BundleIDToKextIterator it =
-               m_name_to_kext_path_map_with_dsyms.begin();
-           it != m_name_to_kext_path_map_with_dsyms.end(); ++it) {
-        if (it->first == kext_bundle_cs) {
-          error = ExamineKextForMatchingUUID(it->second, module_spec.GetUUID(),
-                                             module_spec.GetArchitecture(),
-                                             module_sp);
-          if (module_sp.get()) {
-            return error;
-          }
-        }
+  if (module_spec.GetUUID().IsValid()) {
+    // DynamicLoaderDarwinKernel uses the magic name mach_kernel,
+    // UUID search can get here with no name - and it may be a kernel.
+    if (kext_bundle_id == "mach_kernel" || kext_bundle_id.empty()) {
+      error = GetSharedModuleKernel(module_spec, process, module_sp,
+                                    module_search_paths_ptr, old_modules,
+                                    did_create_ptr);
+      if (error.Success() && module_sp) {
+        return error;
       }
+    } else {
+      return GetSharedModuleKext(module_spec, process, module_sp,
+                                 module_search_paths_ptr, old_modules,
+                                 did_create_ptr);
     }
+  }
 
-    // Give the generic methods, including possibly calling into  DebugSymbols
-    // framework on macOS systems, a chance.
-    error = PlatformDarwin::GetSharedModule(module_spec, process, module_sp,
-                                           module_search_paths_ptr,
-                                           old_module_sp_ptr, did_create_ptr);
-    if (error.Success() && module_sp.get()) {
-      return error;
-    }
+  // Give the generic methods, including possibly calling into DebugSymbols
+  // framework on macOS systems, a chance.
+  return PlatformDarwin::GetSharedModule(module_spec, process, module_sp,
+                                         module_search_paths_ptr, old_modules,
+                                         did_create_ptr);
+}
 
-    // Lastly, look through the kext binarys without dSYMs
-    if (m_name_to_kext_path_map_without_dsyms.count(kext_bundle_cs) > 0) {
-      for (BundleIDToKextIterator it =
-               m_name_to_kext_path_map_without_dsyms.begin();
-           it != m_name_to_kext_path_map_without_dsyms.end(); ++it) {
-        if (it->first == kext_bundle_cs) {
-          error = ExamineKextForMatchingUUID(it->second, module_spec.GetUUID(),
-                                             module_spec.GetArchitecture(),
-                                             module_sp);
-          if (module_sp.get()) {
-            return error;
-          }
+Status PlatformDarwinKernel::GetSharedModuleKext(
+    const ModuleSpec &module_spec, Process *process, ModuleSP &module_sp,
+    const FileSpecList *module_search_paths_ptr,
+    llvm::SmallVectorImpl<ModuleSP> *old_modules, bool *did_create_ptr) {
+  Status error;
+  module_sp.reset();
+  const FileSpec &platform_file = module_spec.GetFileSpec();
+
+  // Treat the file's path as a kext bundle ID (e.g.
+  // "com.apple.driver.AppleIRController") and search our kext index.
+  ConstString kext_bundle(platform_file.GetPath().c_str());
+  // First look through the kext bundles that had a dsym next to them
+  if (m_name_to_kext_path_map_with_dsyms.count(kext_bundle) > 0) {
+    for (BundleIDToKextIterator it = m_name_to_kext_path_map_with_dsyms.begin();
+         it != m_name_to_kext_path_map_with_dsyms.end(); ++it) {
+      if (it->first == kext_bundle) {
+        error = ExamineKextForMatchingUUID(it->second, module_spec.GetUUID(),
+                                           module_spec.GetArchitecture(),
+                                           module_sp);
+        if (module_sp.get()) {
+          return error;
         }
       }
     }
   }
 
-  if (kext_bundle_id == "mach_kernel" && module_spec.GetUUID().IsValid()) {
-    // First try all kernel binaries that have a dSYM next to them
-    for (auto possible_kernel : m_kernel_binaries_with_dsyms) {
-      if (FileSystem::Instance().Exists(possible_kernel)) {
-        ModuleSpec kern_spec(possible_kernel);
-        kern_spec.GetUUID() = module_spec.GetUUID();
-        ModuleSP module_sp(new Module(kern_spec));
-        if (module_sp && module_sp->GetObjectFile() &&
-            module_sp->MatchesModuleSpec(kern_spec)) {
-          // module_sp is an actual kernel binary we want to add.
-          if (process) {
-            process->GetTarget().GetImages().AppendIfNeeded(module_sp);
-            error.Clear();
+  // Give the generic methods, including possibly calling into  DebugSymbols
+  // framework on macOS systems, a chance.
+  error = PlatformDarwin::GetSharedModule(module_spec, process, module_sp,
+                                          module_search_paths_ptr, old_modules,
+                                          did_create_ptr);
+  if (error.Success() && module_sp.get()) {
+    return error;
+  }
+
+  return error;
+}
+
+Status PlatformDarwinKernel::GetSharedModuleKernel(
+    const ModuleSpec &module_spec, Process *process, ModuleSP &module_sp,
+    const FileSpecList *module_search_paths_ptr,
+    llvm::SmallVectorImpl<ModuleSP> *old_modules, bool *did_create_ptr) {
+  Status error;
+  module_sp.reset();
+
+  // First try all kernel binaries that have a dSYM next to them
+  for (auto possible_kernel : m_kernel_binaries_with_dsyms) {
+    if (FileSystem::Instance().Exists(possible_kernel)) {
+      ModuleSpec kern_spec(possible_kernel);
+      kern_spec.GetUUID() = module_spec.GetUUID();
+      module_sp.reset(new Module(kern_spec));
+      if (module_sp && module_sp->GetObjectFile() &&
+          module_sp->MatchesModuleSpec(kern_spec)) {
+        // module_sp is an actual kernel binary we want to add.
+        if (process) {
+          const bool notify = false;
+          process->GetTarget().GetImages().AppendIfNeeded(module_sp, notify);
+          error.Clear();
+          return error;
+        } else {
+          error = ModuleList::GetSharedModule(kern_spec, module_sp, nullptr,
+                                              nullptr, nullptr);
+          if (module_sp && module_sp->GetObjectFile() &&
+              module_sp->GetObjectFile()->GetType() !=
+                  ObjectFile::Type::eTypeCoreFile) {
             return error;
-          } else {
-            error = ModuleList::GetSharedModule(kern_spec, module_sp, NULL,
-                                                NULL, NULL);
-            if (module_sp && module_sp->GetObjectFile() &&
-                module_sp->GetObjectFile()->GetType() !=
-                    ObjectFile::Type::eTypeCoreFile) {
-              return error;
-            }
-            module_sp.reset();
           }
+          module_sp.reset();
         }
       }
     }
+  }
 
-    // Give the generic methods, including possibly calling into  DebugSymbols
-    // framework on macOS systems, a chance.
-    error = PlatformDarwin::GetSharedModule(module_spec, process, module_sp,
-                                            module_search_paths_ptr,
-                                            old_module_sp_ptr, did_create_ptr);
-    if (error.Success() && module_sp.get()) {
-      return error;
-    }
+  // Next try all dSYMs that have no kernel binary next to them (load
+  // the kernel DWARF stub as the main binary)
+  for (auto possible_kernel_dsym : m_kernel_dsyms_no_binaries) {
+    std::vector<FileSpec> objfile_names =
+        GetDWARFBinaryInDSYMBundle(possible_kernel_dsym);
+    for (FileSpec objfile : objfile_names) {
+      ModuleSpec kern_spec(objfile);
+      kern_spec.GetUUID() = module_spec.GetUUID();
+      kern_spec.GetSymbolFileSpec() = possible_kernel_dsym;
 
-    // Next try all kernel binaries that don't have a dSYM
-    for (auto possible_kernel : m_kernel_binaries_without_dsyms) {
-      if (FileSystem::Instance().Exists(possible_kernel)) {
-        ModuleSpec kern_spec(possible_kernel);
-        kern_spec.GetUUID() = module_spec.GetUUID();
-        ModuleSP module_sp(new Module(kern_spec));
-        if (module_sp && module_sp->GetObjectFile() &&
-            module_sp->MatchesModuleSpec(kern_spec)) {
-          // module_sp is an actual kernel binary we want to add.
-          if (process) {
-            process->GetTarget().GetImages().AppendIfNeeded(module_sp);
-            error.Clear();
+      module_sp.reset(new Module(kern_spec));
+      if (module_sp && module_sp->GetObjectFile() &&
+          module_sp->MatchesModuleSpec(kern_spec)) {
+        // module_sp is an actual kernel binary we want to add.
+        if (process) {
+          const bool notify = false;
+          process->GetTarget().GetImages().AppendIfNeeded(module_sp, notify);
+          error.Clear();
+          return error;
+        } else {
+          error = ModuleList::GetSharedModule(kern_spec, module_sp, nullptr,
+                                              nullptr, nullptr);
+          if (module_sp && module_sp->GetObjectFile() &&
+              module_sp->GetObjectFile()->GetType() !=
+                  ObjectFile::Type::eTypeCoreFile) {
             return error;
-          } else {
-            error = ModuleList::GetSharedModule(kern_spec, module_sp, NULL,
-                                                NULL, NULL);
-            if (module_sp && module_sp->GetObjectFile() &&
-                module_sp->GetObjectFile()->GetType() !=
-                    ObjectFile::Type::eTypeCoreFile) {
-              return error;
-            }
-            module_sp.reset();
           }
+          module_sp.reset();
         }
       }
     }
+  }
+
+  // Give the generic methods, including possibly calling into  DebugSymbols
+  // framework on macOS systems, a chance.
+  error = PlatformDarwin::GetSharedModule(module_spec, process, module_sp,
+                                          module_search_paths_ptr, old_modules,
+                                          did_create_ptr);
+  if (error.Success() && module_sp.get()) {
+    return error;
   }
 
   return error;
@@ -815,13 +919,79 @@ Status PlatformDarwinKernel::ExamineKextForMatchingUUID(
   return {};
 }
 
-bool PlatformDarwinKernel::GetSupportedArchitectureAtIndex(uint32_t idx,
-                                                           ArchSpec &arch) {
+static addr_t find_kernel_in_macho_fileset(Process *process,
+                                           addr_t input_addr) {
+  Status error;
+  WritableDataBufferSP header_data(new DataBufferHeap(512, 0));
+  if (!process->ReadMemory(input_addr, header_data->GetBytes(),
+                           header_data->GetByteSize(), error) ||
+      !error.Success())
+    return LLDB_INVALID_ADDRESS;
+  ModuleSP module_sp(new Module(ModuleSpec()));
+  ObjectContainerSP container_sp(
+      ObjectContainerMachOFileset::CreateMemoryInstance(
+          module_sp, header_data, process->shared_from_this(), input_addr));
+  if (!container_sp)
+    return LLDB_INVALID_ADDRESS;
+
+  ObjectContainerMachOFileset *fileset_container =
+      static_cast<ObjectContainerMachOFileset *>(container_sp.get());
+  ObjectContainerMachOFileset::Entry *entry =
+      fileset_container->FindEntry("com.apple.kernel");
+  if (entry)
+    return entry->vmaddr;
+  return LLDB_INVALID_ADDRESS;
+}
+
+bool PlatformDarwinKernel::LoadPlatformBinaryAndSetup(Process *process,
+                                                      lldb::addr_t input_addr,
+                                                      bool notify) {
+  Log *log =
+      GetLog(LLDBLog::Platform | LLDBLog::DynamicLoader | LLDBLog::Process);
+
+  if (!process)
+    return false;
+
+  addr_t actual_address = find_kernel_in_macho_fileset(process, input_addr);
+
+  LLDB_LOGF(log,
+            "PlatformDarwinKernel::%s check address 0x%" PRIx64 " for "
+            "a macho fileset, got back kernel address 0x%" PRIx64,
+            __FUNCTION__, input_addr, actual_address);
+
+  if (actual_address == LLDB_INVALID_ADDRESS)
+    return false;
+
+  // We have a xnu kernel binary, this is a kernel debug session.
+  // Set the Target's Platform to be PlatformDarwinKernel, and the
+  // Process' DynamicLoader to be DynamicLoaderDarwinKernel.
+
+  PlatformSP platform_sp =
+      process->GetTarget().GetDebugger().GetPlatformList().Create(
+          PlatformDarwinKernel::GetPluginNameStatic());
+  if (platform_sp)
+    process->GetTarget().SetPlatform(platform_sp);
+
+  DynamicLoaderUP dyld_up =
+      std::make_unique<DynamicLoaderDarwinKernel>(process, actual_address);
+  if (!dyld_up)
+    return false;
+
+  // Process owns it now
+  process->SetDynamicLoader(std::move(dyld_up));
+
+  return true;
+}
+
+std::vector<ArchSpec> PlatformDarwinKernel::GetSupportedArchitectures(
+    const ArchSpec &process_host_arch) {
+  std::vector<ArchSpec> result;
 #if defined(__arm__) || defined(__arm64__) || defined(__aarch64__)
-  return ARMGetSupportedArchitectureAtIndex(idx, arch);
+  ARMGetSupportedArchitectures(result);
 #else
-  return x86GetSupportedArchitectureAtIndex(idx, arch);
+  x86GetSupportedArchitectures(result);
 #endif
+  return result;
 }
 
 void PlatformDarwinKernel::CalculateTrapHandlerSymbolNames() {
@@ -840,21 +1010,6 @@ void PlatformDarwinKernel::CalculateTrapHandlerSymbolNames() {
   m_trap_handlers.push_back(ConstString("fleh_decirq"));
   m_trap_handlers.push_back(ConstString("fleh_fiq_generic"));
   m_trap_handlers.push_back(ConstString("fleh_dec"));
-}
-
-#else // __APPLE__
-
-// Since DynamicLoaderDarwinKernel is compiled in for all systems, and relies
-// on PlatformDarwinKernel for the plug-in name, we compile just the plug-in
-// name in here to avoid issues. We are tracking an internal bug to resolve
-// this issue by either not compiling in DynamicLoaderDarwinKernel for non-
-// apple builds, or to make PlatformDarwinKernel build on all systems.
-// PlatformDarwinKernel is currently not compiled on other platforms due to the
-// use of the Mac-specific source/Host/macosx/cfcpp utilities.
-
-lldb_private::ConstString PlatformDarwinKernel::GetPluginNameStatic() {
-  static lldb_private::ConstString g_name("darwin-kernel");
-  return g_name;
 }
 
 #endif // __APPLE__

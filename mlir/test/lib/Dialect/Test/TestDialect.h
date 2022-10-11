@@ -14,31 +14,52 @@
 #ifndef MLIR_TESTDIALECT_H
 #define MLIR_TESTDIALECT_H
 
+#include "TestTypes.h"
+#include "TestAttributes.h"
+#include "TestInterfaces.h"
+#include "mlir/Dialect/DLTI/DLTI.h"
+#include "mlir/Dialect/DLTI/Traits.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Traits.h"
+#include "mlir/IR/AsmState.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
+#include "mlir/IR/DialectResourceBlobManager.h"
+#include "mlir/IR/ExtensibleDialect.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/RegionKindInterface.h"
-#include "mlir/IR/StandardTypes.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/CopyOpInterface.h"
 #include "mlir/Interfaces/DerivedAttributeOpInterface.h"
+#include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "mlir/Interfaces/InferTypeOpInterface.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-
-#include "TestOpEnums.h.inc"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 
 namespace mlir {
+class DLTIDialect;
+class RewritePatternSet;
+} // namespace mlir
 
-#include "TestOpStructs.h.inc"
+//===----------------------------------------------------------------------===//
+// TestDialect
+//===----------------------------------------------------------------------===//
+
+#include "TestOpInterfaces.h.inc"
 #include "TestOpsDialect.h.inc"
 
 #define GET_OP_CLASSES
 #include "TestOps.h.inc"
 
-void registerTestDialect(DialectRegistry &registry);
-
-} // end namespace mlir
+namespace test {
+void registerTestDialect(::mlir::DialectRegistry &registry);
+void populateTestReductionPatterns(::mlir::RewritePatternSet &patterns);
+} // namespace test
 
 #endif // MLIR_TESTDIALECT_H

@@ -73,7 +73,7 @@ void HexagonBlockRanges::IndexRange::merge(const IndexRange &A) {
 }
 
 void HexagonBlockRanges::RangeList::include(const RangeList &RL) {
-  for (auto &R : RL)
+  for (const auto &R : RL)
     if (!is_contained(*this, R))
       push_back(R);
 }
@@ -84,7 +84,7 @@ void HexagonBlockRanges::RangeList::unionize(bool MergeAdjacent) {
   if (empty())
     return;
 
-  llvm::sort(begin(), end());
+  llvm::sort(*this);
   iterator Iter = begin();
 
   while (Iter != end()-1) {
@@ -175,7 +175,7 @@ MachineInstr *HexagonBlockRanges::InstrIndexMap::getInstr(IndexType Idx) const {
 
 HexagonBlockRanges::IndexType HexagonBlockRanges::InstrIndexMap::getIndex(
       MachineInstr *MI) const {
-  for (auto &I : Map)
+  for (const auto &I : Map)
     if (I.second == MI)
       return I.first;
   return IndexType::None;
@@ -275,7 +275,7 @@ HexagonBlockRanges::RegisterSet HexagonBlockRanges::expandToSubRegs(
     for (; I.isValid(); ++I)
       SRs.insert({*I, 0});
   } else {
-    assert(Register::isVirtualRegister(R.Reg));
+    assert(R.Reg.isVirtual());
     auto &RC = *MRI.getRegClass(R.Reg);
     unsigned PReg = *RC.begin();
     MCSubRegIndexIterator I(PReg, &TRI);
@@ -482,7 +482,7 @@ HexagonBlockRanges::RegToRangeMap HexagonBlockRanges::computeDeadMap(
     }
   }
   for (auto &P : LiveMap)
-    if (Register::isVirtualRegister(P.first.Reg))
+    if (P.first.Reg.isVirtual())
       addDeadRanges(P.first);
 
   LLVM_DEBUG(dbgs() << __func__ << ": dead map\n"
@@ -512,7 +512,7 @@ raw_ostream &llvm::operator<<(raw_ostream &OS,
 
 raw_ostream &llvm::operator<<(raw_ostream &OS,
                               const HexagonBlockRanges::RangeList &RL) {
-  for (auto &R : RL)
+  for (const auto &R : RL)
     OS << R << " ";
   return OS;
 }
@@ -528,7 +528,7 @@ raw_ostream &llvm::operator<<(raw_ostream &OS,
 
 raw_ostream &llvm::operator<<(raw_ostream &OS,
                               const HexagonBlockRanges::PrintRangeMap &P) {
-  for (auto &I : P.Map) {
+  for (const auto &I : P.Map) {
     const HexagonBlockRanges::RangeList &RL = I.second;
     OS << printReg(I.first.Reg, &P.TRI, I.first.Sub) << " -> " << RL << "\n";
   }

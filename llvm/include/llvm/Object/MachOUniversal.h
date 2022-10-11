@@ -16,14 +16,16 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/BinaryFormat/MachO.h"
-#include "llvm/Object/Archive.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/MachO.h"
 
 namespace llvm {
 class StringRef;
+class LLVMContext;
 
 namespace object {
+class Archive;
+class IRObjectFile;
 
 class MachOUniversalBinary : public Binary {
   virtual void anchor();
@@ -101,6 +103,8 @@ public:
     }
 
     Expected<std::unique_ptr<MachOObjectFile>> getAsObjectFile() const;
+    Expected<std::unique_ptr<IRObjectFile>>
+    getAsIRObject(LLVMContext &Ctx) const;
 
     Expected<std::unique_ptr<Archive>> getAsArchive() const;
   };
@@ -153,6 +157,9 @@ public:
 
   Expected<std::unique_ptr<MachOObjectFile>>
   getMachOObjectForArch(StringRef ArchName) const;
+
+  Expected<std::unique_ptr<IRObjectFile>>
+  getIRObjectForArch(StringRef ArchName, LLVMContext &Ctx) const;
 
   Expected<std::unique_ptr<Archive>>
   getArchiveForArch(StringRef ArchName) const;

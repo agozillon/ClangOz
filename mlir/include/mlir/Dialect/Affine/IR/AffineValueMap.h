@@ -35,7 +35,7 @@ class AffineValueMap {
 public:
   // Creates an empty AffineValueMap (users should call 'reset' to reset map
   // and operands).
-  AffineValueMap() {}
+  AffineValueMap() = default;
   AffineValueMap(AffineMap map, ValueRange operands, ValueRange results = {});
 
   ~AffineValueMap();
@@ -73,6 +73,10 @@ public:
   Value getOperand(unsigned i) const;
   ArrayRef<Value> getOperands() const;
   AffineMap getAffineMap() const;
+
+  /// Attempts to canonicalize the map and operands. Return success if the map
+  /// and/or operands have been modified.
+  LogicalResult canonicalize();
 
 private:
   // A mutable affine map.

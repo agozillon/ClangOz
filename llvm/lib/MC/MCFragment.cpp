@@ -128,7 +128,11 @@ static bool getSymbolOffsetImpl(const MCAsmLayout &Layout, const MCSymbol &S,
   const MCSymbolRefExpr *A = Target.getSymA();
   if (A) {
     uint64_t ValA;
-    if (!getLabelOffset(Layout, A->getSymbol(), ReportError, ValA))
+    // FIXME: On most platforms, `Target`'s component symbols are labels from
+    // having been simplified during evaluation, but on Mach-O they can be
+    // variables due to PR19203. This, and the line below for `B` can be
+    // restored to call `getLabelOffset` when PR19203 is fixed.
+    if (!getSymbolOffsetImpl(Layout, A->getSymbol(), ReportError, ValA))
       return false;
     Offset += ValA;
   }
@@ -136,7 +140,7 @@ static bool getSymbolOffsetImpl(const MCAsmLayout &Layout, const MCSymbol &S,
   const MCSymbolRefExpr *B = Target.getSymB();
   if (B) {
     uint64_t ValB;
-    if (!getLabelOffset(Layout, B->getSymbol(), ReportError, ValB))
+    if (!getSymbolOffsetImpl(Layout, B->getSymbol(), ReportError, ValB))
       return false;
     Offset -= ValB;
   }
@@ -309,6 +313,9 @@ void MCFragment::destroy() {
     case FT_CVDefRange:
       delete cast<MCCVDefRangeFragment>(this);
       return;
+    case FT_PseudoProbe:
+      delete cast<MCPseudoProbeAddrFragment>(this);
+      return;
     case FT_Dummy:
       delete cast<MCDummyFragment>(this);
       return;
@@ -351,6 +358,9 @@ LLVM_DUMP_METHOD void MCFragment::dump() const {
   case MCFragment::FT_SymbolId:    OS << "MCSymbolIdFragment"; break;
   case MCFragment::FT_CVInlineLines: OS << "MCCVInlineLineTableFragment"; break;
   case MCFragment::FT_CVDefRange: OS << "MCCVDefRangeTableFragment"; break;
+  case MCFragment::FT_PseudoProbe:
+    OS << "MCPseudoProbe";
+    break;
   case MCFragment::FT_Dummy: OS << "MCDummyFragment"; break;
   }
 
@@ -366,7 +376,7 @@ LLVM_DUMP_METHOD void MCFragment::dump() const {
     if (AF->hasEmitNops())
       OS << " (emit nops)";
     OS << "\n       ";
-    OS << " Alignment:" << AF->getAlignment()
+    OS << " Alignment:" << AF->getAlignment().value()
        << " Value:" << AF->getValue() << " ValueSize:" << AF->getValueSize()
        << " MaxBytesToEmit:" << AF->getMaxBytesToEmit() << ">";
     break;
@@ -482,6 +492,12 @@ LLVM_DUMP_METHOD void MCFragment::dump() const {
       OS << " RangeStart:" << RangeStartEnd.first;
       OS << " RangeEnd:" << RangeStartEnd.second;
     }
+    break;
+  }
+  case MCFragment::FT_PseudoProbe: {
+    const auto *OF = cast<MCPseudoProbeAddrFragment>(this);
+    OS << "\n       ";
+    OS << " AddrDelta:" << OF->getAddrDelta();
     break;
   }
   case MCFragment::FT_Dummy:

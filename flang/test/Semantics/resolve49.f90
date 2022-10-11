@@ -1,6 +1,6 @@
-! RUN: %S/test_errors.sh %s %t %f18
+! RUN: %python %S/test_errors.py %s %flang_fc1
 ! Test section subscript
-program p1
+subroutine p1
   real :: a(10,10)
   real :: b(5,5)
   real :: c
@@ -10,13 +10,14 @@ program p1
 end
 
 ! Test substring
-program p2
+subroutine p2
   type t1(n1,n2)
     integer,kind :: n1,n2
     integer :: c2(iachar('ABCDEFGHIJ'(n1:n1)))
   end type
   character :: a(10)
   character :: b(5)
+  character :: c(0)
   integer :: n
   n = 3
   b = a(n:7)
@@ -26,10 +27,11 @@ program p2
   a(n+3:) = b
   a(:n+2) = b
   n = iachar(1_'ABCDEFGHIJ'(1:1))
+  c = 'ABCDEFGHIJ'(1:0)
 end
 
 ! Test pointer assignment with bounds
-program p3
+subroutine p3
   integer, pointer :: a(:,:)
   integer, target :: b(2,2)
   integer :: n
@@ -39,7 +41,7 @@ program p3
 end
 
 ! Test pointer assignment to array element
-program p4
+subroutine p4
   type :: t
     real, pointer :: a
   end type
@@ -47,4 +49,4 @@ program p4
   integer :: i
   real, target :: y
   x(i)%a => y
-end program
+end subroutine

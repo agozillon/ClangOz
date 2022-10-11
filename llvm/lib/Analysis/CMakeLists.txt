@@ -1,15 +1,34 @@
 if (DEFINED LLVM_HAVE_TF_AOT OR DEFINED LLVM_HAVE_TF_API)
+  include(TensorFlowCompile)
+  set(LLVM_INLINER_MODEL_PATH_DEFAULT "models/inliner-Oz")
+
+  set(LLVM_INLINER_MODEL_CURRENT_URL "<UNSPECIFIED>")
+
   if (DEFINED LLVM_HAVE_TF_AOT)
-    include(TensorFlowCompile)
-    tfcompile(models/inliner serve action InlinerSizeModel llvm::InlinerSizeModel)
-    list(APPEND GeneratedMLSources
-      $<TARGET_OBJECTS:tf_xla_runtime_objects>
-      ${GENERATED_OBJS}
+    tf_find_and_compile(
+      ${LLVM_INLINER_MODEL_PATH}
+      ${LLVM_INLINER_MODEL_CURRENT_URL}
+      ${LLVM_INLINER_MODEL_PATH_DEFAULT}
+      "models/gen-inline-oz-test-model.py"
+      serve
+      action
+      InlinerSizeModel
+      llvm::InlinerSizeModel
     )
   endif()
 
   if (DEFINED LLVM_HAVE_TF_API)
-    LIST(APPEND MLLinkDeps ${tensorflow_c_api})
+    if (LLVM_HAVE_TFLITE)
+      build_proto(
+        tensorflow/core/protobuf/error_codes
+        tensorflow/core/example/feature
+        tensorflow/core/example/example)
+      list(APPEND MLLinkDeps 
+        tensorflow-lite::tensorflow-lite
+        protobuf::libprotobuf)
+    else()
+      list(APPEND MLLinkDeps ${tensorflow_c_api} ${tensorflow_fx})
+    endif()
   endif()
 endif()
 
@@ -38,7 +57,10 @@ add_llvm_component_library(LLVMAnalysis
   CostModel.cpp
   CodeMetrics.cpp
   ConstantFolding.cpp
+  CycleAnalysis.cpp
   DDG.cpp
+  DDGPrinter.cpp
+  ConstraintSystem.cpp
   Delinearization.cpp
   DemandedBits.cpp
   DependenceAnalysis.cpp
@@ -53,11 +75,14 @@ add_llvm_component_library(LLVMAnalysis
   GlobalsModRef.cpp
   GuardUtils.cpp
   HeatUtils.cpp
+  IRSimilarityIdentifier.cpp
   IVDescriptors.cpp
   IVUsers.cpp
+  ImportedFunctionsInliningStatistics.cpp
   IndirectCallPromotionAnalysis.cpp
   InlineCost.cpp
   InlineAdvisor.cpp
+  InlineOrder.cpp
   InlineSizeEstimatorAnalysis.cpp
   InstCount.cpp
   InstructionPrecedenceTracking.cpp
@@ -84,15 +109,19 @@ add_llvm_component_library(LLVMAnalysis
   MemoryBuiltins.cpp
   MemoryDependenceAnalysis.cpp
   MemoryLocation.cpp
+  MemoryProfileInfo.cpp
   MemorySSA.cpp
   MemorySSAUpdater.cpp
+  ModelUnderTrainingRunner.cpp
   ModuleDebugInfoPrinter.cpp
   ModuleSummaryAnalysis.cpp
   MustExecute.cpp
+  NoInferenceModelRunner.cpp
   ObjCARCAliasAnalysis.cpp
   ObjCARCAnalysisUtils.cpp
   ObjCARCInstKind.cpp
   OptimizationRemarkEmitter.cpp
+  OverflowInstAnalysis.cpp
   PHITransAddr.cpp
   PhiValues.cpp
   PostDominators.cpp
@@ -101,7 +130,6 @@ add_llvm_component_library(LLVMAnalysis
   RegionInfo.cpp
   RegionPass.cpp
   RegionPrinter.cpp
-  ReleaseModeModelRunner.cpp
   ReplayInlineAdvisor.cpp
   ScalarEvolution.cpp
   ScalarEvolutionAliasAnalysis.cpp
@@ -112,9 +140,12 @@ add_llvm_component_library(LLVMAnalysis
   SyncDependenceAnalysis.cpp
   SyntheticCountsUtils.cpp
   TFUtils.cpp
+  TFLiteUtils.cpp
   TargetLibraryInfo.cpp
   TargetTransformInfo.cpp
+  TensorSpec.cpp
   Trace.cpp
+  TrainingLogger.cpp
   TypeBasedAliasAnalysis.cpp
   TypeMetadataUtils.cpp
   ScopedNoAliasAA.cpp
@@ -130,7 +161,15 @@ add_llvm_component_library(LLVMAnalysis
 
   DEPENDS
   intrinsics_gen
+  ${MLDeps}
 
   LINK_LIBS
   ${MLLinkDeps}
+
+  LINK_COMPONENTS
+  BinaryFormat
+  Core
+  Object
+  ProfileData
+  Support
   )

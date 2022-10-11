@@ -15,7 +15,7 @@
 
 namespace clang {
 
-static const llvm::SmallVector<llvm::StringRef, 4>
+static llvm::SmallVector<llvm::StringRef, 4>
 getAllPossibleAMDGPUTargetIDFeatures(const llvm::Triple &T,
                                      llvm::StringRef Proc) {
   // Entries in returned vector should be in alphabetical order.
@@ -26,14 +26,14 @@ getAllPossibleAMDGPUTargetIDFeatures(const llvm::Triple &T,
     return Ret;
   auto Features = T.isAMDGCN() ? llvm::AMDGPU::getArchAttrAMDGCN(ProcKind)
                                : llvm::AMDGPU::getArchAttrR600(ProcKind);
-  if (Features & llvm::AMDGPU::FEATURE_SRAM_ECC)
-    Ret.push_back("sram-ecc");
+  if (Features & llvm::AMDGPU::FEATURE_SRAMECC)
+    Ret.push_back("sramecc");
   if (Features & llvm::AMDGPU::FEATURE_XNACK)
     Ret.push_back("xnack");
   return Ret;
 }
 
-const llvm::SmallVector<llvm::StringRef, 4>
+llvm::SmallVector<llvm::StringRef, 4>
 getAllPossibleTargetIDFeatures(const llvm::Triple &T,
                                llvm::StringRef Processor) {
   llvm::SmallVector<llvm::StringRef, 4> Ret;
@@ -61,7 +61,7 @@ llvm::StringRef getProcessorFromTargetID(const llvm::Triple &T,
 //
 // A target ID is a processor name followed by a list of target features
 // delimited by colon. Each target feature is a string post-fixed by a plus
-// or minus sign, e.g. gfx908:sram-ecc+:xnack-.
+// or minus sign, e.g. gfx908:sramecc+:xnack-.
 static llvm::Optional<llvm::StringRef>
 parseTargetIDWithFormatCheckingOnly(llvm::StringRef TargetID,
                                     llvm::StringMap<bool> *FeatureMap) {
@@ -109,8 +109,7 @@ parseTargetID(const llvm::Triple &T, llvm::StringRef TargetID,
   if (!OptionalProcessor)
     return llvm::None;
 
-  llvm::StringRef Processor =
-      getCanonicalProcessorName(T, OptionalProcessor.getValue());
+  llvm::StringRef Processor = getCanonicalProcessorName(T, *OptionalProcessor);
   if (Processor.empty())
     return llvm::None;
 
@@ -150,8 +149,7 @@ getConflictTargetIDCombination(const std::set<llvm::StringRef> &TargetIDs) {
   llvm::StringMap<Info> FeatureMap;
   for (auto &&ID : TargetIDs) {
     llvm::StringMap<bool> Features;
-    llvm::StringRef Proc =
-        parseTargetIDWithFormatCheckingOnly(ID, &Features).getValue();
+    llvm::StringRef Proc = *parseTargetIDWithFormatCheckingOnly(ID, &Features);
     auto Loc = FeatureMap.find(Proc);
     if (Loc == FeatureMap.end())
       FeatureMap[Proc] = Info{ID, Features};

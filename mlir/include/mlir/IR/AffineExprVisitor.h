@@ -10,10 +10,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef MLIR_IR_AFFINE_EXPR_VISITOR_H
-#define MLIR_IR_AFFINE_EXPR_VISITOR_H
+#ifndef MLIR_IR_AFFINEEXPRVISITOR_H
+#define MLIR_IR_AFFINEEXPRVISITOR_H
 
 #include "mlir/IR/AffineExpr.h"
+#include "llvm/ADT/ArrayRef.h"
 
 namespace mlir {
 
@@ -64,7 +65,8 @@ namespace mlir {
 /// just as efficient as having your own switch instruction over the instruction
 /// opcode.
 
-template <typename SubClass, typename RetTy = void> class AffineExprVisitor {
+template <typename SubClass, typename RetTy = void>
+class AffineExprVisitor {
   //===--------------------------------------------------------------------===//
   // Interface code - This is the public interface of the AffineExprVisitor
   // that you use to visit affine expressions...
@@ -159,29 +161,29 @@ public:
 
   // Default visit methods. Note that the default op-specific binary op visit
   // methods call the general visitAffineBinaryOpExpr visit method.
-  void visitAffineBinaryOpExpr(AffineBinaryOpExpr expr) {}
-  void visitAddExpr(AffineBinaryOpExpr expr) {
-    static_cast<SubClass *>(this)->visitAffineBinaryOpExpr(expr);
+  RetTy visitAffineBinaryOpExpr(AffineBinaryOpExpr expr) { return RetTy(); }
+  RetTy visitAddExpr(AffineBinaryOpExpr expr) {
+    return static_cast<SubClass *>(this)->visitAffineBinaryOpExpr(expr);
   }
-  void visitMulExpr(AffineBinaryOpExpr expr) {
-    static_cast<SubClass *>(this)->visitAffineBinaryOpExpr(expr);
+  RetTy visitMulExpr(AffineBinaryOpExpr expr) {
+    return static_cast<SubClass *>(this)->visitAffineBinaryOpExpr(expr);
   }
-  void visitModExpr(AffineBinaryOpExpr expr) {
-    static_cast<SubClass *>(this)->visitAffineBinaryOpExpr(expr);
+  RetTy visitModExpr(AffineBinaryOpExpr expr) {
+    return static_cast<SubClass *>(this)->visitAffineBinaryOpExpr(expr);
   }
-  void visitFloorDivExpr(AffineBinaryOpExpr expr) {
-    static_cast<SubClass *>(this)->visitAffineBinaryOpExpr(expr);
+  RetTy visitFloorDivExpr(AffineBinaryOpExpr expr) {
+    return static_cast<SubClass *>(this)->visitAffineBinaryOpExpr(expr);
   }
-  void visitCeilDivExpr(AffineBinaryOpExpr expr) {
-    static_cast<SubClass *>(this)->visitAffineBinaryOpExpr(expr);
+  RetTy visitCeilDivExpr(AffineBinaryOpExpr expr) {
+    return static_cast<SubClass *>(this)->visitAffineBinaryOpExpr(expr);
   }
-  void visitConstantExpr(AffineConstantExpr expr) {}
-  void visitDimExpr(AffineDimExpr expr) {}
-  void visitSymbolExpr(AffineSymbolExpr expr) {}
+  RetTy visitConstantExpr(AffineConstantExpr expr) { return RetTy(); }
+  RetTy visitDimExpr(AffineDimExpr expr) { return RetTy(); }
+  RetTy visitSymbolExpr(AffineSymbolExpr expr) { return RetTy(); }
 
 private:
   // Walk the operands - each operand is itself walked in post order.
-  void walkOperandsPostOrder(AffineBinaryOpExpr expr) {
+  RetTy walkOperandsPostOrder(AffineBinaryOpExpr expr) {
     walkPostOrder(expr.getLHS());
     walkPostOrder(expr.getRHS());
   }
@@ -298,7 +300,26 @@ protected:
   virtual void addLocalFloorDivId(ArrayRef<int64_t> dividend, int64_t divisor,
                                   AffineExpr localExpr);
 
+  /// Add a local identifier (needed to flatten a mod, floordiv, ceildiv, mul
+  /// expr) when the rhs is a symbolic expression. The local identifier added
+  /// may be a floordiv, ceildiv, mul or mod of a pure affine/semi-affine
+  /// function of other identifiers, coefficients of which are specified in the
+  /// lhs of the mod, floordiv, ceildiv or mul expression and with respect to a
+  /// symbolic rhs expression. `localExpr` is the simplified tree expression
+  /// (AffineExpr) corresponding to the quantifier.
+  virtual void addLocalIdSemiAffine(AffineExpr localExpr);
+
 private:
+  /// Adds `expr`, which may be mod, ceildiv, floordiv or mod expression
+  /// representing the affine expression corresponding to the quantifier
+  /// introduced as the local variable corresponding to `expr`. If the
+  /// quantifier is already present, we put the coefficient in the proper index
+  /// of `result`, otherwise we add a new local variable and put the coefficient
+  /// there.
+  void addLocalVariableSemiAffine(AffineExpr expr,
+                                  SmallVectorImpl<int64_t> &result,
+                                  unsigned long resultSize);
+
   // t = expr floordiv c   <=> t = q, c * q <= expr <= c * q + c - 1
   // A floordiv is thus flattened by introducing a new local variable q, and
   // replacing that expression with 'q' while adding the constraints
@@ -320,6 +341,6 @@ private:
   inline unsigned getDimStartIndex() const { return 0; }
 };
 
-} // end namespace mlir
+} // namespace mlir
 
-#endif // MLIR_IR_AFFINE_EXPR_VISITOR_H
+#endif // MLIR_IR_AFFINEEXPRVISITOR_H

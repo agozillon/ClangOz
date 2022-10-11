@@ -131,7 +131,7 @@ public:
   void InclusionDirective(SourceLocation HashLoc, const Token & /*IncludeTok*/,
                           StringRef FileName, bool IsAngled,
                           CharSourceRange FilenameRange,
-                          const FileEntry * /*File*/, StringRef SearchPath,
+                          Optional<FileEntryRef> /*File*/, StringRef SearchPath,
                           StringRef /*RelativePath*/,
                           const Module * /*Imported*/,
                           SrcMgr::CharacteristicKind /*FileType*/) override {
@@ -691,11 +691,10 @@ void ClangMoveTool::addIncludes(llvm::StringRef IncludeHeader, bool IsAngled,
                                 llvm::StringRef FileName,
                                 CharSourceRange IncludeFilenameRange,
                                 const SourceManager &SM) {
-  SmallVector<char, 128> HeaderWithSearchPath;
+  SmallString<128> HeaderWithSearchPath;
   llvm::sys::path::append(HeaderWithSearchPath, SearchPath, IncludeHeader);
   std::string AbsoluteIncludeHeader =
-      MakeAbsolutePath(SM, llvm::StringRef(HeaderWithSearchPath.data(),
-                                           HeaderWithSearchPath.size()));
+      MakeAbsolutePath(SM, HeaderWithSearchPath);
   std::string IncludeLine =
       IsAngled ? ("#include <" + IncludeHeader + ">\n").str()
                : ("#include \"" + IncludeHeader + "\"\n").str();
@@ -921,8 +920,7 @@ void ClangMoveTool::onEndOfTranslationUnit() {
       return false;
     }
   };
-  if (std::none_of(UnremovedDeclsInOldHeader.begin(),
-                   UnremovedDeclsInOldHeader.end(), IsSupportedKind) &&
+  if (llvm::none_of(UnremovedDeclsInOldHeader, IsSupportedKind) &&
       !Context->Spec.OldHeader.empty()) {
     auto &SM = RemovedDecls[0]->getASTContext().getSourceManager();
     moveAll(SM, Context->Spec.OldHeader, Context->Spec.NewHeader);

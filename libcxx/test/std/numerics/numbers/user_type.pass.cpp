@@ -7,7 +7,6 @@
 //===----------------------------------------------------------------------===//
 
 // UNSUPPORTED: c++03, c++11, c++14, c++17
-// UNSUPPORTED: libcpp-no-concepts
 
 #include <numbers>
 
@@ -54,4 +53,4 @@ user std::numbers::egamma_v<user>{};
 template <>
 user std::numbers::phi_v<user>{};
 
-int main() { return 0; }
+int main(int, char**) { return 0; }

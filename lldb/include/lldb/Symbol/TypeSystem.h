@@ -91,7 +91,6 @@ public:
 
   virtual SymbolFile *GetSymbolFile() const { return m_sym_file; }
 
-  // Returns true if the symbol file changed during the set accessor.
   virtual void SetSymbolFile(SymbolFile *sym_file) { m_sym_file = sym_file; }
 
   // CompilerDecl functions
@@ -152,8 +151,7 @@ public:
   virtual bool IsFloatingPointType(lldb::opaque_compiler_type_t type,
                                    uint32_t &count, bool &is_complex) = 0;
 
-  virtual bool IsFunctionType(lldb::opaque_compiler_type_t type,
-                              bool *is_variadic_ptr) = 0;
+  virtual bool IsFunctionType(lldb::opaque_compiler_type_t type) = 0;
 
   virtual size_t
   GetNumberOfFunctionArguments(lldb::opaque_compiler_type_t type) = 0;
@@ -175,6 +173,8 @@ public:
     is_signed = false;
     return false;
   }
+
+  virtual bool IsScopedEnumerationType(lldb::opaque_compiler_type_t type) = 0;
 
   virtual bool IsPossibleDynamicType(lldb::opaque_compiler_type_t type,
                                      CompilerType *target_type, // Can pass NULL
@@ -225,6 +225,9 @@ public:
                                     uint64_t size);
 
   virtual CompilerType GetCanonicalType(lldb::opaque_compiler_type_t type) = 0;
+
+  virtual CompilerType
+  GetEnumerationIntegerType(lldb::opaque_compiler_type_t type) = 0;
 
   // Returns -1 if this isn't a function of if the function doesn't have a
   // prototype Returns a value >= 0 if there is a prototype.
@@ -343,14 +346,18 @@ public:
                                 const char *name, bool omit_empty_base_classes,
                                 std::vector<uint32_t> &child_indexes) = 0;
 
-  virtual size_t GetNumTemplateArguments(lldb::opaque_compiler_type_t type);
+  virtual size_t GetNumTemplateArguments(lldb::opaque_compiler_type_t type,
+                                         bool expand_pack);
 
   virtual lldb::TemplateArgumentKind
-  GetTemplateArgumentKind(lldb::opaque_compiler_type_t type, size_t idx);
-  virtual CompilerType GetTypeTemplateArgument(lldb::opaque_compiler_type_t type,
-                                           size_t idx);
+  GetTemplateArgumentKind(lldb::opaque_compiler_type_t type, size_t idx,
+                          bool expand_pack);
+  virtual CompilerType
+  GetTypeTemplateArgument(lldb::opaque_compiler_type_t type, size_t idx,
+                          bool expand_pack);
   virtual llvm::Optional<CompilerType::IntegralTemplateArgument>
-  GetIntegralTemplateArgument(lldb::opaque_compiler_type_t type, size_t idx);
+  GetIntegralTemplateArgument(lldb::opaque_compiler_type_t type, size_t idx,
+                              bool expand_pack);
 
   // Dumping types
 
@@ -387,6 +394,12 @@ public:
   virtual void DumpTypeDescription(
       lldb::opaque_compiler_type_t type, Stream *s,
       lldb::DescriptionLevel level = lldb::eDescriptionLevelFull) = 0;
+
+  /// Dump a textual representation of the internal TypeSystem state to the
+  /// given stream.
+  ///
+  /// This should not modify the state of the TypeSystem if possible.
+  virtual void Dump(llvm::raw_ostream &output) = 0;
 
   // TODO: These methods appear unused. Should they be removed?
 
@@ -465,10 +478,8 @@ public:
     return nullptr;
   }
 
-  virtual UtilityFunction *GetUtilityFunction(const char *text,
-                                              const char *name) {
-    return nullptr;
-  }
+  virtual std::unique_ptr<UtilityFunction>
+  CreateUtilityFunction(std::string text, std::string name);
 
   virtual PersistentExpressionState *GetPersistentExpressionState() {
     return nullptr;
@@ -522,7 +533,7 @@ protected:
   mutable std::mutex m_mutex; ///< A mutex to keep this object happy in
                               ///multi-threaded environments.
   collection m_map;
-  bool m_clear_in_progress;
+  bool m_clear_in_progress = false;
 
 private:
   typedef llvm::function_ref<lldb::TypeSystemSP()> CreateCallback;

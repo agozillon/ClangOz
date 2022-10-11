@@ -12,33 +12,28 @@ from lldbsuite.test import lldbutil
 
 class ExitDuringStepTestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
-    @skipIfFreeBSD  # llvm.org/pr21411: test is hanging
     @skipIfWindows # This is flakey on Windows: llvm.org/pr38373
     def test(self):
         """Test thread exit during step handling."""
-        self.build(dictionary=self.getBuildFlags())
+        self.build()
         self.exit_during_step_base(
             "thread step-inst -m all-threads",
             'stop reason = instruction step',
             True)
 
-    @skipIfFreeBSD  # llvm.org/pr21411: test is hanging
     @skipIfWindows # This is flakey on Windows: llvm.org/pr38373
     def test_step_over(self):
         """Test thread exit during step-over handling."""
-        self.build(dictionary=self.getBuildFlags())
+        self.build()
         self.exit_during_step_base(
             "thread step-over -m all-threads",
             'stop reason = step over',
             False)
 
-    @skipIfFreeBSD  # llvm.org/pr21411: test is hanging
     @skipIfWindows # This is flakey on Windows: llvm.org/pr38373
     def test_step_in(self):
         """Test thread exit during step-in handling."""
-        self.build(dictionary=self.getBuildFlags())
+        self.build()
         self.exit_during_step_base(
             "thread step-in -m all-threads",
             'stop reason = step in',
@@ -147,4 +142,4 @@ class ExitDuringStepTestCase(TestBase):
         self.runCmd("continue")
 
         # At this point, the inferior process should have exited.
-        self.assertEqual(process.GetState(), lldb.eStateExited, PROCESS_EXITED)
+        self.assertState(process.GetState(), lldb.eStateExited, PROCESS_EXITED)

@@ -149,7 +149,7 @@ _Accum dec_with_hex_exp2 = 0.1P10k;    // expected-error{{invalid suffix 'P10k' 
 _Accum hex_with_dex_exp1 = 0x0.1e10k;  // expected-error{{hexadecimal floating constant requires an exponent}}
 _Accum hex_with_dex_exp2 = 0x0.1E10k;  // expected-error{{hexadecimal floating constant requires an exponent}}
 
-void CheckSuffixOnIntegerLiterals() {
+void CheckSuffixOnIntegerLiterals(void) {
   _Accum short_acc_int;
   _Accum acc_int;
   _Accum long_acc_int;
@@ -228,9 +228,9 @@ void CheckSuffixOnIntegerLiterals() {
 
   // Using auto
   auto auto_fract = 0r;  // expected-error{{invalid suffix 'r' on integer constant}}
-                         // expected-warning@-1{{type specifier missing, defaults to 'int'}}
+                         // expected-error@-1{{type specifier missing, defaults to 'int'}}
   auto auto_accum = 0k;  // expected-error{{invalid suffix 'k' on integer constant}}
-                         // expected-warning@-1{{type specifier missing, defaults to 'int'}}
+                         // expected-error@-1{{type specifier missing, defaults to 'int'}}
 }
 
 // Ok conversions
@@ -286,8 +286,3 @@ short _Accum shl_sat = (_Sat short _Accum)200.0hk << 5;
 
 // Division by zero
 short _Accum div_zero = 4.5k / 0.0lr;  // expected-error {{initializer element is not a compile-time constant}}
-
-void foo(void) {
-  _Accum x = 0.5k;
-  if (x == 0.5) {} // expected-error{{invalid operands to binary expression ('_Accum' and 'double')}}
-}

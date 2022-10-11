@@ -1,40 +1,35 @@
 set(LLVM_OPTIONAL_SOURCES
-  AffineAnalysis.cpp
-  AffineStructures.cpp
+  AliasAnalysis.cpp
   CallGraph.cpp
+  DataLayoutAnalysis.cpp
   Liveness.cpp
-  LoopAnalysis.cpp
-  NestedMatcher.cpp
   SliceAnalysis.cpp
-  Utils.cpp
+
+  AliasAnalysis/LocalAliasAnalysis.cpp
+
+  DataFlow/ConstantPropagationAnalysis.cpp
+  DataFlow/DeadCodeAnalysis.cpp
+  DataFlow/DenseAnalysis.cpp
+  DataFlow/IntegerRangeAnalysis.cpp
+  DataFlow/SparseAnalysis.cpp
   )
 
 add_mlir_library(MLIRAnalysis
+  AliasAnalysis.cpp
   CallGraph.cpp
+  DataFlowAnalysis.cpp
+  DataFlowFramework.cpp
+  DataLayoutAnalysis.cpp
   Liveness.cpp
   SliceAnalysis.cpp
 
-  ADDITIONAL_HEADER_DIRS
-  ${MLIR_MAIN_INCLUDE_DIR}/mlir/Analysis
+  AliasAnalysis/LocalAliasAnalysis.cpp
 
-  DEPENDS
-  mlir-headers
-
-  LINK_LIBS PUBLIC
-  MLIRAffineOps
-  MLIRCallInterfaces
-  MLIRControlFlowInterfaces
-  MLIRInferTypeOpInterface
-  MLIRPresburger
-  MLIRSCF
-  )
-
-add_mlir_library(MLIRLoopAnalysis
-  AffineAnalysis.cpp
-  AffineStructures.cpp
-  LoopAnalysis.cpp
-  NestedMatcher.cpp
-  Utils.cpp
+  DataFlow/ConstantPropagationAnalysis.cpp
+  DataFlow/DeadCodeAnalysis.cpp
+  DataFlow/DenseAnalysis.cpp
+  DataFlow/IntegerRangeAnalysis.cpp
+  DataFlow/SparseAnalysis.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Analysis
@@ -43,12 +38,14 @@ add_mlir_library(MLIRLoopAnalysis
   mlir-headers
 
   LINK_LIBS PUBLIC
-  MLIRAffineOps
   MLIRCallInterfaces
   MLIRControlFlowInterfaces
+  MLIRDataLayoutInterfaces
+  MLIRInferIntRangeInterface
   MLIRInferTypeOpInterface
-  MLIRPresburger
-  MLIRSCF
+  MLIRLoopLikeInterface
+  MLIRSideEffectInterfaces
+  MLIRViewLikeInterface
   )
-  
+
 add_subdirectory(Presburger)

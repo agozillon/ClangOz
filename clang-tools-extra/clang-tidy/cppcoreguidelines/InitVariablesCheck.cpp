@@ -27,8 +27,9 @@ InitVariablesCheck::InitVariablesCheck(StringRef Name,
                                        ClangTidyContext *Context)
     : ClangTidyCheck(Name, Context),
       IncludeInserter(Options.getLocalOrGlobal("IncludeStyle",
-                                               utils::IncludeSorter::IS_LLVM)),
-      MathHeader(Options.get("MathHeader", "math.h")) {}
+                                               utils::IncludeSorter::IS_LLVM),
+                      areDiagsSelfContained()),
+      MathHeader(Options.get("MathHeader", "<math.h>")) {}
 
 void InitVariablesCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
   Options.store(Opts, "IncludeStyle", IncludeInserter.getStyle());
@@ -78,10 +79,14 @@ void InitVariablesCheck::check(const MatchFinder::MatchResult &Result) {
     return;
 
   QualType TypePtr = MatchedDecl->getType();
-  const char *InitializationString = nullptr;
+  llvm::Optional<const char *> InitializationString;
   bool AddMathInclude = false;
 
-  if (TypePtr->isIntegerType())
+  if (TypePtr->isEnumeralType())
+    InitializationString = nullptr;
+  else if (TypePtr->isBooleanType())
+    InitializationString = " = false";
+  else if (TypePtr->isIntegerType())
     InitializationString = " = 0";
   else if (TypePtr->isFloatingType()) {
     InitializationString = " = NAN";
@@ -96,14 +101,15 @@ void InitVariablesCheck::check(const MatchFinder::MatchResult &Result) {
   if (InitializationString) {
     auto Diagnostic =
         diag(MatchedDecl->getLocation(), "variable %0 is not initialized")
-        << MatchedDecl
-        << FixItHint::CreateInsertion(
-               MatchedDecl->getLocation().getLocWithOffset(
-                   MatchedDecl->getName().size()),
-               InitializationString);
+        << MatchedDecl;
+    if (*InitializationString != nullptr)
+      Diagnostic << FixItHint::CreateInsertion(
+          MatchedDecl->getLocation().getLocWithOffset(
+              MatchedDecl->getName().size()),
+          *InitializationString);
     if (AddMathInclude) {
       Diagnostic << IncludeInserter.createIncludeInsertion(
-          Source.getFileID(MatchedDecl->getBeginLoc()), MathHeader, false);
+          Source.getFileID(MatchedDecl->getBeginLoc()), MathHeader);
     }
   }
 }

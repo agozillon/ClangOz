@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -std=c++11 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -std=c++11 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 | FileCheck %s
 
 namespace std {
   typedef decltype(sizeof(int)) size_t;
@@ -112,10 +112,10 @@ namespace test1 {
   short foo(short);
   int foo(int);
 
-  // CHECK-LABEL: define linkonce_odr signext i16 @_ZN5test11aIsEEDTcl3foocvT__EEES1_(
+  // CHECK-LABEL: define linkonce_odr noundef signext i16 @_ZN5test11aIsEEDTcl3foocvT__EEES1_(
   template <class T> auto a(T t) -> decltype(foo(T())) { return foo(t); }
 
-  // CHECK-LABEL: define linkonce_odr signext i16 @_ZN5test11bIsEEDTcp3foocvT__EEES1_(
+  // CHECK-LABEL: define linkonce_odr noundef signext i16 @_ZN5test11bIsEEDTcp3foocvT__EEES1_(
   template <class T> auto b(T t) -> decltype((foo)(T())) { return (foo)(t); }
 
   void test(short s) {
@@ -143,11 +143,11 @@ namespace test2 {
   float baz(float(*)());
   void fred(float(*)(), float);
 
-  // CHECK-LABEL: define void @_ZN5test211instantiateEv
+  // CHECK-LABEL: define{{.*}} void @_ZN5test211instantiateEv
   void instantiate() {
     // CHECK: call void @_ZN5test21aIPFfvEEEvT_DTclfL0p_EE(
     a(foo, 0.0f);
-    // CHECK: call float @_ZN5test21bIPFfvEEEDTclfp_EET_(
+    // CHECK: call noundef float @_ZN5test21bIPFfvEEEDTclfp_EET_(
     (void) b(foo);
     // CHECK: call void @_ZN5test21cIPFfvEEEvT_PFvDTclfL1p_EEE(
     c(foo, bar);
@@ -175,7 +175,7 @@ namespace test3 {
     int *member;
   };
 
-  // CHECK-LABEL: define void @_ZN5test311instantiateEv
+  // CHECK-LABEL: define{{.*}} void @_ZN5test311instantiateEv
   void instantiate() {
     X x;
     int *ip;
@@ -363,7 +363,7 @@ namespace test8 {
     template <class T> auto bar() const -> decltype(foo<T>()) { return 0; }
   };
 
-  // CHECK-LABEL: define weak_odr i32 @_ZNK5test81XIiE3barIiEEDTcl3fooIT_EEEv
+  // CHECK-LABEL: define weak_odr noundef i32 @_ZNK5test81XIiE3barIiEEDTcl3fooIT_EEEv
   template int X<int>::bar<int>() const;
 }
 

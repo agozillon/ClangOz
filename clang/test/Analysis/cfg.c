@@ -1,5 +1,5 @@
 // RUN: %clang_analyze_cc1 -analyzer-checker=debug.DumpCFG -triple x86_64-apple-darwin12 -fheinous-gnu-extensions %s > %t 2>&1
-// RUN: FileCheck --input-file=%t -check-prefixes=CHECK,WARNINGS %s
+// RUN: FileCheck --input-file=%t --check-prefix=CHECK %s
 
 // This file is the C version of cfg.cpp.
 // Tests that are C-specific should go into this file.
@@ -40,7 +40,7 @@ void checkWrap(int i) {
   }
 }
 
-// CHECK-LABEL: void checkGCCAsmRValueOutput()
+// CHECK-LABEL: void checkGCCAsmRValueOutput(void)
 // CHECK: [B2 (ENTRY)]
 // CHECK-NEXT: Succs (1): B1
 // CHECK: [B1]
@@ -50,7 +50,7 @@ void checkWrap(int i) {
 // CHECK-NEXT:   4: asm ("" : "=r" ([B1.3]));
 // CHECK-NEXT:   5: arg
 // CHECK-NEXT:   6: asm ("" : "=r" ([B1.5]));
-void checkGCCAsmRValueOutput() {
+void checkGCCAsmRValueOutput(void) {
   int arg;
   __asm__("" : "=r"((int)arg));  // rvalue output operand
   __asm__("" : "=r"(arg));       // lvalue output operand

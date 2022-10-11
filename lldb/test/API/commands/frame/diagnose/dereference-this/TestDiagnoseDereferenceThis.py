@@ -10,7 +10,6 @@ from lldbsuite.test import lldbutil
 
 
 class TestDiagnoseDereferenceThis(TestBase):
-    mydir = TestBase.compute_mydir(__file__)
 
     @skipUnlessDarwin
     @skipIf(archs=no_match(['x86_64'])) # <rdar://problem/33842388> frame diagnose doesn't work for armv7 or arm64
@@ -25,4 +24,4 @@ class TestDiagnoseDereferenceThis(TestBase):
         self.expect(
             "frame diagnose",
             "Crash diagnosis was accurate",
-            "this->a")
+            substrs=["this->a"])

@@ -15,10 +15,7 @@ from lldbsuite.test import lldbutil
 # test if WindowServer isn't available.
 # Note: Simply applying the @skipIf decorator here confuses the test harness
 # and gives a spurious failure.
-@skipUnlessDarwin
 class Rdar12408181TestCase(TestBase):
-
-    mydir = TestBase.compute_mydir(__file__)
 
     def setUp(self):
         # Call super's setUp().

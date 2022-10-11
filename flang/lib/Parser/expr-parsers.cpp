@@ -44,6 +44,7 @@ TYPE_PARSER(construct<AcSpec>(maybe(typeSpec / "::"),
 TYPE_PARSER(
     // PGI/Intel extension: accept triplets in array constructors
     extension<LanguageFeature::TripletInArrayConstructor>(
+        "nonstandard usage: triplet in array constructor"_port_en_US,
         construct<AcValue>(construct<AcValue::Triplet>(scalarIntExpr,
             ":" >> scalarIntExpr, maybe(":" >> scalarIntExpr)))) ||
     construct<AcValue>(indirect(expr)) ||
@@ -65,21 +66,26 @@ TYPE_PARSER(construct<AcImpliedDoControl>(
 //         literal-constant | designator | array-constructor |
 //         structure-constructor | function-reference | type-param-inquiry |
 //         type-param-name | ( expr )
-// N.B. type-param-inquiry is parsed as a structure component
+// type-param-inquiry is parsed as a structure component, except for
+// substring%KIND/LEN
 constexpr auto primary{instrumented("primary"_en_US,
     first(construct<Expr>(indirect(Parser<CharLiteralConstantSubstring>{})),
         construct<Expr>(literalConstant),
         construct<Expr>(construct<Expr::Parentheses>(parenthesized(expr))),
-        construct<Expr>(indirect(functionReference) / !"("_tok),
-        construct<Expr>(designator / !"("_tok),
+        construct<Expr>(indirect(functionReference) / !"("_tok / !"%"_tok),
+        construct<Expr>(designator / !"("_tok / !"%"_tok),
+        construct<Expr>(indirect(Parser<SubstringInquiry>{})), // %LEN or %KIND
         construct<Expr>(Parser<StructureConstructor>{}),
         construct<Expr>(Parser<ArrayConstructor>{}),
         // PGI/XLF extension: COMPLEX constructor (x,y)
         extension<LanguageFeature::ComplexConstructor>(
+            "nonstandard usage: generalized COMPLEX constructor"_port_en_US,
             construct<Expr>(parenthesized(
                 construct<Expr::ComplexConstructor>(expr, "," >> expr)))),
-        extension<LanguageFeature::PercentLOC>(construct<Expr>("%LOC" >>
-            parenthesized(construct<Expr::PercentLoc>(indirect(variable)))))))};
+        extension<LanguageFeature::PercentLOC>(
+            "nonstandard usage: %LOC"_port_en_US,
+            construct<Expr>("%LOC" >> parenthesized(construct<Expr::PercentLoc>(
+                                          indirect(variable)))))))};
 
 // R1002 level-1-expr -> [defined-unary-op] primary
 // TODO: Reasonable extension: permit multiple defined-unary-ops
@@ -87,8 +93,10 @@ constexpr auto level1Expr{sourced(
     first(primary, // must come before define op to resolve .TRUE._8 ambiguity
         construct<Expr>(construct<Expr::DefinedUnary>(definedOpName, primary)),
         extension<LanguageFeature::SignedPrimary>(
+            "nonstandard usage: signed primary"_port_en_US,
             construct<Expr>(construct<Expr::UnaryPlus>("+" >> primary))),
         extension<LanguageFeature::SignedPrimary>(
+            "nonstandard usage: signed primary"_port_en_US,
             construct<Expr>(construct<Expr::Negate>("-" >> primary)))))};
 
 // R1004 mult-operand -> level-1-expr [power-op mult-operand]
@@ -119,7 +127,7 @@ inline std::optional<Expr> MultOperand::Parse(ParseState &state) {
 // R1005 add-operand -> [add-operand mult-op] mult-operand
 // R1008 mult-op -> * | /
 // The left recursion in the grammar is implemented iteratively.
-constexpr struct AddOperand {
+struct AddOperand {
   using resultType = Expr;
   constexpr AddOperand() {}
   static inline std::optional<Expr> Parse(ParseState &state) {
@@ -142,7 +150,8 @@ constexpr struct AddOperand {
     }
     return result;
   }
-} addOperand;
+};
+constexpr AddOperand addOperand;
 
 // R1006 level-2-expr -> [[level-2-expr] add-op] add-operand
 // R1009 add-op -> + | -
@@ -151,7 +160,7 @@ constexpr struct AddOperand {
 // by means of a missing first operand; e.g., 2*-3 is valid in C but not
 // standard Fortran.  We accept unary + and - to appear before any primary
 // as an extension.
-constexpr struct Level2Expr {
+struct Level2Expr {
   using resultType = Expr;
   constexpr Level2Expr() {}
   static inline std::optional<Expr> Parse(ParseState &state) {
@@ -179,13 +188,14 @@ constexpr struct Level2Expr {
     }
     return result;
   }
-} level2Expr;
+};
+constexpr Level2Expr level2Expr;
 
 // R1010 level-3-expr -> [level-3-expr concat-op] level-2-expr
 // R1011 concat-op -> //
 // Concatenation (//) is left-associative for parsing performance, although
 // one would never notice if it were right-associated.
-constexpr struct Level3Expr {
+struct Level3Expr {
   using resultType = Expr;
   constexpr Level3Expr() {}
   static inline std::optional<Expr> Parse(ParseState &state) {
@@ -203,14 +213,15 @@ constexpr struct Level3Expr {
     }
     return result;
   }
-} level3Expr;
+};
+constexpr Level3Expr level3Expr;
 
 // R1012 level-4-expr -> [level-3-expr rel-op] level-3-expr
 // R1013 rel-op ->
 //         .EQ. | .NE. | .LT. | .LE. | .GT. | .GE. |
 //          == | /= | < | <= | > | >=  @ | <>
 // N.B. relations are not recursive (i.e., LOGICAL is not ordered)
-constexpr struct Level4Expr {
+struct Level4Expr {
   using resultType = Expr;
   constexpr Level4Expr() {}
   static inline std::optional<Expr> Parse(ParseState &state) {
@@ -241,6 +252,7 @@ constexpr struct Level4Expr {
               (".EQ."_tok || "=="_tok) >> applyLambda(eq, level3Expr) ||
               (".NE."_tok || "/="_tok ||
                   extension<LanguageFeature::AlternativeNE>(
+                      "nonstandard usage: <> for /= or .NE."_port_en_US,
                       "<>"_tok /* PGI/Cray extension; Cray also has .LG. */)) >>
                   applyLambda(ne, level3Expr) ||
               (".GE."_tok || ">="_tok) >> applyLambda(ge, level3Expr) ||
@@ -252,22 +264,25 @@ constexpr struct Level4Expr {
     }
     return result;
   }
-} level4Expr;
+};
+constexpr Level4Expr level4Expr;
 
 // R1014 and-operand -> [not-op] level-4-expr
 // R1018 not-op -> .NOT.
 // N.B. Fortran's .NOT. binds less tightly than its comparison operators do.
 // PGI/Intel extension: accept multiple .NOT. operators
-constexpr struct AndOperand {
+struct AndOperand {
   using resultType = Expr;
   constexpr AndOperand() {}
   static inline std::optional<Expr> Parse(ParseState &);
-} andOperand;
+};
+constexpr AndOperand andOperand;
 
 // Match a logical operator or, optionally, its abbreviation.
 inline constexpr auto logicalOp(const char *op, const char *abbrev) {
   return TokenStringMatch{op} ||
       extension<LanguageFeature::LogicalAbbreviations>(
+          "nonstandard usage: abbreviated LOGICAL operator"_port_en_US,
           TokenStringMatch{abbrev});
 }
 
@@ -283,7 +298,7 @@ inline std::optional<Expr> AndOperand::Parse(ParseState &state) {
 // R1015 or-operand -> [or-operand and-op] and-operand
 // R1019 and-op -> .AND.
 // .AND. is left-associative
-constexpr struct OrOperand {
+struct OrOperand {
   using resultType = Expr;
   constexpr OrOperand() {}
   static inline std::optional<Expr> Parse(ParseState &state) {
@@ -303,12 +318,13 @@ constexpr struct OrOperand {
     }
     return result;
   }
-} orOperand;
+};
+constexpr OrOperand orOperand;
 
 // R1016 equiv-operand -> [equiv-operand or-op] or-operand
 // R1020 or-op -> .OR.
 // .OR. is left-associative
-constexpr struct EquivOperand {
+struct EquivOperand {
   using resultType = Expr;
   constexpr EquivOperand() {}
   static inline std::optional<Expr> Parse(ParseState &state) {
@@ -327,13 +343,14 @@ constexpr struct EquivOperand {
     }
     return result;
   }
-} equivOperand;
+};
+constexpr EquivOperand equivOperand;
 
 // R1017 level-5-expr -> [level-5-expr equiv-op] equiv-operand
 // R1021 equiv-op -> .EQV. | .NEQV.
 // Logical equivalence is left-associative.
 // Extension: .XOR. as synonym for .NEQV.
-constexpr struct Level5Expr {
+struct Level5Expr {
   using resultType = Expr;
   constexpr Level5Expr() {}
   static inline std::optional<Expr> Parse(ParseState &state) {
@@ -349,6 +366,7 @@ constexpr struct Level5Expr {
       auto more{attempt(sourced(".EQV." >> applyLambda(eqv, equivOperand) ||
           (".NEQV."_tok ||
               extension<LanguageFeature::XOROperator>(
+                  "nonstandard usage: .XOR./.X. spelling of .NEQV."_port_en_US,
                   logicalOp(".XOR.", ".X."))) >>
               applyLambda(neqv, equivOperand)))};
       while (std::optional<Expr> next{more.Parse(state)}) {
@@ -358,7 +376,8 @@ constexpr struct Level5Expr {
     }
     return result;
   }
-} level5Expr;
+};
+constexpr Level5Expr level5Expr;
 
 // R1022 expr -> [expr defined-binary-op] level-5-expr
 // Defined binary operators associate leftwards.
@@ -371,8 +390,8 @@ template <> std::optional<Expr> Parser<Expr>::Parse(ParseState &state) {
           return Expr{Expr::DefinedBinary(
               std::move(op), std::move(result).value(), std::move(right))};
         }};
-    auto more{
-        attempt(sourced(applyLambda(defBinOp, definedOpName, level5Expr)))};
+    auto more{attempt(
+        sourced(applyLambda<Expr>(defBinOp, definedOpName, level5Expr)))};
     while (std::optional<Expr> next{more.Parse(state)}) {
       result = std::move(next);
       result->source.ExtendToCover(source);
@@ -389,8 +408,10 @@ template <> std::optional<Expr> Parser<Expr>::Parse(ParseState &state) {
 // and intrinsic operator names; this is handled by attempting their parses
 // first, and by name resolution on their definitions, for best errors.
 // N.B. The name of the operator is captured with the dots around it.
-constexpr auto definedOpNameChar{
-    letter || extension<LanguageFeature::PunctuationInNames>("$@"_ch)};
+constexpr auto definedOpNameChar{letter ||
+    extension<LanguageFeature::PunctuationInNames>(
+        "nonstandard usage: non-alphabetic character in defined operator"_port_en_US,
+        "$@"_ch)};
 TYPE_PARSER(
     space >> construct<DefinedOpName>(sourced("."_ch >>
                  some(definedOpNameChar) >> construct<Name>() / "."_ch)))

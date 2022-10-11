@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 %s -I%S -triple=x86_64-apple-darwin10 -emit-llvm -o - | FileCheck %s -check-prefix=CHECK -check-prefix=CHECK-BOTH
-// RUN: %clang_cc1 %s -I%S -triple=x86_64-apple-darwin10 -fvisibility hidden -emit-llvm -o - | FileCheck -check-prefix=CHECK-WITH-HIDDEN -check-prefix=CHECK-BOTH %s
+// RUN: %clang_cc1 %std_cxx98- -no-opaque-pointers %s -I%S -triple=x86_64-apple-darwin10 -emit-llvm -Wno-dynamic-exception-spec -o - | FileCheck %s -check-prefixes=CHECK,CHECK-BOTH
+// RUN: %clang_cc1 %std_cxx98- -no-opaque-pointers %s -I%S -triple=x86_64-apple-darwin10 -emit-llvm -Wno-dynamic-exception-spec -fvisibility=hidden -o - | FileCheck %s --check-prefixes=CHECK-WITH-HIDDEN,CHECK-BOTH
 
 #include <typeinfo>
 
@@ -61,8 +61,8 @@
 // CHECK: _ZTI1TILj2EE = external constant
 // CHECK: _ZTSZ2t5vE1A = internal constant
 // CHECK: _ZTIZ2t5vE1A = internal constant
-// CHECK: _ZTS1B = constant
-// CHECK: _ZTI1B = constant
+// CHECK: _ZTS1B ={{.*}} constant
+// CHECK: _ZTI1B ={{.*}} constant
 // CHECK: _ZTS1F = linkonce_odr constant
 // CHECK: _ZTSZ2t6vE1A = linkonce_odr constant
 // CHECK: _ZTIZ2t6vE1A = linkonce_odr constant

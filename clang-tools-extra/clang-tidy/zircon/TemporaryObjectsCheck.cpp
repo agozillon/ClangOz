@@ -20,10 +20,9 @@ namespace clang {
 namespace tidy {
 namespace zircon {
 
-AST_MATCHER_P(CXXRecordDecl, matchesAnyName, ArrayRef<std::string>, Names) {
+AST_MATCHER_P(CXXRecordDecl, matchesAnyName, ArrayRef<StringRef>, Names) {
   std::string QualifiedName = Node.getQualifiedNameAsString();
-  return llvm::any_of(Names,
-                      [&](StringRef Name) { return QualifiedName == Name; });
+  return llvm::is_contained(Names, QualifiedName);
 }
 
 void TemporaryObjectsCheck::registerMatchers(MatchFinder *Finder) {
@@ -36,7 +35,7 @@ void TemporaryObjectsCheck::registerMatchers(MatchFinder *Finder) {
 
   // Matcher for user-defined constructors.
   Finder->addMatcher(
-      traverse(ast_type_traits::TK_AsIs,
+      traverse(TK_AsIs,
                cxxConstructExpr(hasParent(cxxFunctionalCastExpr()),
                                 hasDeclaration(cxxConstructorDecl(hasParent(
                                     cxxRecordDecl(matchesAnyName(Names))))))

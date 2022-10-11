@@ -1,9 +1,10 @@
-// RUN: %clang_cc1 -triple=x86_64-apple-darwin10 -emit-llvm -fexceptions %s -o - |FileCheck %s
-// RUN: %clang_cc1 -triple=x86_64-apple-darwin10 -emit-llvm %s -o - |FileCheck -check-prefix CHECK-NOEXC %s
-// RUN: %clang_cc1 -triple=x86_64-apple-darwin10 -emit-llvm -mframe-pointer=non-leaf %s -o - \
+// RUN: %clang_cc1 %std_cxx98-14 -no-opaque-pointers -triple=x86_64-apple-darwin10 -emit-llvm -fexceptions %s -o - |FileCheck %s --check-prefixes=CHECK,PRE17
+// RUN: %clang_cc1 %std_cxx98-14 -no-opaque-pointers -triple=x86_64-apple-darwin10 -emit-llvm %s -o - |FileCheck %s --check-prefixes=CHECK-NOEXC,PRE17
+// RUN: %clang_cc1 %std_cxx98-14 -no-opaque-pointers -triple=x86_64-apple-darwin10 -emit-llvm -mframe-pointer=non-leaf %s -o - \
 // RUN:   | FileCheck -check-prefix CHECK-FP %s
-// RUN: %clang_cc1 -triple=x86_64-apple-darwin10 -emit-llvm %s -o - -fno-builtin \
+// RUN: %clang_cc1 %std_cxx98-14 -no-opaque-pointers -triple=x86_64-apple-darwin10 -emit-llvm %s -o - -fno-builtin \
 // RUN:   | FileCheck -check-prefix CHECK-NOBUILTIN %s
+// RUN: %clang_cc1 %std_cxx17- -no-opaque-pointers -triple=x86_64-apple-darwin10 -emit-llvm -fexceptions %s -o - | FileCheck %s
 
 struct A {
   A();
@@ -17,18 +18,18 @@ struct C { void *field; };
 struct D { ~D(); };
 
 // CHECK: @__dso_handle = external hidden global i8
-// CHECK: @c = global %struct.C zeroinitializer, align 8
+// CHECK: @c ={{.*}} global %struct.C zeroinitializer, align 8
 
 // PR6205: The casts should not require global initializers
 // CHECK: @_ZN6PR59741cE = external global %"struct.PR5974::C"
-// CHECK: @_ZN6PR59741aE = global %"struct.PR5974::A"* getelementptr inbounds (%"struct.PR5974::C", %"struct.PR5974::C"* @_ZN6PR59741cE, i32 0, i32 0)
-// CHECK: @_ZN6PR59741bE = global %"struct.PR5974::B"* bitcast (i8* getelementptr (i8, i8* bitcast (%"struct.PR5974::C"* @_ZN6PR59741cE to i8*), i64 4) to %"struct.PR5974::B"*), align 8
+// CHECK: @_ZN6PR59741aE ={{.*}} global %"struct.PR5974::A"* getelementptr inbounds (%"struct.PR5974::C", %"struct.PR5974::C"* @_ZN6PR59741cE, i32 0, i32 0)
+// CHECK: @_ZN6PR59741bE ={{.*}} global %"struct.PR5974::B"* bitcast (i8* getelementptr (i8, i8* bitcast (%"struct.PR5974::C"* @_ZN6PR59741cE to i8*), i64 4) to %"struct.PR5974::B"*), align 8
 
-// CHECK: call void @_ZN1AC1Ev(%struct.A* @a)
+// CHECK: call void @_ZN1AC1Ev(%struct.A* {{[^,]*}} @a)
 // CHECK: call i32 @__cxa_atexit(void (i8*)* bitcast (void (%struct.A*)* @_ZN1AD1Ev to void (i8*)*), i8* getelementptr inbounds (%struct.A, %struct.A* @a, i32 0, i32 0), i8* @__dso_handle)
 A a;
 
-// CHECK: call void @_ZN1BC1Ev(%struct.B* @b)
+// CHECK: call void @_ZN1BC1Ev(%struct.B* {{[^,]*}} @b)
 // CHECK: call i32 @__cxa_atexit(void (i8*)* bitcast (void (%struct.B*)* @_ZN1BD1Ev to void (i8*)*), i8* getelementptr inbounds (%struct.B, %struct.B* @b, i32 0, i32 0), i8* @__dso_handle)
 B b;
 
@@ -46,7 +47,7 @@ namespace test1 {
   const int y = x - 1; // This gets deferred.
   const int z = ~y;    // This also gets deferred, but gets "undeferred" before y.
   int test() { return z; }
-// CHECK-LABEL:      define i32 @_ZN5test14testEv()
+// CHECK-LABEL:      define{{.*}} i32 @_ZN5test14testEv()
 
   // All of these initializers end up delayed, so we check them later.
 }
@@ -78,10 +79,10 @@ namespace test4 {
   extern int foo();
 
   // This needs an initialization function and guard variables.
-  // CHECK: load i8, i8* bitcast (i64* @_ZGVN5test41xE
-  // CHECK: [[CALL:%.*]] = call i32 @_ZN5test43fooEv
+  // CHECK: load i8, i8* bitcast (i64* @_ZGVN5test41xE to i8*)
+  // CHECK: [[CALL:%.*]] = call noundef i32 @_ZN5test43fooEv
   // CHECK-NEXT: store i32 [[CALL]], i32* @_ZN5test41xE
-  // CHECK-NEXT: store i64 1, i64* @_ZGVN5test41xE
+  // CHECK-NEXT: store i8 1, i8* bitcast (i64* @_ZGVN5test41xE to i8*)
   __attribute__((weak)) int x = foo();
 }
 
@@ -169,11 +170,11 @@ namespace test7 {
   const int b3 = B().n;
 
   // CHECK-NOT: @_ZN5test7L2c1E
-  // CHECK: call void @llvm.memset{{.*}} @_ZN5test7L2c1E
+  // PRE17: call void @llvm.memset{{.*}} @_ZN5test7L2c1E
   // CHECK-NOT: @_ZN5test7L2c1E
   // CHECK: @_ZN5test7L2c2E
   // CHECK-NOT: @_ZN5test7L2c3E
-  // CHECK: @_ZN5test7L2c4E
+  // PRE17: @_ZN5test7L2c4E
   const C c1 = C();
   const C c2 = static_cast<const C&>(C());
   const int c3 = C().n;

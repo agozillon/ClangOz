@@ -1,5 +1,4 @@
 add_llvm_component_library(LLVMLTO
-  Caching.cpp
   LTO.cpp
   LTOBackend.cpp
   LTOModule.cpp
@@ -13,4 +12,27 @@ add_llvm_component_library(LLVMLTO
   DEPENDS
   intrinsics_gen
   llvm_vcsrevision_h
+
+  LINK_COMPONENTS
+  AggressiveInstCombine
+  Analysis
+  BinaryFormat
+  BitReader
+  BitWriter
+  CodeGen
+  Core
+  Extensions
+  IPO
+  InstCombine
+  Instrumentation
+  Linker
+  MC
+  ObjCARC
+  Object
+  Passes
+  Remarks
+  Scalar
+  Support
+  Target
+  TransformUtils
 )

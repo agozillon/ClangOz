@@ -1,4 +1,4 @@
-; RUN: %llc_dwarf  %s -filetype=obj -o - | llvm-dwarfdump -v - | FileCheck %s
+; RUN: llc  %s -filetype=obj -o - | llvm-dwarfdump -v - | FileCheck %s
 
 ; C++ source to regenerate:
 
@@ -30,10 +30,10 @@
 ; CHECK: DW_AT_name {{.*}} "foo<char, 3>"
 ; CHECK: DW_AT_type {{.*}} "char"
 ; CHECK-NEXT: DW_AT_name {{.*}} "T"
-; CHECK_NEXT: DW_AT_default_value {{.*}} true
+; CHECK-NEXT: DW_AT_default_value {{.*}} (true)
 ; CHECK: DW_AT_type {{.*}} "int"
 ; CHECK-NEXT: DW_AT_name {{.*}} "i"
-; CHECK_NEXT: DW_AT_default_value {{.*}} true
+; CHECK-NEXT: DW_AT_default_value {{.*}} (true)
 
 ; ModuleID = '/dir/test.cpp'
 source_filename = "test.cpp"

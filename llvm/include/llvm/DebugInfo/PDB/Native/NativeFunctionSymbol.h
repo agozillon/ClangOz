@@ -9,18 +9,21 @@
 #ifndef LLVM_DEBUGINFO_PDB_NATIVE_NATIVEFUNCTIONSYMBOL_H
 #define LLVM_DEBUGINFO_PDB_NATIVE_NATIVEFUNCTIONSYMBOL_H
 
-#include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
+#include "llvm/DebugInfo/PDB/IPDBRawSymbol.h"
 #include "llvm/DebugInfo/PDB/Native/NativeRawSymbol.h"
-#include "llvm/DebugInfo/PDB/Native/NativeSession.h"
+#include "llvm/DebugInfo/PDB/PDBTypes.h"
 
 namespace llvm {
+class raw_ostream;
 namespace pdb {
+
+class NativeSession;
 
 class NativeFunctionSymbol : public NativeRawSymbol {
 public:
   NativeFunctionSymbol(NativeSession &Session, SymIndexId Id,
-                       const codeview::ProcSym &Sym);
+                       const codeview::ProcSym &Sym, uint32_t RecordOffset);
 
   ~NativeFunctionSymbol() override;
 
@@ -33,9 +36,12 @@ public:
   uint64_t getLength() const override;
   uint32_t getRelativeVirtualAddress() const override;
   uint64_t getVirtualAddress() const override;
+  std::unique_ptr<IPDBEnumSymbols>
+  findInlineFramesByVA(uint64_t VA) const override;
 
 protected:
   const codeview::ProcSym Sym;
+  uint32_t RecordOffset = 0;
 };
 
 } // namespace pdb

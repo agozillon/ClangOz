@@ -4,7 +4,7 @@
 
 ; Check indexed and unindexed, sext, zext and anyext loads
 
-define i32 @lb(i8 *%a) nounwind {
+define dso_local i32 @lb(i8 *%a) nounwind {
 ; RV32I-LABEL: lb:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    lb a1, 1(a0)
@@ -19,7 +19,7 @@ define i32 @lb(i8 *%a) nounwind {
   ret i32 %3
 }
 
-define i32 @lh(i16 *%a) nounwind {
+define dso_local i32 @lh(i16 *%a) nounwind {
 ; RV32I-LABEL: lh:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    lh a1, 4(a0)
@@ -34,7 +34,7 @@ define i32 @lh(i16 *%a) nounwind {
   ret i32 %3
 }
 
-define i32 @lw(i32 *%a) nounwind {
+define dso_local i32 @lw(i32 *%a) nounwind {
 ; RV32I-LABEL: lw:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    lw a1, 12(a0)
@@ -47,7 +47,7 @@ define i32 @lw(i32 *%a) nounwind {
   ret i32 %2
 }
 
-define i32 @lbu(i8 *%a) nounwind {
+define dso_local i32 @lbu(i8 *%a) nounwind {
 ; RV32I-LABEL: lbu:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    lbu a1, 4(a0)
@@ -63,7 +63,7 @@ define i32 @lbu(i8 *%a) nounwind {
   ret i32 %6
 }
 
-define i32 @lhu(i16 *%a) nounwind {
+define dso_local i32 @lhu(i16 *%a) nounwind {
 ; RV32I-LABEL: lhu:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    lhu a1, 10(a0)
@@ -81,7 +81,7 @@ define i32 @lhu(i16 *%a) nounwind {
 
 ; Check indexed and unindexed stores
 
-define void @sb(i8 *%a, i8 %b) nounwind {
+define dso_local void @sb(i8 *%a, i8 %b) nounwind {
 ; RV32I-LABEL: sb:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    sb a1, 0(a0)
@@ -93,7 +93,7 @@ define void @sb(i8 *%a, i8 %b) nounwind {
   ret void
 }
 
-define void @sh(i16 *%a, i16 %b) nounwind {
+define dso_local void @sh(i16 *%a, i16 %b) nounwind {
 ; RV32I-LABEL: sh:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    sh a1, 0(a0)
@@ -105,7 +105,7 @@ define void @sh(i16 *%a, i16 %b) nounwind {
   ret void
 }
 
-define void @sw(i32 *%a, i32 %b) nounwind {
+define dso_local void @sw(i32 *%a, i32 %b) nounwind {
 ; RV32I-LABEL: sw:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    sw a1, 0(a0)
@@ -118,7 +118,7 @@ define void @sw(i32 *%a, i32 %b) nounwind {
 }
 
 ; Check load and store to an i1 location
-define i32 @load_sext_zext_anyext_i1(i1 *%a) nounwind {
+define dso_local i32 @load_sext_zext_anyext_i1(i1 *%a) nounwind {
 ; RV32I-LABEL: load_sext_zext_anyext_i1:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    lbu a1, 1(a0)
@@ -140,7 +140,7 @@ define i32 @load_sext_zext_anyext_i1(i1 *%a) nounwind {
   ret i32 %7
 }
 
-define i16 @load_sext_zext_anyext_i1_i16(i1 *%a) nounwind {
+define dso_local i16 @load_sext_zext_anyext_i1_i16(i1 *%a) nounwind {
 ; RV32I-LABEL: load_sext_zext_anyext_i1_i16:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    lbu a1, 1(a0)
@@ -163,17 +163,17 @@ define i16 @load_sext_zext_anyext_i1_i16(i1 *%a) nounwind {
 }
 
 ; Check load and store to a global
-@G = global i32 0
+@G = dso_local global i32 0
 
-define i32 @lw_sw_global(i32 %a) nounwind {
+define dso_local i32 @lw_sw_global(i32 %a) nounwind {
 ; RV32I-LABEL: lw_sw_global:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    lui a2, %hi(G)
 ; RV32I-NEXT:    lw a1, %lo(G)(a2)
+; RV32I-NEXT:    addi a3, a2, %lo(G)
 ; RV32I-NEXT:    sw a0, %lo(G)(a2)
-; RV32I-NEXT:    addi a2, a2, %lo(G)
-; RV32I-NEXT:    lw a3, 36(a2)
-; RV32I-NEXT:    sw a0, 36(a2)
+; RV32I-NEXT:    lw a2, 36(a3)
+; RV32I-NEXT:    sw a0, 36(a3)
 ; RV32I-NEXT:    mv a0, a1
 ; RV32I-NEXT:    ret
   %1 = load volatile i32, i32* @G
@@ -185,7 +185,7 @@ define i32 @lw_sw_global(i32 %a) nounwind {
 }
 
 ; Ensure that 1 is added to the high 20 bits if bit 11 of the low part is 1
-define i32 @lw_sw_constant(i32 %a) nounwind {
+define dso_local i32 @lw_sw_constant(i32 %a) nounwind {
 ; RV32I-LABEL: lw_sw_constant:
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    lui a2, 912092
@@ -198,3 +198,143 @@ define i32 @lw_sw_constant(i32 %a) nounwind {
   store i32 %a, i32* %1
   ret i32 %2
 }
+
+define i32 @lw_near_local(i32* %a)  {
+; RV32I-LABEL: lw_near_local:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    addi a0, a0, 2047
+; RV32I-NEXT:    lw a0, 5(a0)
+; RV32I-NEXT:    ret
+  %1 = getelementptr inbounds i32, i32* %a, i64 513
+  %2 = load volatile i32, i32* %1
+  ret i32 %2
+}
+
+define void @st_near_local(i32* %a, i32 %b)  {
+; RV32I-LABEL: st_near_local:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    addi a0, a0, 2047
+; RV32I-NEXT:    sw a1, 5(a0)
+; RV32I-NEXT:    ret
+  %1 = getelementptr inbounds i32, i32* %a, i64 513
+  store i32 %b, i32* %1
+  ret void
+}
+
+define i32 @lw_sw_near_local(i32* %a, i32 %b)  {
+; RV32I-LABEL: lw_sw_near_local:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    addi a2, a0, 2047
+; RV32I-NEXT:    lw a0, 5(a2)
+; RV32I-NEXT:    sw a1, 5(a2)
+; RV32I-NEXT:    ret
+  %1 = getelementptr inbounds i32, i32* %a, i64 513
+  %2 = load volatile i32, i32* %1
+  store i32 %b, i32* %1
+  ret i32 %2
+}
+
+define i32 @lw_far_local(i32* %a)  {
+; RV32I-LABEL: lw_far_local:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    lui a1, 4
+; RV32I-NEXT:    add a0, a0, a1
+; RV32I-NEXT:    lw a0, -4(a0)
+; RV32I-NEXT:    ret
+  %1 = getelementptr inbounds i32, i32* %a, i64 4095
+  %2 = load volatile i32, i32* %1
+  ret i32 %2
+}
+
+define void @st_far_local(i32* %a, i32 %b)  {
+; RV32I-LABEL: st_far_local:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    lui a2, 4
+; RV32I-NEXT:    add a0, a0, a2
+; RV32I-NEXT:    sw a1, -4(a0)
+; RV32I-NEXT:    ret
+  %1 = getelementptr inbounds i32, i32* %a, i64 4095
+  store i32 %b, i32* %1
+  ret void
+}
+
+define i32 @lw_sw_far_local(i32* %a, i32 %b)  {
+; RV32I-LABEL: lw_sw_far_local:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    lui a2, 4
+; RV32I-NEXT:    add a2, a0, a2
+; RV32I-NEXT:    lw a0, -4(a2)
+; RV32I-NEXT:    sw a1, -4(a2)
+; RV32I-NEXT:    ret
+  %1 = getelementptr inbounds i32, i32* %a, i64 4095
+  %2 = load volatile i32, i32* %1
+  store i32 %b, i32* %1
+  ret i32 %2
+}
+
+define i32 @lw_really_far_local(i32* %a)  {
+; RV32I-LABEL: lw_really_far_local:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    lui a1, 524288
+; RV32I-NEXT:    add a0, a0, a1
+; RV32I-NEXT:    lw a0, -2048(a0)
+; RV32I-NEXT:    ret
+  %1 = getelementptr inbounds i32, i32* %a, i32 536870400
+  %2 = load volatile i32, i32* %1
+  ret i32 %2
+}
+
+define void @st_really_far_local(i32* %a, i32 %b)  {
+; RV32I-LABEL: st_really_far_local:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    lui a2, 524288
+; RV32I-NEXT:    add a0, a0, a2
+; RV32I-NEXT:    sw a1, -2048(a0)
+; RV32I-NEXT:    ret
+  %1 = getelementptr inbounds i32, i32* %a, i32 536870400
+  store i32 %b, i32* %1
+  ret void
+}
+
+define i32 @lw_sw_really_far_local(i32* %a, i32 %b)  {
+; RV32I-LABEL: lw_sw_really_far_local:
+; RV32I:       # %bb.0:
+; RV32I-NEXT:    lui a2, 524288
+; RV32I-NEXT:    add a2, a0, a2
+; RV32I-NEXT:    lw a0, -2048(a2)
+; RV32I-NEXT:    sw a1, -2048(a2)
+; RV32I-NEXT:    ret
+  %1 = getelementptr inbounds i32, i32* %a, i32 536870400
+  %2 = load volatile i32, i32* %1
+  store i32 %b, i32* %1
+  ret i32 %2
+}
+
+%struct.quux = type { i32, [0 x i8] }
+
+; Make sure we don't remove the addi and fold the C from
+; (add (addi FrameIndex, C), X) into the store address.
+; FrameIndex cannot be the operand of an ADD. We must keep the ADDI.
+define void @addi_fold_crash(i32 %arg) nounwind {
+; RV32I-LABEL: addi_fold_crash:
+; RV32I:       # %bb.0: # %bb
+; RV32I-NEXT:    addi sp, sp, -16
+; RV32I-NEXT:    sw ra, 12(sp) # 4-byte Folded Spill
+; RV32I-NEXT:    addi a1, sp, 12
+; RV32I-NEXT:    add a0, a1, a0
+; RV32I-NEXT:    sb zero, 0(a0)
+; RV32I-NEXT:    mv a0, a1
+; RV32I-NEXT:    call snork@plt
+; RV32I-NEXT:    lw ra, 12(sp) # 4-byte Folded Reload
+; RV32I-NEXT:    addi sp, sp, 16
+; RV32I-NEXT:    ret
+bb:
+  %tmp = alloca %struct.quux, align 4
+  %tmp1 = getelementptr inbounds %struct.quux, %struct.quux* %tmp, i32 0, i32 1
+  %tmp2 = getelementptr inbounds %struct.quux, %struct.quux* %tmp, i32 0, i32 1, i32 %arg
+  store i8 0, i8* %tmp2, align 1
+  call void @snork([0 x i8]* %tmp1)
+  ret void
+}
+
+declare void @snork([0 x i8]*)

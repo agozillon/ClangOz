@@ -15,31 +15,55 @@
 #include "llvm-jitlink.h"
 
 #include "llvm/BinaryFormat/Magic.h"
-#include "llvm/ExecutionEngine/JITLink/EHFrameSupport.h"
+#include "llvm/ExecutionEngine/Orc/COFFPlatform.h"
+#include "llvm/ExecutionEngine/Orc/COFFVCRuntimeSupport.h"
+#include "llvm/ExecutionEngine/Orc/DebugObjectManagerPlugin.h"
+#include "llvm/ExecutionEngine/Orc/DebuggerSupportPlugin.h"
+#include "llvm/ExecutionEngine/Orc/ELFNixPlatform.h"
+#include "llvm/ExecutionEngine/Orc/EPCDebugObjectRegistrar.h"
+#include "llvm/ExecutionEngine/Orc/EPCDynamicLibrarySearchGenerator.h"
+#include "llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
+#include "llvm/ExecutionEngine/Orc/IndirectionUtils.h"
+#include "llvm/ExecutionEngine/Orc/MachOPlatform.h"
+#include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
+#include "llvm/ExecutionEngine/Orc/ObjectFileInterface.h"
+#include "llvm/ExecutionEngine/Orc/Shared/OrcRTBridge.h"
+#include "llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderGDB.h"
+#include "llvm/ExecutionEngine/Orc/TargetProcess/RegisterEHFrames.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler/MCDisassembler.h"
 #include "llvm/MC/MCInstPrinter.h"
+#include "llvm/MC/MCInstrAnalysis.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCTargetOptions.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/DynamicLibrary.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
-#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Timer.h"
 
+#include <cstring>
+#include <deque>
 #include <list>
 #include <string>
+
+#ifdef LLVM_ON_UNIX
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif // LLVM_ON_UNIX
 
 #define DEBUG_TYPE "llvm_jitlink"
 
@@ -47,98 +71,232 @@ using namespace llvm;
 using namespace llvm::jitlink;
 using namespace llvm::orc;
 
+static cl::OptionCategory JITLinkCategory("JITLink Options");
+
 static cl::list<std::string> InputFiles(cl::Positional, cl::OneOrMore,
-                                        cl::desc("input files"));
+                                        cl::desc("input files"),
+                                        cl::cat(JITLinkCategory));
+
+static cl::list<std::string>
+    LibrarySearchPaths("L",
+                       cl::desc("Add dir to the list of library search paths"),
+                       cl::Prefix, cl::cat(JITLinkCategory));
+
+static cl::list<std::string>
+    Libraries("l",
+              cl::desc("Link against library X in the library search paths"),
+              cl::Prefix, cl::cat(JITLinkCategory));
+
+static cl::list<std::string>
+    LibrariesHidden("hidden-l",
+                    cl::desc("Link against library X in the library search "
+                             "paths with hidden visibility"),
+                    cl::Prefix, cl::cat(JITLinkCategory));
+
+static cl::list<std::string>
+    LoadHidden("load_hidden",
+               cl::desc("Link against library X with hidden visibility"),
+               cl::cat(JITLinkCategory));
+
+static cl::opt<bool> SearchSystemLibrary(
+    "search-sys-lib",
+    cl::desc("Add system library paths to library search paths"),
+    cl::init(false), cl::cat(JITLinkCategory));
 
 static cl::opt<bool> NoExec("noexec", cl::desc("Do not execute loaded code"),
-                            cl::init(false));
+                            cl::init(false), cl::cat(JITLinkCategory));
 
 static cl::list<std::string>
     CheckFiles("check", cl::desc("File containing verifier checks"),
-               cl::ZeroOrMore);
+               cl::cat(JITLinkCategory));
 
 static cl::opt<std::string>
     CheckName("check-name", cl::desc("Name of checks to match against"),
-              cl::init("jitlink-check"));
+              cl::init("jitlink-check"), cl::cat(JITLinkCategory));
 
 static cl::opt<std::string>
     EntryPointName("entry", cl::desc("Symbol to call as main entry point"),
-                   cl::init(""));
+                   cl::init(""), cl::cat(JITLinkCategory));
 
-static cl::list<std::string> JITLinkDylibs(
-    "jld", cl::desc("Specifies the JITDylib to be used for any subsequent "
-                    "input file arguments"));
+static cl::list<std::string> JITDylibs(
+    "jd",
+    cl::desc("Specifies the JITDylib to be used for any subsequent "
+             "input file, -L<seacrh-path>, and -l<library> arguments"),
+    cl::cat(JITLinkCategory));
 
 static cl::list<std::string>
-    Dylibs("dlopen", cl::desc("Dynamic libraries to load before linking"),
-           cl::ZeroOrMore);
+    Dylibs("preload",
+           cl::desc("Pre-load dynamic libraries (e.g. language runtimes "
+                    "required by the ORC runtime)"),
+           cl::cat(JITLinkCategory));
 
 static cl::list<std::string> InputArgv("args", cl::Positional,
                                        cl::desc("<program arguments>..."),
-                                       cl::ZeroOrMore, cl::PositionalEatsArgs);
+                                       cl::PositionalEatsArgs,
+                                       cl::cat(JITLinkCategory));
+
+static cl::opt<bool>
+    DebuggerSupport("debugger-support",
+                    cl::desc("Enable debugger suppport (default = !-noexec)"),
+                    cl::init(true), cl::Hidden, cl::cat(JITLinkCategory));
 
 static cl::opt<bool>
     NoProcessSymbols("no-process-syms",
                      cl::desc("Do not resolve to llvm-jitlink process symbols"),
-                     cl::init(false));
+                     cl::init(false), cl::cat(JITLinkCategory));
 
 static cl::list<std::string> AbsoluteDefs(
-    "define-abs",
+    "abs",
     cl::desc("Inject absolute symbol definitions (syntax: <name>=<addr>)"),
-    cl::ZeroOrMore);
+    cl::cat(JITLinkCategory));
+
+static cl::list<std::string>
+    Aliases("alias", cl::desc("Inject symbol aliases (syntax: <name>=<addr>)"),
+            cl::cat(JITLinkCategory));
 
 static cl::list<std::string> TestHarnesses("harness", cl::Positional,
                                            cl::desc("Test harness files"),
-                                           cl::ZeroOrMore,
-                                           cl::PositionalEatsArgs);
+                                           cl::PositionalEatsArgs,
+                                           cl::cat(JITLinkCategory));
 
 static cl::opt<bool> ShowInitialExecutionSessionState(
     "show-init-es",
     cl::desc("Print ExecutionSession state before resolving entry point"),
-    cl::init(false));
+    cl::init(false), cl::cat(JITLinkCategory));
+
+static cl::opt<bool> ShowEntryExecutionSessionState(
+    "show-entry-es",
+    cl::desc("Print ExecutionSession state after resolving entry point"),
+    cl::init(false), cl::cat(JITLinkCategory));
 
 static cl::opt<bool> ShowAddrs(
     "show-addrs",
     cl::desc("Print registered symbol, section, got and stub addresses"),
-    cl::init(false));
+    cl::init(false), cl::cat(JITLinkCategory));
 
 static cl::opt<bool> ShowLinkGraph(
     "show-graph",
     cl::desc("Print the link graph after fixups have been applied"),
-    cl::init(false));
+    cl::init(false), cl::cat(JITLinkCategory));
 
 static cl::opt<bool> ShowSizes(
     "show-sizes",
     cl::desc("Show sizes pre- and post-dead stripping, and allocations"),
-    cl::init(false));
+    cl::init(false), cl::cat(JITLinkCategory));
 
 static cl::opt<bool> ShowTimes("show-times",
                                cl::desc("Show times for llvm-jitlink phases"),
-                               cl::init(false));
+                               cl::init(false), cl::cat(JITLinkCategory));
 
 static cl::opt<std::string> SlabAllocateSizeString(
     "slab-allocate",
     cl::desc("Allocate from a slab of the given size "
              "(allowable suffixes: Kb, Mb, Gb. default = "
              "Kb)"),
-    cl::init(""));
+    cl::init(""), cl::cat(JITLinkCategory));
 
 static cl::opt<uint64_t> SlabAddress(
     "slab-address",
     cl::desc("Set slab target address (requires -slab-allocate and -noexec)"),
-    cl::init(~0ULL));
+    cl::init(~0ULL), cl::cat(JITLinkCategory));
+
+static cl::opt<uint64_t> SlabPageSize(
+    "slab-page-size",
+    cl::desc("Set page size for slab (requires -slab-allocate and -noexec)"),
+    cl::init(0), cl::cat(JITLinkCategory));
 
 static cl::opt<bool> ShowRelocatedSectionContents(
     "show-relocated-section-contents",
     cl::desc("show section contents after fixups have been applied"),
-    cl::init(false));
+    cl::init(false), cl::cat(JITLinkCategory));
 
 static cl::opt<bool> PhonyExternals(
     "phony-externals",
     cl::desc("resolve all otherwise unresolved externals to null"),
-    cl::init(false));
+    cl::init(false), cl::cat(JITLinkCategory));
 
-ExitOnError ExitOnErr;
+static cl::opt<std::string> OutOfProcessExecutor(
+    "oop-executor", cl::desc("Launch an out-of-process executor to run code"),
+    cl::ValueOptional, cl::cat(JITLinkCategory));
+
+static cl::opt<std::string> OutOfProcessExecutorConnect(
+    "oop-executor-connect",
+    cl::desc("Connect to an out-of-process executor via TCP"),
+    cl::cat(JITLinkCategory));
+
+static cl::opt<std::string>
+    OrcRuntime("orc-runtime", cl::desc("Use ORC runtime from given path"),
+               cl::init(""), cl::cat(JITLinkCategory));
+
+static cl::opt<bool> AddSelfRelocations(
+    "add-self-relocations",
+    cl::desc("Add relocations to function pointers to the current function"),
+    cl::init(false), cl::cat(JITLinkCategory));
+
+static cl::opt<bool>
+    ShowErrFailedToMaterialize("show-err-failed-to-materialize",
+                               cl::desc("Show FailedToMaterialize errors"),
+                               cl::init(false), cl::cat(JITLinkCategory));
+
+static cl::opt<bool> UseSharedMemory(
+    "use-shared-memory",
+    cl::desc("Use shared memory to transfer generated code and data"),
+    cl::init(false), cl::cat(JITLinkCategory));
+
+static ExitOnError ExitOnErr;
+
+static LLVM_ATTRIBUTE_USED void linkComponents() {
+  errs() << (void *)&llvm_orc_registerEHFrameSectionWrapper
+         << (void *)&llvm_orc_deregisterEHFrameSectionWrapper
+         << (void *)&llvm_orc_registerJITLoaderGDBWrapper
+         << (void *)&llvm_orc_registerJITLoaderGDBAllocAction;
+}
+
+static bool UseTestResultOverride = false;
+static int64_t TestResultOverride = 0;
+
+extern "C" LLVM_ATTRIBUTE_USED void
+llvm_jitlink_setTestResultOverride(int64_t Value) {
+  TestResultOverride = Value;
+  UseTestResultOverride = true;
+}
+
+static Error addSelfRelocations(LinkGraph &G);
+
+namespace {
+
+template <typename ErrT>
+
+class ConditionalPrintErr {
+public:
+  ConditionalPrintErr(bool C) : C(C) {}
+  void operator()(ErrT &EI) {
+    if (C) {
+      errs() << "llvm-jitlink error: ";
+      EI.log(errs());
+      errs() << "\n";
+    }
+  }
+
+private:
+  bool C;
+};
+
+Expected<std::unique_ptr<MemoryBuffer>> getFile(const Twine &FileName) {
+  if (auto F = MemoryBuffer::getFile(FileName))
+    return std::move(*F);
+  else
+    return createFileError(FileName, F.getError());
+}
+
+void reportLLVMJITLinkError(Error Err) {
+  handleAllErrors(
+      std::move(Err),
+      ConditionalPrintErr<orc::FailedToMaterialize>(ShowErrFailedToMaterialize),
+      ConditionalPrintErr<ErrorInfoBase>(true));
+}
+
+} // end anonymous namespace
 
 namespace llvm {
 
@@ -183,7 +341,7 @@ static Error applyHarnessPromotions(Session &S, LinkGraph &G) {
   if (S.HarnessFiles.empty() || S.HarnessFiles.count(G.getName()))
     return Error::success();
 
-  LLVM_DEBUG(dbgs() << "Appling promotions to graph " << G.getName() << "\n");
+  LLVM_DEBUG(dbgs() << "Applying promotions to graph " << G.getName() << "\n");
 
   // If this graph is part of the test then promote any symbols referenced by
   // the harness to default scope, remove all symbols that clash with harness
@@ -236,7 +394,7 @@ static uint64_t computeTotalBlockSizes(LinkGraph &G) {
 }
 
 static void dumpSectionContents(raw_ostream &OS, LinkGraph &G) {
-  constexpr JITTargetAddress DumpWidth = 16;
+  constexpr orc::ExecutorAddrDiff DumpWidth = 16;
   static_assert(isPowerOf2_64(DumpWidth), "DumpWidth must be a power of two");
 
   // Put sections in address order.
@@ -244,22 +402,21 @@ static void dumpSectionContents(raw_ostream &OS, LinkGraph &G) {
   for (auto &S : G.sections())
     Sections.push_back(&S);
 
-  std::sort(Sections.begin(), Sections.end(),
-            [](const Section *LHS, const Section *RHS) {
-              if (llvm::empty(LHS->symbols()) && llvm::empty(RHS->symbols()))
-                return false;
-              if (llvm::empty(LHS->symbols()))
-                return false;
-              if (llvm::empty(RHS->symbols()))
-                return true;
-              SectionRange LHSRange(*LHS);
-              SectionRange RHSRange(*RHS);
-              return LHSRange.getStart() < RHSRange.getStart();
-            });
+  llvm::sort(Sections, [](const Section *LHS, const Section *RHS) {
+    if (LHS->symbols().empty() && RHS->symbols().empty())
+      return false;
+    if (LHS->symbols().empty())
+      return false;
+    if (RHS->symbols().empty())
+      return true;
+    SectionRange LHSRange(*LHS);
+    SectionRange RHSRange(*RHS);
+    return LHSRange.getStart() < RHSRange.getStart();
+  });
 
   for (auto *S : Sections) {
     OS << S->getName() << " content:";
-    if (llvm::empty(S->symbols())) {
+    if (S->symbols().empty()) {
       OS << "\n  section empty\n";
       continue;
     }
@@ -270,14 +427,16 @@ static void dumpSectionContents(raw_ostream &OS, LinkGraph &G) {
       return LHS->getAddress() < RHS->getAddress();
     });
 
-    JITTargetAddress NextAddr = Syms.front()->getAddress() & ~(DumpWidth - 1);
+    orc::ExecutorAddr NextAddr(Syms.front()->getAddress().getValue() &
+                               ~(DumpWidth - 1));
     for (auto *Sym : Syms) {
       bool IsZeroFill = Sym->getBlock().isZeroFill();
-      JITTargetAddress SymStart = Sym->getAddress();
-      JITTargetAddress SymSize = Sym->getSize();
-      JITTargetAddress SymEnd = SymStart + SymSize;
-      const uint8_t *SymData =
-          IsZeroFill ? nullptr : Sym->getSymbolContent().bytes_begin();
+      auto SymStart = Sym->getAddress();
+      auto SymSize = Sym->getSize();
+      auto SymEnd = SymStart + SymSize;
+      const uint8_t *SymData = IsZeroFill ? nullptr
+                                          : reinterpret_cast<const uint8_t *>(
+                                                Sym->getSymbolContent().data());
 
       // Pad any space before the symbol starts.
       while (NextAddr != SymStart) {
@@ -302,7 +461,88 @@ static void dumpSectionContents(raw_ostream &OS, LinkGraph &G) {
   }
 }
 
+// A memory mapper with a fake offset applied only used for -noexec testing
+class InProcessDeltaMapper final : public InProcessMemoryMapper {
+public:
+  InProcessDeltaMapper(size_t PageSize, uint64_t TargetAddr)
+      : InProcessMemoryMapper(PageSize), TargetMapAddr(TargetAddr),
+        DeltaAddr(0) {}
+
+  static Expected<std::unique_ptr<InProcessDeltaMapper>> Create() {
+    auto PageSize = sys::Process::getPageSize();
+    if (!PageSize)
+      return PageSize.takeError();
+    return std::make_unique<InProcessDeltaMapper>(*PageSize, SlabAddress);
+  }
+
+  void reserve(size_t NumBytes, OnReservedFunction OnReserved) override {
+    InProcessMemoryMapper::reserve(
+        NumBytes, [this, OnReserved = std::move(OnReserved)](
+                      Expected<ExecutorAddrRange> Result) mutable {
+          if (!Result)
+            return OnReserved(Result.takeError());
+
+          assert(DeltaAddr == 0 && "Overwriting previous offset");
+          if (TargetMapAddr != ~0ULL)
+            DeltaAddr = TargetMapAddr - Result->Start.getValue();
+          auto OffsetRange = ExecutorAddrRange(Result->Start + DeltaAddr,
+                                               Result->End + DeltaAddr);
+
+          OnReserved(OffsetRange);
+        });
+  }
+
+  char *prepare(ExecutorAddr Addr, size_t ContentSize) override {
+    return InProcessMemoryMapper::prepare(Addr - DeltaAddr, ContentSize);
+  }
+
+  void initialize(AllocInfo &AI, OnInitializedFunction OnInitialized) override {
+    auto FixedAI = AI;
+    FixedAI.MappingBase -= DeltaAddr;
+    InProcessMemoryMapper::initialize(
+        FixedAI, [this, OnInitialized = std::move(OnInitialized)](
+                     Expected<ExecutorAddr> Result) mutable {
+          if (!Result)
+            return OnInitialized(Result.takeError());
+
+          OnInitialized(ExecutorAddr(Result->getValue() + DeltaAddr));
+        });
+  }
+
+  void deinitialize(ArrayRef<ExecutorAddr> Allocations,
+                    OnDeinitializedFunction OnDeInitialized) override {
+    std::vector<ExecutorAddr> Addrs(Allocations.size());
+    for (const auto Base : Allocations) {
+      Addrs.push_back(Base - DeltaAddr);
+    }
+
+    InProcessMemoryMapper::deinitialize(Addrs, std::move(OnDeInitialized));
+  }
+
+  void release(ArrayRef<ExecutorAddr> Reservations,
+               OnReleasedFunction OnRelease) override {
+    std::vector<ExecutorAddr> Addrs(Reservations.size());
+    for (const auto Base : Reservations) {
+      Addrs.push_back(Base - DeltaAddr);
+    }
+    InProcessMemoryMapper::release(Addrs, std::move(OnRelease));
+  }
+
+private:
+  uint64_t TargetMapAddr;
+  uint64_t DeltaAddr;
+};
+
 class JITLinkSlabAllocator final : public JITLinkMemoryManager {
+private:
+  struct FinalizedAllocInfo {
+    FinalizedAllocInfo(sys::MemoryBlock Mem,
+                       std::vector<shared::WrapperFunctionCall> DeallocActions)
+        : Mem(Mem), DeallocActions(std::move(DeallocActions)) {}
+    sys::MemoryBlock Mem;
+    std::vector<shared::WrapperFunctionCall> DeallocActions;
+  };
+
 public:
   static Expected<std::unique_ptr<JITLinkSlabAllocator>>
   Create(uint64_t SlabSize) {
@@ -314,104 +554,188 @@ public:
     return std::move(Allocator);
   }
 
-  Expected<std::unique_ptr<JITLinkMemoryManager::Allocation>>
-  allocate(const SegmentsRequestMap &Request) override {
-
-    using AllocationMap = DenseMap<unsigned, sys::MemoryBlock>;
+  void allocate(const JITLinkDylib *JD, LinkGraph &G,
+                OnAllocatedFunction OnAllocated) override {
 
     // Local class for allocation.
-    class IPMMAlloc : public Allocation {
+    class IPMMAlloc : public InFlightAlloc {
     public:
-      IPMMAlloc(JITLinkSlabAllocator &Parent, AllocationMap SegBlocks)
-          : Parent(Parent), SegBlocks(std::move(SegBlocks)) {}
-      MutableArrayRef<char> getWorkingMemory(ProtectionFlags Seg) override {
-        assert(SegBlocks.count(Seg) && "No allocation for segment");
-        return {static_cast<char *>(SegBlocks[Seg].base()),
-                SegBlocks[Seg].allocatedSize()};
+      IPMMAlloc(JITLinkSlabAllocator &Parent, BasicLayout BL,
+                sys::MemoryBlock StandardSegs, sys::MemoryBlock FinalizeSegs)
+          : Parent(Parent), BL(std::move(BL)),
+            StandardSegs(std::move(StandardSegs)),
+            FinalizeSegs(std::move(FinalizeSegs)) {}
+
+      void finalize(OnFinalizedFunction OnFinalized) override {
+        if (auto Err = applyProtections()) {
+          OnFinalized(std::move(Err));
+          return;
+        }
+
+        auto DeallocActions = runFinalizeActions(BL.graphAllocActions());
+        if (!DeallocActions) {
+          OnFinalized(DeallocActions.takeError());
+          return;
+        }
+
+        if (auto Err = Parent.freeBlock(FinalizeSegs)) {
+          OnFinalized(
+              joinErrors(std::move(Err), runDeallocActions(*DeallocActions)));
+          return;
+        }
+
+        OnFinalized(FinalizedAlloc(ExecutorAddr::fromPtr(
+            new FinalizedAllocInfo(StandardSegs, std::move(*DeallocActions)))));
       }
-      JITTargetAddress getTargetMemory(ProtectionFlags Seg) override {
-        assert(SegBlocks.count(Seg) && "No allocation for segment");
-        return pointerToJITTargetAddress(SegBlocks[Seg].base()) +
-               Parent.TargetDelta;
-      }
-      void finalizeAsync(FinalizeContinuation OnFinalize) override {
-        OnFinalize(applyProtections());
-      }
-      Error deallocate() override {
-        for (auto &KV : SegBlocks)
-          if (auto EC = sys::Memory::releaseMappedMemory(KV.second))
-            return errorCodeToError(EC);
-        return Error::success();
+
+      void abandon(OnAbandonedFunction OnAbandoned) override {
+        OnAbandoned(joinErrors(Parent.freeBlock(StandardSegs),
+                               Parent.freeBlock(FinalizeSegs)));
       }
 
     private:
       Error applyProtections() {
-        for (auto &KV : SegBlocks) {
-          auto &Prot = KV.first;
-          auto &Block = KV.second;
-          if (auto EC = sys::Memory::protectMappedMemory(Block, Prot))
+        for (auto &KV : BL.segments()) {
+          const auto &Group = KV.first;
+          auto &Seg = KV.second;
+
+          auto Prot = toSysMemoryProtectionFlags(Group.getMemProt());
+
+          uint64_t SegSize =
+              alignTo(Seg.ContentSize + Seg.ZeroFillSize, Parent.PageSize);
+          sys::MemoryBlock MB(Seg.WorkingMem, SegSize);
+          if (auto EC = sys::Memory::protectMappedMemory(MB, Prot))
             return errorCodeToError(EC);
           if (Prot & sys::Memory::MF_EXEC)
-            sys::Memory::InvalidateInstructionCache(Block.base(),
-                                                    Block.allocatedSize());
+            sys::Memory::InvalidateInstructionCache(MB.base(),
+                                                    MB.allocatedSize());
         }
         return Error::success();
       }
 
       JITLinkSlabAllocator &Parent;
-      AllocationMap SegBlocks;
+      BasicLayout BL;
+      sys::MemoryBlock StandardSegs;
+      sys::MemoryBlock FinalizeSegs;
     };
 
-    AllocationMap Blocks;
+    BasicLayout BL(G);
+    auto SegsSizes = BL.getContiguousPageBasedLayoutSizes(PageSize);
 
-    for (auto &KV : Request) {
+    if (!SegsSizes) {
+      OnAllocated(SegsSizes.takeError());
+      return;
+    }
+
+    char *AllocBase = nullptr;
+    {
+      std::lock_guard<std::mutex> Lock(SlabMutex);
+
+      if (SegsSizes->total() > SlabRemaining.allocatedSize()) {
+        OnAllocated(make_error<StringError>(
+            "Slab allocator out of memory: request for " +
+                formatv("{0:x}", SegsSizes->total()) +
+                " bytes exceeds remaining capacity of " +
+                formatv("{0:x}", SlabRemaining.allocatedSize()) + " bytes",
+            inconvertibleErrorCode()));
+        return;
+      }
+
+      AllocBase = reinterpret_cast<char *>(SlabRemaining.base());
+      SlabRemaining =
+          sys::MemoryBlock(AllocBase + SegsSizes->total(),
+                           SlabRemaining.allocatedSize() - SegsSizes->total());
+    }
+
+    sys::MemoryBlock StandardSegs(AllocBase, SegsSizes->StandardSegs);
+    sys::MemoryBlock FinalizeSegs(AllocBase + SegsSizes->StandardSegs,
+                                  SegsSizes->FinalizeSegs);
+
+    auto NextStandardSegAddr = ExecutorAddr::fromPtr(StandardSegs.base());
+    auto NextFinalizeSegAddr = ExecutorAddr::fromPtr(FinalizeSegs.base());
+
+    LLVM_DEBUG({
+      dbgs() << "JITLinkSlabAllocator allocated:\n";
+      if (SegsSizes->StandardSegs)
+        dbgs() << formatv("  [ {0:x16} -- {1:x16} ]", NextStandardSegAddr,
+                          NextStandardSegAddr + StandardSegs.allocatedSize())
+               << " to stardard segs\n";
+      else
+        dbgs() << "  no standard segs\n";
+      if (SegsSizes->FinalizeSegs)
+        dbgs() << formatv("  [ {0:x16} -- {1:x16} ]", NextFinalizeSegAddr,
+                          NextFinalizeSegAddr + FinalizeSegs.allocatedSize())
+               << " to finalize segs\n";
+      else
+        dbgs() << "  no finalize segs\n";
+    });
+
+    for (auto &KV : BL.segments()) {
+      auto &Group = KV.first;
       auto &Seg = KV.second;
 
-      if (Seg.getAlignment() > PageSize)
-        return make_error<StringError>("Cannot request higher than page "
-                                       "alignment",
-                                       inconvertibleErrorCode());
+      auto &SegAddr =
+          (Group.getMemDeallocPolicy() == MemDeallocPolicy::Standard)
+              ? NextStandardSegAddr
+              : NextFinalizeSegAddr;
 
-      if (PageSize % Seg.getAlignment() != 0)
-        return make_error<StringError>("Page size is not a multiple of "
-                                       "alignment",
-                                       inconvertibleErrorCode());
+      LLVM_DEBUG({
+        dbgs() << "  " << Group << " -> " << formatv("{0:x16}", SegAddr)
+               << "\n";
+      });
+      Seg.WorkingMem = SegAddr.toPtr<char *>();
+      Seg.Addr = SegAddr + SlabDelta;
 
-      uint64_t ZeroFillStart = Seg.getContentSize();
-      uint64_t SegmentSize = ZeroFillStart + Seg.getZeroFillSize();
-
-      // Round segment size up to page boundary.
-      SegmentSize = (SegmentSize + PageSize - 1) & ~(PageSize - 1);
-
-      // Take segment bytes from the front of the slab.
-      void *SlabBase = SlabRemaining.base();
-      uint64_t SlabRemainingSize = SlabRemaining.allocatedSize();
-
-      if (SegmentSize > SlabRemainingSize)
-        return make_error<StringError>("Slab allocator out of memory",
-                                       inconvertibleErrorCode());
-
-      sys::MemoryBlock SegMem(SlabBase, SegmentSize);
-      SlabRemaining =
-          sys::MemoryBlock(reinterpret_cast<char *>(SlabBase) + SegmentSize,
-                           SlabRemainingSize - SegmentSize);
+      SegAddr += alignTo(Seg.ContentSize + Seg.ZeroFillSize, PageSize);
 
       // Zero out the zero-fill memory.
-      memset(static_cast<char *>(SegMem.base()) + ZeroFillStart, 0,
-             Seg.getZeroFillSize());
-
-      // Record the block for this segment.
-      Blocks[KV.first] = std::move(SegMem);
+      if (Seg.ZeroFillSize != 0)
+        memset(Seg.WorkingMem + Seg.ContentSize, 0, Seg.ZeroFillSize);
     }
-    return std::unique_ptr<InProcessMemoryManager::Allocation>(
-        new IPMMAlloc(*this, std::move(Blocks)));
+
+    if (auto Err = BL.apply()) {
+      OnAllocated(std::move(Err));
+      return;
+    }
+
+    OnAllocated(std::unique_ptr<InProcessMemoryManager::InFlightAlloc>(
+        new IPMMAlloc(*this, std::move(BL), std::move(StandardSegs),
+                      std::move(FinalizeSegs))));
+  }
+
+  void deallocate(std::vector<FinalizedAlloc> FinalizedAllocs,
+                  OnDeallocatedFunction OnDeallocated) override {
+    Error Err = Error::success();
+    for (auto &FA : FinalizedAllocs) {
+      std::unique_ptr<FinalizedAllocInfo> FAI(
+          FA.release().toPtr<FinalizedAllocInfo *>());
+
+      // FIXME: Run dealloc actions.
+
+      Err = joinErrors(std::move(Err), freeBlock(FAI->Mem));
+    }
+    OnDeallocated(std::move(Err));
   }
 
 private:
   JITLinkSlabAllocator(uint64_t SlabSize, Error &Err) {
     ErrorAsOutParameter _(&Err);
 
-    PageSize = sys::Process::getPageSizeEstimate();
+    if (!SlabPageSize) {
+      if (auto PageSizeOrErr = sys::Process::getPageSize())
+        PageSize = *PageSizeOrErr;
+      else {
+        Err = PageSizeOrErr.takeError();
+        return;
+      }
+
+      if (PageSize == 0) {
+        Err = make_error<StringError>("Page size is zero",
+                                      inconvertibleErrorCode());
+        return;
+      }
+    } else
+      PageSize = SlabPageSize;
 
     if (!isPowerOf2_64(PageSize)) {
       Err = make_error<StringError>("Page size is not a power of 2",
@@ -438,13 +762,19 @@ private:
     // Calculate the target address delta to link as-if slab were at
     // SlabAddress.
     if (SlabAddress != ~0ULL)
-      TargetDelta =
-          SlabAddress - pointerToJITTargetAddress(SlabRemaining.base());
+      SlabDelta = ExecutorAddr(SlabAddress) -
+                      ExecutorAddr::fromPtr(SlabRemaining.base());
   }
 
+  Error freeBlock(sys::MemoryBlock MB) {
+    // FIXME: Return memory to slab.
+    return Error::success();
+  }
+
+  std::mutex SlabMutex;
   sys::MemoryBlock SlabRemaining;
   uint64_t PageSize = 0;
-  int64_t TargetDelta = 0;
+  int64_t SlabDelta = 0;
 };
 
 Expected<uint64_t> getSlabAllocSize(StringRef SizeString) {
@@ -452,12 +782,12 @@ Expected<uint64_t> getSlabAllocSize(StringRef SizeString) {
 
   uint64_t Units = 1024;
 
-  if (SizeString.endswith_lower("kb"))
+  if (SizeString.endswith_insensitive("kb"))
     SizeString = SizeString.drop_back(2).rtrim();
-  else if (SizeString.endswith_lower("mb")) {
+  else if (SizeString.endswith_insensitive("mb")) {
     Units = 1024 * 1024;
     SizeString = SizeString.drop_back(2).rtrim();
-  } else if (SizeString.endswith_lower("gb")) {
+  } else if (SizeString.endswith_insensitive("gb")) {
     Units = 1024 * 1024 * 1024;
     SizeString = SizeString.drop_back(2).rtrim();
   }
@@ -470,45 +800,73 @@ Expected<uint64_t> getSlabAllocSize(StringRef SizeString) {
   return SlabSize * Units;
 }
 
-static std::unique_ptr<JITLinkMemoryManager> createMemoryManager() {
+static std::unique_ptr<JITLinkMemoryManager> createInProcessMemoryManager() {
   if (!SlabAllocateSizeString.empty()) {
     auto SlabSize = ExitOnErr(getSlabAllocSize(SlabAllocateSizeString));
-    return ExitOnErr(JITLinkSlabAllocator::Create(SlabSize));
+
+    return ExitOnErr(
+        MapperJITLinkMemoryManager::CreateWithMapper<InProcessDeltaMapper>(
+            SlabSize));
   }
-  return std::make_unique<InProcessMemoryManager>();
+
+#ifdef _WIN32
+  return ExitOnErr(
+      MapperJITLinkMemoryManager::CreateWithMapper<InProcessMemoryMapper>(
+          1024 * 1024));
+#else
+  return ExitOnErr(
+      MapperJITLinkMemoryManager::CreateWithMapper<InProcessMemoryMapper>(
+          1024 * 1024 * 1024));
+#endif
 }
 
-LLVMJITLinkObjectLinkingLayer::LLVMJITLinkObjectLinkingLayer(
-    Session &S, JITLinkMemoryManager &MemMgr)
-    : ObjectLinkingLayer(S.ES, MemMgr), S(S) {}
+Expected<std::unique_ptr<jitlink::JITLinkMemoryManager>>
+createSharedMemoryManager(SimpleRemoteEPC &SREPC) {
+  SharedMemoryMapper::SymbolAddrs SAs;
+  if (auto Err = SREPC.getBootstrapSymbols(
+          {{SAs.Instance, rt::ExecutorSharedMemoryMapperServiceInstanceName},
+           {SAs.Reserve,
+            rt::ExecutorSharedMemoryMapperServiceReserveWrapperName},
+           {SAs.Initialize,
+            rt::ExecutorSharedMemoryMapperServiceInitializeWrapperName},
+           {SAs.Deinitialize,
+            rt::ExecutorSharedMemoryMapperServiceDeinitializeWrapperName},
+           {SAs.Release,
+            rt::ExecutorSharedMemoryMapperServiceReleaseWrapperName}}))
+    return std::move(Err);
 
-Error LLVMJITLinkObjectLinkingLayer::add(JITDylib &JD,
-                                         std::unique_ptr<MemoryBuffer> O,
-                                         VModuleKey K) {
+#ifdef _WIN32
+  size_t SlabSize = 1024 * 1024;
+#else
+  size_t SlabSize = 1024 * 1024 * 1024;
+#endif
 
-  if (S.HarnessFiles.empty() || S.HarnessFiles.count(O->getBufferIdentifier()))
-    return ObjectLinkingLayer::add(JD, std::move(O), std::move(K));
+  if (!SlabAllocateSizeString.empty())
+    SlabSize = ExitOnErr(getSlabAllocSize(SlabAllocateSizeString));
 
-  // Use getObjectSymbolInfo to compute the init symbol, but ignore
-  // the symbols field. We'll handle that manually to include promotion.
-  auto ObjSymInfo =
-      getObjectSymbolInfo(getExecutionSession(), O->getMemBufferRef());
+  return MapperJITLinkMemoryManager::CreateWithMapper<SharedMemoryMapper>(
+      SlabSize, SREPC, SAs);
+}  size_t SlabSize = 1024 * 1024 * 1024;
 
-  if (!ObjSymInfo)
-    return ObjSymInfo.takeError();
 
-  auto &InitSymbol = ObjSymInfo->second;
+static Expected<MaterializationUnit::Interface>
+getTestObjectFileInterface(Session &S, MemoryBufferRef O) {
+
+  // Get the standard interface for this object, but ignore the symbols field.
+  // We'll handle that manually to include promotion.
+  auto I = getObjectFileInterface(S.ES, O);
+  if (!I)
+    return I.takeError();
+  I->SymbolFlags.clear();
 
   // If creating an object file was going to fail it would have happened above,
   // so we can 'cantFail' this.
-  auto Obj =
-      cantFail(object::ObjectFile::createObjectFile(O->getMemBufferRef()));
-
-  SymbolFlagsMap SymbolFlags;
+  auto Obj = cantFail(object::ObjectFile::createObjectFile(O));
 
   // The init symbol must be included in the SymbolFlags map if present.
-  if (InitSymbol)
-    SymbolFlags[InitSymbol] = JITSymbolFlags::MaterializationSideEffectsOnly;
+  if (I->InitSymbol)
+    I->SymbolFlags[I->InitSymbol] =
+        JITSymbolFlags::MaterializationSideEffectsOnly;
 
   for (auto &Sym : Obj->symbols()) {
     Expected<uint32_t> SymFlagsOrErr = Sym.getFlags();
@@ -541,7 +899,7 @@ Error LLVMJITLinkObjectLinkingLayer::add(JITDylib &JD,
       // that we've seen) or discard it.
       if (S.HarnessDefinitions.count(*Name) || S.CanonicalWeakDefs.count(*Name))
         continue;
-      S.CanonicalWeakDefs[*Name] = O->getBufferIdentifier();
+      S.CanonicalWeakDefs[*Name] = O.getBufferIdentifier();
       *SymFlags &= ~JITSymbolFlags::Weak;
       if (!S.HarnessExternals.count(*Name))
         *SymFlags &= ~JITSymbolFlags::Exported;
@@ -552,18 +910,204 @@ Error LLVMJITLinkObjectLinkingLayer::add(JITDylib &JD,
       continue;
 
     auto InternedName = S.ES.intern(*Name);
-    SymbolFlags[InternedName] = std::move(*SymFlags);
+    I->SymbolFlags[InternedName] = std::move(*SymFlags);
   }
 
-  auto MU = std::make_unique<BasicObjectLayerMaterializationUnit>(
-      *this, K, std::move(O), std::move(SymbolFlags), std::move(InitSymbol));
-
-  return JD.define(std::move(MU));
+  return I;
 }
 
-class PhonyExternalsGenerator : public JITDylib::DefinitionGenerator {
+static Error loadProcessSymbols(Session &S) {
+  auto FilterMainEntryPoint =
+      [EPName = S.ES.intern(EntryPointName)](SymbolStringPtr Name) {
+        return Name != EPName;
+      };
+  S.MainJD->addGenerator(
+      ExitOnErr(orc::EPCDynamicLibrarySearchGenerator::GetForTargetProcess(
+          S.ES, std::move(FilterMainEntryPoint))));
+
+  return Error::success();
+}
+
+static Error loadDylibs(Session &S) {
+  LLVM_DEBUG(dbgs() << "Loading dylibs...\n");
+  for (const auto &Dylib : Dylibs) {
+    LLVM_DEBUG(dbgs() << "  " << Dylib << "\n");
+    if (auto Err = S.loadAndLinkDynamicLibrary(*S.MainJD, Dylib))
+      return Err;
+  }
+
+  return Error::success();
+}
+
+static Expected<std::unique_ptr<ExecutorProcessControl>> launchExecutor() {
+#ifndef LLVM_ON_UNIX
+  // FIXME: Add support for Windows.
+  return make_error<StringError>("-" + OutOfProcessExecutor.ArgStr +
+                                     " not supported on non-unix platforms",
+                                 inconvertibleErrorCode());
+#elif !LLVM_ENABLE_THREADS
+  // Out of process mode using SimpleRemoteEPC depends on threads.
+  return make_error<StringError>(
+      "-" + OutOfProcessExecutor.ArgStr +
+          " requires threads, but LLVM was built with "
+          "LLVM_ENABLE_THREADS=Off",
+      inconvertibleErrorCode());
+#else
+
+  constexpr int ReadEnd = 0;
+  constexpr int WriteEnd = 1;
+
+  // Pipe FDs.
+  int ToExecutor[2];
+  int FromExecutor[2];
+
+  pid_t ChildPID;
+
+  // Create pipes to/from the executor..
+  if (pipe(ToExecutor) != 0 || pipe(FromExecutor) != 0)
+    return make_error<StringError>("Unable to create pipe for executor",
+                                   inconvertibleErrorCode());
+
+  ChildPID = fork();
+
+  if (ChildPID == 0) {
+    // In the child...
+
+    // Close the parent ends of the pipes
+    close(ToExecutor[WriteEnd]);
+    close(FromExecutor[ReadEnd]);
+
+    // Execute the child process.
+    std::unique_ptr<char[]> ExecutorPath, FDSpecifier;
+    {
+      ExecutorPath = std::make_unique<char[]>(OutOfProcessExecutor.size() + 1);
+      strcpy(ExecutorPath.get(), OutOfProcessExecutor.data());
+
+      std::string FDSpecifierStr("filedescs=");
+      FDSpecifierStr += utostr(ToExecutor[ReadEnd]);
+      FDSpecifierStr += ',';
+      FDSpecifierStr += utostr(FromExecutor[WriteEnd]);
+      FDSpecifier = std::make_unique<char[]>(FDSpecifierStr.size() + 1);
+      strcpy(FDSpecifier.get(), FDSpecifierStr.c_str());
+    }
+
+    char *const Args[] = {ExecutorPath.get(), FDSpecifier.get(), nullptr};
+    int RC = execvp(ExecutorPath.get(), Args);
+    if (RC != 0) {
+      errs() << "unable to launch out-of-process executor \""
+             << ExecutorPath.get() << "\"\n";
+      exit(1);
+    }
+  }
+  // else we're the parent...
+
+  // Close the child ends of the pipes
+  close(ToExecutor[ReadEnd]);
+  close(FromExecutor[WriteEnd]);
+
+  auto S = SimpleRemoteEPC::Setup();
+  if (UseSharedMemory)
+    S.CreateMemoryManager = createSharedMemoryManager;
+
+  return SimpleRemoteEPC::Create<FDSimpleRemoteEPCTransport>(
+      std::make_unique<DynamicThreadPoolTaskDispatcher>(), std::move(S),
+      FromExecutor[ReadEnd], ToExecutor[WriteEnd]);
+#endif
+}
+
+#if LLVM_ON_UNIX && LLVM_ENABLE_THREADS
+static Error createTCPSocketError(Twine Details) {
+  return make_error<StringError>(
+      formatv("Failed to connect TCP socket '{0}': {1}",
+              OutOfProcessExecutorConnect, Details),
+      inconvertibleErrorCode());
+}
+
+static Expected<int> connectTCPSocket(std::string Host, std::string PortStr) {
+  addrinfo *AI;
+  addrinfo Hints{};
+  Hints.ai_family = AF_INET;
+  Hints.ai_socktype = SOCK_STREAM;
+  Hints.ai_flags = AI_NUMERICSERV;
+
+  if (int EC = getaddrinfo(Host.c_str(), PortStr.c_str(), &Hints, &AI))
+    return createTCPSocketError("Address resolution failed (" +
+                                StringRef(gai_strerror(EC)) + ")");
+
+  // Cycle through the returned addrinfo structures and connect to the first
+  // reachable endpoint.
+  int SockFD;
+  addrinfo *Server;
+  for (Server = AI; Server != nullptr; Server = Server->ai_next) {
+    // socket might fail, e.g. if the address family is not supported. Skip to
+    // the next addrinfo structure in such a case.
+    if ((SockFD = socket(AI->ai_family, AI->ai_socktype, AI->ai_protocol)) < 0)
+      continue;
+
+    // If connect returns null, we exit the loop with a working socket.
+    if (connect(SockFD, Server->ai_addr, Server->ai_addrlen) == 0)
+      break;
+
+    close(SockFD);
+  }
+  freeaddrinfo(AI);
+
+  // If we reached the end of the loop without connecting to a valid endpoint,
+  // dump the last error that was logged in socket() or connect().
+  if (Server == nullptr)
+    return createTCPSocketError(std::strerror(errno));
+
+  return SockFD;
+}
+#endif
+
+static Expected<std::unique_ptr<ExecutorProcessControl>> connectToExecutor() {
+#ifndef LLVM_ON_UNIX
+  // FIXME: Add TCP support for Windows.
+  return make_error<StringError>("-" + OutOfProcessExecutorConnect.ArgStr +
+                                     " not supported on non-unix platforms",
+                                 inconvertibleErrorCode());
+#elif !LLVM_ENABLE_THREADS
+  // Out of process mode using SimpleRemoteEPC depends on threads.
+  return make_error<StringError>(
+      "-" + OutOfProcessExecutorConnect.ArgStr +
+          " requires threads, but LLVM was built with "
+          "LLVM_ENABLE_THREADS=Off",
+      inconvertibleErrorCode());
+#else
+
+  StringRef Host, PortStr;
+  std::tie(Host, PortStr) = StringRef(OutOfProcessExecutorConnect).split(':');
+  if (Host.empty())
+    return createTCPSocketError("Host name for -" +
+                                OutOfProcessExecutorConnect.ArgStr +
+                                " can not be empty");
+  if (PortStr.empty())
+    return createTCPSocketError("Port number in -" +
+                                OutOfProcessExecutorConnect.ArgStr +
+                                " can not be empty");
+  int Port = 0;
+  if (PortStr.getAsInteger(10, Port))
+    return createTCPSocketError("Port number '" + PortStr +
+                                "' is not a valid integer");
+
+  Expected<int> SockFD = connectTCPSocket(Host.str(), PortStr.str());
+  if (!SockFD)
+    return SockFD.takeError();
+
+  auto S = SimpleRemoteEPC::Setup();
+  if (UseSharedMemory)
+    S.CreateMemoryManager = createSharedMemoryManager;
+
+  return SimpleRemoteEPC::Create<FDSimpleRemoteEPCTransport>(
+      std::make_unique<DynamicThreadPoolTaskDispatcher>(),
+      std::move(S), *SockFD, *SockFD);
+#endif
+}
+
+class PhonyExternalsGenerator : public DefinitionGenerator {
 public:
-  Error tryToGenerate(LookupKind K, JITDylib &JD,
+  Error tryToGenerate(LookupState &LS, LookupKind K, JITDylib &JD,
                       JITDylibLookupFlags JDLookupFlags,
                       const SymbolLookupSet &LookupSet) override {
     SymbolMap PhonySymbols;
@@ -574,40 +1118,73 @@ public:
 };
 
 Expected<std::unique_ptr<Session>> Session::Create(Triple TT) {
+
+  std::unique_ptr<ExecutorProcessControl> EPC;
+  if (OutOfProcessExecutor.getNumOccurrences()) {
+    /// If -oop-executor is passed then launch the executor.
+    if (auto REPC = launchExecutor())
+      EPC = std::move(*REPC);
+    else
+      return REPC.takeError();
+  } else if (OutOfProcessExecutorConnect.getNumOccurrences()) {
+    /// If -oop-executor-connect is passed then connect to the executor.
+    if (auto REPC = connectToExecutor())
+      EPC = std::move(*REPC);
+    else
+      return REPC.takeError();
+  } else {
+    /// Otherwise use SelfExecutorProcessControl to target the current process.
+    auto PageSize = sys::Process::getPageSize();
+    if (!PageSize)
+      return PageSize.takeError();
+    EPC = std::make_unique<SelfExecutorProcessControl>(
+        std::make_shared<SymbolStringPool>(),
+        std::make_unique<InPlaceTaskDispatcher>(), std::move(TT), *PageSize,
+        createInProcessMemoryManager());
+  }
+
   Error Err = Error::success();
-
-  auto PageSize = sys::Process::getPageSize();
-  if (!PageSize)
-    return PageSize.takeError();
-
-  std::unique_ptr<Session> S(new Session(std::move(TT), *PageSize, Err));
+  std::unique_ptr<Session> S(new Session(std::move(EPC), Err));
   if (Err)
     return std::move(Err);
   return std::move(S);
 }
 
-// FIXME: Move to createJITDylib if/when we start using Platform support in
-// llvm-jitlink.
-Session::Session(Triple TT, uint64_t PageSize, Error &Err)
-    : TPC(std::make_unique<SelfTargetProcessControl>(std::move(TT), PageSize,
-                                                     createMemoryManager())),
-      ObjLayer(*this, TPC->getMemMgr()) {
+Session::~Session() {
+  if (auto Err = ES.endSession())
+    ES.reportError(std::move(Err));
+}
+
+Session::Session(std::unique_ptr<ExecutorProcessControl> EPC, Error &Err)
+    : ES(std::move(EPC)),
+      ObjLayer(ES, ES.getExecutorProcessControl().getMemMgr()) {
 
   /// Local ObjectLinkingLayer::Plugin class to forward modifyPassConfig to the
   /// Session.
   class JITLinkSessionPlugin : public ObjectLinkingLayer::Plugin {
   public:
     JITLinkSessionPlugin(Session &S) : S(S) {}
-    void modifyPassConfig(MaterializationResponsibility &MR, const Triple &TT,
+    void modifyPassConfig(MaterializationResponsibility &MR, LinkGraph &G,
                           PassConfiguration &PassConfig) override {
-      S.modifyPassConfig(TT, PassConfig);
+      S.modifyPassConfig(G.getTargetTriple(), PassConfig);
     }
+
+    Error notifyFailed(MaterializationResponsibility &MR) override {
+      return Error::success();
+    }
+    Error notifyRemovingResources(ResourceKey K) override {
+      return Error::success();
+    }
+    void notifyTransferringResources(ResourceKey DstKey,
+                                     ResourceKey SrcKey) override {}
 
   private:
     Session &S;
   };
 
   ErrorAsOutParameter _(&Err);
+
+  ES.setErrorReporter(reportLLVMJITLinkError);
 
   if (auto MainJDOrErr = ES.createJITDylib("main"))
     MainJD = &*MainJDOrErr;
@@ -616,9 +1193,66 @@ Session::Session(Triple TT, uint64_t PageSize, Error &Err)
     return;
   }
 
-  if (!NoExec && !TT.isOSWindows())
-    ObjLayer.addPlugin(std::make_unique<EHFrameRegistrationPlugin>(
-        InProcessEHFrameRegistrar::getInstance()));
+  if (!NoProcessSymbols)
+    ExitOnErr(loadProcessSymbols(*this));
+  else {
+    // This symbol is used in testcases.
+    auto &TestResultJD = ES.createBareJITDylib("<TestResultJD>");
+    ExitOnErr(TestResultJD.define(absoluteSymbols(
+        {{ES.intern("llvm_jitlink_setTestResultOverride"),
+          {pointerToJITTargetAddress(llvm_jitlink_setTestResultOverride),
+           JITSymbolFlags::Exported}}})));
+    MainJD->addToLinkOrder(TestResultJD);
+  }
+
+  ExitOnErr(loadDylibs(*this));
+
+  auto &TT = ES.getExecutorProcessControl().getTargetTriple();
+
+  if (DebuggerSupport && TT.isOSBinFormatMachO())
+    ObjLayer.addPlugin(ExitOnErr(
+        GDBJITDebugInfoRegistrationPlugin::Create(this->ES, *MainJD, TT)));
+
+  // Set up the platform.
+  if (TT.isOSBinFormatMachO() && !OrcRuntime.empty()) {
+    if (auto P =
+            MachOPlatform::Create(ES, ObjLayer, *MainJD, OrcRuntime.c_str()))
+      ES.setPlatform(std::move(*P));
+    else {
+      Err = P.takeError();
+      return;
+    }
+  } else if (TT.isOSBinFormatELF() && !OrcRuntime.empty()) {
+    if (auto P =
+            ELFNixPlatform::Create(ES, ObjLayer, *MainJD, OrcRuntime.c_str()))
+      ES.setPlatform(std::move(*P));
+    else {
+      Err = P.takeError();
+      return;
+    }
+  } else if (TT.isOSBinFormatCOFF() && !OrcRuntime.empty()) {
+    auto LoadDynLibrary = [&, this](JITDylib &JD, StringRef DLLName) -> Error {
+      if (!DLLName.endswith_insensitive(".dll"))
+        return make_error<StringError>("DLLName not ending with .dll",
+                                       inconvertibleErrorCode());
+      return loadAndLinkDynamicLibrary(JD, DLLName);
+    };
+
+    if (auto P = COFFPlatform::Create(ES, ObjLayer, *MainJD, OrcRuntime.c_str(),
+                                      std::move(LoadDynLibrary))) 
+      ES.setPlatform(std::move(*P));
+     else {
+      Err = P.takeError();
+      return;
+    }
+  } else if (TT.isOSBinFormatELF()) {
+    if (!NoExec)
+      ObjLayer.addPlugin(std::make_unique<EHFrameRegistrationPlugin>(
+          ES, ExitOnErr(EPCEHFrameRegistrar::Create(this->ES))));
+    if (DebuggerSupport)
+      ObjLayer.addPlugin(std::make_unique<DebugObjectManagerPlugin>(
+          ES, ExitOnErr(createJITLoaderGDBRegistrar(this->ES))));
+  }
 
   ObjLayer.addPlugin(std::make_unique<JITLinkSessionPlugin>(*this));
 
@@ -626,13 +1260,12 @@ Session::Session(Triple TT, uint64_t PageSize, Error &Err)
   for (auto &HarnessFile : TestHarnesses) {
     HarnessFiles.insert(HarnessFile);
 
-    auto ObjBuffer =
-        ExitOnErr(errorOrToExpected(MemoryBuffer::getFile(HarnessFile)));
+    auto ObjBuffer = ExitOnErr(getFile(HarnessFile));
 
-    auto ObjSymbolInfo =
-        ExitOnErr(getObjectSymbolInfo(ES, ObjBuffer->getMemBufferRef()));
+    auto ObjInterface =
+        ExitOnErr(getObjectFileInterface(ES, ObjBuffer->getMemBufferRef()));
 
-    for (auto &KV : ObjSymbolInfo.first)
+    for (auto &KV : ObjInterface.SymbolFlags)
       HarnessDefinitions.insert(*KV.first);
 
     auto Obj = ExitOnErr(
@@ -664,11 +1297,15 @@ void Session::modifyPassConfig(const Triple &TT,
                                PassConfiguration &PassConfig) {
   if (!CheckFiles.empty())
     PassConfig.PostFixupPasses.push_back([this](LinkGraph &G) {
-      if (TPC->getTargetTriple().getObjectFormat() == Triple::ELF)
+      auto &EPC = ES.getExecutorProcessControl();
+      if (EPC.getTargetTriple().getObjectFormat() == Triple::ELF)
         return registerELFGraphInfo(*this, G);
 
-      if (TPC->getTargetTriple().getObjectFormat() == Triple::MachO)
+      if (EPC.getTargetTriple().getObjectFormat() == Triple::MachO)
         return registerMachOGraphInfo(*this, G);
+
+      if (EPC.getTargetTriple().getObjectFormat() == Triple::COFF)
+        return registerCOFFGraphInfo(*this, G);
 
       return make_error<StringError>("Unsupported object format for GOT/stub "
                                      "registration",
@@ -702,6 +1339,40 @@ void Session::modifyPassConfig(const Triple &TT,
       dumpSectionContents(outs(), G);
       return Error::success();
     });
+
+  if (AddSelfRelocations)
+    PassConfig.PostPrunePasses.push_back(addSelfRelocations);
+}
+
+Expected<JITDylib *> Session::getOrLoadDynamicLibrary(StringRef LibPath) {
+  auto It = DynLibJDs.find(LibPath.str());
+  if (It != DynLibJDs.end()) {
+    return It->second;
+  }
+  auto G = EPCDynamicLibrarySearchGenerator::Load(ES, LibPath.data());
+  if (!G)
+    return G.takeError();
+  auto JD = &ES.createBareJITDylib(LibPath.str());
+
+  JD->addGenerator(std::move(*G));
+  DynLibJDs.emplace(LibPath.str(), JD);
+  LLVM_DEBUG({
+    dbgs() << "Loaded dynamic library " << LibPath.data() << " for " << LibPath
+           << "\n";
+  });
+  return JD;
+}
+
+Error Session::loadAndLinkDynamicLibrary(JITDylib &JD, StringRef LibPath) {
+  auto DL = getOrLoadDynamicLibrary(LibPath);
+  if (!DL)
+    return DL.takeError();
+  JD.addToLinkOrder(**DL);
+  LLVM_DEBUG({
+    dbgs() << "Linking dynamic library " << LibPath << " to " << JD.getName()
+           << "\n";
+  });
+  return Error::success();
 }
 
 Expected<Session::FileInfo &> Session::findFileInfo(StringRef FileName) {
@@ -770,25 +1441,62 @@ Session::findSymbolInfo(StringRef SymbolName, Twine ErrorMsgStem) {
 
 } // end namespace llvm
 
-Triple getFirstFileTriple() {
-  assert(!InputFiles.empty() && "InputFiles can not be empty");
-  auto ObjBuffer =
-      ExitOnErr(errorOrToExpected(MemoryBuffer::getFile(InputFiles.front())));
-  auto Obj = ExitOnErr(
-      object::ObjectFile::createObjectFile(ObjBuffer->getMemBufferRef()));
-  return Obj->makeTriple();
+static Triple getFirstFileTriple() {
+  static Triple FirstTT = []() {
+    assert(!InputFiles.empty() && "InputFiles can not be empty");
+    for (auto InputFile : InputFiles) {
+      auto ObjBuffer = ExitOnErr(getFile(InputFile));
+      file_magic Magic = identify_magic(ObjBuffer->getBuffer());
+      switch (Magic) {
+      case file_magic::coff_object:
+      case file_magic::elf_relocatable:
+      case file_magic::macho_object: {
+        auto Obj = ExitOnErr(
+            object::ObjectFile::createObjectFile(ObjBuffer->getMemBufferRef()));
+        Triple TT = Obj->makeTriple();
+        if (Magic == file_magic::coff_object) {
+          // TODO: Move this to makeTriple() if possible.
+          TT.setObjectFormat(Triple::COFF);
+          TT.setOS(Triple::OSType::Win32);
+        }
+        return TT;
+      }
+      default:
+        break;
+      }
+    }
+    return Triple();
+  }();
+
+  return FirstTT;
 }
 
-Error sanitizeArguments(const Session &S) {
-  if (EntryPointName.empty()) {
-    if (S.TPC->getTargetTriple().getObjectFormat() == Triple::MachO)
-      EntryPointName = "_main";
-    else
-      EntryPointName = "main";
-  }
+static Error sanitizeArguments(const Triple &TT, const char *ArgV0) {
 
+  // -noexec and --args should not be used together.
   if (NoExec && !InputArgv.empty())
-    outs() << "Warning: --args passed to -noexec run will be ignored.\n";
+    errs() << "Warning: --args passed to -noexec run will be ignored.\n";
+
+  // Set the entry point name if not specified.
+  if (EntryPointName.empty())
+    EntryPointName = TT.getObjectFormat() == Triple::MachO ? "_main" : "main";
+
+  // Disable debugger support by default in noexec tests.
+  if (DebuggerSupport.getNumOccurrences() == 0 && NoExec)
+    DebuggerSupport = false;
+
+  // If -slab-allocate is passed, check that we're not trying to use it in
+  // -oop-executor or -oop-executor-connect mode.
+  //
+  // FIXME: Remove once we enable remote slab allocation.
+  if (SlabAllocateSizeString != "") {
+    if (OutOfProcessExecutor.getNumOccurrences() ||
+        OutOfProcessExecutorConnect.getNumOccurrences())
+      return make_error<StringError>(
+          "-slab-allocate cannot be used with -oop-executor or "
+          "-oop-executor-connect",
+          inconvertibleErrorCode());
+  }
 
   // If -slab-address is passed, require -slab-allocate and -noexec
   if (SlabAddress != ~0ULL) {
@@ -796,123 +1504,105 @@ Error sanitizeArguments(const Session &S) {
       return make_error<StringError>(
           "-slab-address requires -slab-allocate and -noexec",
           inconvertibleErrorCode());
+
+    if (SlabPageSize == 0)
+      errs() << "Warning: -slab-address used without -slab-page-size.\n";
   }
 
-  return Error::success();
-}
-
-Error loadProcessSymbols(Session &S) {
-  std::string ErrMsg;
-  if (sys::DynamicLibrary::LoadLibraryPermanently(nullptr, &ErrMsg))
-    return make_error<StringError>(std::move(ErrMsg), inconvertibleErrorCode());
-
-  char GlobalPrefix =
-      S.TPC->getTargetTriple().getObjectFormat() == Triple::MachO ? '_' : '\0';
-  auto InternedEntryPointName = S.ES.intern(EntryPointName);
-  auto FilterMainEntryPoint = [InternedEntryPointName](SymbolStringPtr Name) {
-    return Name != InternedEntryPointName;
-  };
-  S.MainJD->addGenerator(
-      ExitOnErr(orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
-          GlobalPrefix, FilterMainEntryPoint)));
-
-  return Error::success();
-}
-
-Error loadDylibs() {
-  // FIXME: This should all be handled inside DynamicLibrary.
-  for (const auto &Dylib : Dylibs) {
-    if (!sys::fs::is_regular_file(Dylib))
-      return make_error<StringError>("\"" + Dylib + "\" is not a regular file",
+  if (SlabPageSize != 0) {
+    // -slab-page-size requires slab alloc.
+    if (SlabAllocateSizeString == "")
+      return make_error<StringError>("-slab-page-size requires -slab-allocate",
                                      inconvertibleErrorCode());
-    std::string ErrMsg;
-    if (sys::DynamicLibrary::LoadLibraryPermanently(Dylib.c_str(), &ErrMsg))
-      return make_error<StringError>(ErrMsg, inconvertibleErrorCode());
+
+    // Check -slab-page-size / -noexec interactions.
+    if (!NoExec) {
+      if (auto RealPageSize = sys::Process::getPageSize()) {
+        if (SlabPageSize % *RealPageSize)
+          return make_error<StringError>(
+              "-slab-page-size must be a multiple of real page size for exec "
+              "tests (did you mean to use -noexec ?)\n",
+              inconvertibleErrorCode());
+      } else {
+        errs() << "Could not retrieve process page size:\n";
+        logAllUnhandledErrors(RealPageSize.takeError(), errs(), "");
+        errs() << "Executing with slab page size = "
+               << formatv("{0:x}", SlabPageSize) << ".\n"
+               << "Tool may crash if " << formatv("{0:x}", SlabPageSize)
+               << " is not a multiple of the real process page size.\n"
+               << "(did you mean to use -noexec ?)";
+      }
+    }
+  }
+
+  // Only one of -oop-executor and -oop-executor-connect can be used.
+  if (!!OutOfProcessExecutor.getNumOccurrences() &&
+      !!OutOfProcessExecutorConnect.getNumOccurrences())
+    return make_error<StringError>(
+        "Only one of -" + OutOfProcessExecutor.ArgStr + " and -" +
+            OutOfProcessExecutorConnect.ArgStr + " can be specified",
+        inconvertibleErrorCode());
+
+  // If -oop-executor was used but no value was specified then use a sensible
+  // default.
+  if (!!OutOfProcessExecutor.getNumOccurrences() &&
+      OutOfProcessExecutor.empty()) {
+    SmallString<256> OOPExecutorPath(sys::fs::getMainExecutable(
+        ArgV0, reinterpret_cast<void *>(&sanitizeArguments)));
+    sys::path::remove_filename(OOPExecutorPath);
+    sys::path::append(OOPExecutorPath, "llvm-jitlink-executor");
+    OutOfProcessExecutor = OOPExecutorPath.str().str();
   }
 
   return Error::success();
 }
 
-void addPhonyExternalsGenerator(Session &S) {
+static void addPhonyExternalsGenerator(Session &S) {
   S.MainJD->addGenerator(std::make_unique<PhonyExternalsGenerator>());
 }
 
-Error loadObjects(Session &S) {
-
-  std::map<unsigned, JITDylib *> IdxToJLD;
-
+static Error createJITDylibs(Session &S,
+                             std::map<unsigned, JITDylib *> &IdxToJD) {
   // First, set up JITDylibs.
   LLVM_DEBUG(dbgs() << "Creating JITDylibs...\n");
   {
     // Create a "main" JITLinkDylib.
-    IdxToJLD[0] = S.MainJD;
-    S.JDSearchOrder.push_back(S.MainJD);
+    IdxToJD[0] = S.MainJD;
+    S.JDSearchOrder.push_back({S.MainJD, JITDylibLookupFlags::MatchAllSymbols});
     LLVM_DEBUG(dbgs() << "  0: " << S.MainJD->getName() << "\n");
 
-    // Add any extra JITLinkDylibs from the command line.
-    std::string JDNamePrefix("lib");
-    for (auto JLDItr = JITLinkDylibs.begin(), JLDEnd = JITLinkDylibs.end();
-         JLDItr != JLDEnd; ++JLDItr) {
-      auto JD = S.ES.createJITDylib(JDNamePrefix + *JLDItr);
+    // Add any extra JITDylibs from the command line.
+    for (auto JDItr = JITDylibs.begin(), JDEnd = JITDylibs.end();
+         JDItr != JDEnd; ++JDItr) {
+      auto JD = S.ES.createJITDylib(*JDItr);
       if (!JD)
         return JD.takeError();
-      unsigned JDIdx =
-          JITLinkDylibs.getPosition(JLDItr - JITLinkDylibs.begin());
-      IdxToJLD[JDIdx] = &*JD;
-      S.JDSearchOrder.push_back(&*JD);
+      unsigned JDIdx = JITDylibs.getPosition(JDItr - JITDylibs.begin());
+      IdxToJD[JDIdx] = &*JD;
+      S.JDSearchOrder.push_back({&*JD, JITDylibLookupFlags::MatchAllSymbols});
       LLVM_DEBUG(dbgs() << "  " << JDIdx << ": " << JD->getName() << "\n");
     }
-
-    // Set every dylib to link against every other, in command line order.
-    for (auto *JD : S.JDSearchOrder) {
-      auto LookupFlags = JITDylibLookupFlags::MatchExportedSymbolsOnly;
-      JITDylibSearchOrder LinkOrder;
-      for (auto *JD2 : S.JDSearchOrder) {
-        if (JD2 == JD)
-          continue;
-        LinkOrder.push_back(std::make_pair(JD2, LookupFlags));
-      }
-      JD->setLinkOrder(std::move(LinkOrder));
-    }
   }
 
-  LLVM_DEBUG(dbgs() << "Adding test harness objects...\n");
-  for (auto HarnessFile : TestHarnesses) {
-    LLVM_DEBUG(dbgs() << "  " << HarnessFile << "\n");
-    auto ObjBuffer =
-        ExitOnErr(errorOrToExpected(MemoryBuffer::getFile(HarnessFile)));
-    ExitOnErr(S.ObjLayer.add(*S.MainJD, std::move(ObjBuffer)));
-  }
+  LLVM_DEBUG({
+    dbgs() << "Dylib search order is [ ";
+    for (auto &KV : S.JDSearchOrder)
+      dbgs() << KV.first->getName() << " ";
+    dbgs() << "]\n";
+  });
 
-  // Load each object into the corresponding JITDylib..
-  LLVM_DEBUG(dbgs() << "Adding objects...\n");
-  for (auto InputFileItr = InputFiles.begin(), InputFileEnd = InputFiles.end();
-       InputFileItr != InputFileEnd; ++InputFileItr) {
-    unsigned InputFileArgIdx =
-        InputFiles.getPosition(InputFileItr - InputFiles.begin());
-    const std::string &InputFile = *InputFileItr;
-    auto &JD = *std::prev(IdxToJLD.lower_bound(InputFileArgIdx))->second;
-    LLVM_DEBUG(dbgs() << "  " << InputFileArgIdx << ": \"" << InputFile
-                      << "\" to " << JD.getName() << "\n";);
-    auto ObjBuffer =
-        ExitOnErr(errorOrToExpected(MemoryBuffer::getFile(InputFile)));
+  return Error::success();
+}
 
-    auto Magic = identify_magic(ObjBuffer->getBuffer());
-    if (Magic == file_magic::archive ||
-        Magic == file_magic::macho_universal_binary)
-      JD.addGenerator(ExitOnErr(StaticLibraryDefinitionGenerator::Load(
-          S.ObjLayer, InputFile.c_str(), S.TPC->getTargetTriple())));
-    else
-      ExitOnErr(S.ObjLayer.add(JD, std::move(ObjBuffer)));
-  }
-
+static Error addAbsoluteSymbols(Session &S,
+                                const std::map<unsigned, JITDylib *> &IdxToJD) {
   // Define absolute symbols.
   LLVM_DEBUG(dbgs() << "Defining absolute symbols...\n");
   for (auto AbsDefItr = AbsoluteDefs.begin(), AbsDefEnd = AbsoluteDefs.end();
        AbsDefItr != AbsDefEnd; ++AbsDefItr) {
     unsigned AbsDefArgIdx =
       AbsoluteDefs.getPosition(AbsDefItr - AbsoluteDefs.begin());
-    auto &JD = *std::prev(IdxToJLD.lower_bound(AbsDefArgIdx))->second;
+    auto &JD = *std::prev(IdxToJD.lower_bound(AbsDefArgIdx))->second;
 
     StringRef AbsDefStmt = *AbsDefItr;
     size_t EqIdx = AbsDefStmt.find_first_of('=');
@@ -926,30 +1616,419 @@ Error loadObjects(Session &S) {
     uint64_t Addr;
     if (AddrStr.getAsInteger(0, Addr))
       return make_error<StringError>("Invalid address expression \"" + AddrStr +
-                                     "\" in absolute define \"" + AbsDefStmt +
-                                     "\"",
+                                         "\" in absolute symbol definition \"" +
+                                         AbsDefStmt + "\"",
                                      inconvertibleErrorCode());
     JITEvaluatedSymbol AbsDef(Addr, JITSymbolFlags::Exported);
     if (auto Err = JD.define(absoluteSymbols({{S.ES.intern(Name), AbsDef}})))
       return Err;
 
     // Register the absolute symbol with the session symbol infos.
-    S.SymbolInfos[Name] = { StringRef(), Addr };
+    S.SymbolInfos[Name] = {ArrayRef<char>(), Addr};
   }
-
-  LLVM_DEBUG({
-    dbgs() << "Dylib search order is [ ";
-    for (auto *JD : S.JDSearchOrder)
-      dbgs() << JD->getName() << " ";
-    dbgs() << "]\n";
-  });
 
   return Error::success();
 }
 
-Error runChecks(Session &S) {
+static Error addAliases(Session &S,
+                        const std::map<unsigned, JITDylib *> &IdxToJD) {
+  // Define absolute symbols.
+  LLVM_DEBUG(dbgs() << "Defining aliases...\n");
+  for (auto AliasItr = Aliases.begin(), AliasEnd = Aliases.end();
+       AliasItr != AliasEnd; ++AliasItr) {
+    unsigned AliasArgIdx = Aliases.getPosition(AliasItr - Aliases.begin());
+    auto &JD = *std::prev(IdxToJD.lower_bound(AliasArgIdx))->second;
 
-  auto TripleName = S.TPC->getTargetTriple().str();
+    StringRef AliasStmt = *AliasItr;
+    size_t EqIdx = AliasStmt.find_first_of('=');
+    if (EqIdx == StringRef::npos)
+      return make_error<StringError>("Invalid alias definition \"" + AliasStmt +
+                                         "\". Syntax: <name>=<addr>",
+                                     inconvertibleErrorCode());
+    StringRef Alias = AliasStmt.substr(0, EqIdx).trim();
+    StringRef Aliasee = AliasStmt.substr(EqIdx + 1).trim();
+
+    SymbolAliasMap SAM;
+    SAM[S.ES.intern(Alias)] = {S.ES.intern(Aliasee), JITSymbolFlags::Exported};
+    if (auto Err = JD.define(symbolAliases(std::move(SAM))))
+      return Err;
+  }
+
+  return Error::success();
+}
+
+static Error addTestHarnesses(Session &S) {
+  LLVM_DEBUG(dbgs() << "Adding test harness objects...\n");
+  for (auto HarnessFile : TestHarnesses) {
+    LLVM_DEBUG(dbgs() << "  " << HarnessFile << "\n");
+    auto ObjBuffer = getFile(HarnessFile);
+    if (!ObjBuffer)
+      return ObjBuffer.takeError();
+    if (auto Err = S.ObjLayer.add(*S.MainJD, std::move(*ObjBuffer)))
+      return Err;
+  }
+  return Error::success();
+}
+
+static Error addObjects(Session &S,
+                        const std::map<unsigned, JITDylib *> &IdxToJD) {
+
+  // Load each object into the corresponding JITDylib..
+  LLVM_DEBUG(dbgs() << "Adding objects...\n");
+  for (auto InputFileItr = InputFiles.begin(), InputFileEnd = InputFiles.end();
+       InputFileItr != InputFileEnd; ++InputFileItr) {
+    unsigned InputFileArgIdx =
+        InputFiles.getPosition(InputFileItr - InputFiles.begin());
+    const std::string &InputFile = *InputFileItr;
+    if (StringRef(InputFile).endswith(".a") ||
+        StringRef(InputFile).endswith(".lib"))
+      continue;
+    auto &JD = *std::prev(IdxToJD.lower_bound(InputFileArgIdx))->second;
+    LLVM_DEBUG(dbgs() << "  " << InputFileArgIdx << ": \"" << InputFile
+                      << "\" to " << JD.getName() << "\n";);
+    auto ObjBuffer = getFile(InputFile);
+    if (!ObjBuffer)
+      return ObjBuffer.takeError();
+
+    if (S.HarnessFiles.empty()) {
+      if (auto Err = S.ObjLayer.add(JD, std::move(*ObjBuffer)))
+        return Err;
+    } else {
+      // We're in -harness mode. Use a custom interface for this
+      // test object.
+      auto ObjInterface =
+          getTestObjectFileInterface(S, (*ObjBuffer)->getMemBufferRef());
+      if (!ObjInterface)
+        return ObjInterface.takeError();
+      if (auto Err = S.ObjLayer.add(JD, std::move(*ObjBuffer),
+                                    std::move(*ObjInterface)))
+        return Err;
+    }
+  }
+
+  return Error::success();
+}
+
+static Expected<MaterializationUnit::Interface>
+getObjectFileInterfaceHidden(ExecutionSession &ES, MemoryBufferRef ObjBuffer) {
+  auto I = getObjectFileInterface(ES, ObjBuffer);
+  if (I) {
+    for (auto &KV : I->SymbolFlags)
+      KV.second &= ~JITSymbolFlags::Exported;
+  }
+  return I;
+}
+
+static SmallVector<StringRef, 5> getSearchPathsFromEnvVar(Session &S) {
+  // FIXME: Handle EPC environment.
+  SmallVector<StringRef, 5> PathVec;
+  auto TT = S.ES.getExecutorProcessControl().getTargetTriple();
+  if (TT.isOSBinFormatCOFF())
+    StringRef(getenv("PATH")).split(PathVec, ";");
+  else if (TT.isOSBinFormatELF())
+    StringRef(getenv("LD_LIBRARY_PATH")).split(PathVec, ":");
+
+  return PathVec;
+}
+
+static Error addLibraries(Session &S,
+                          const std::map<unsigned, JITDylib *> &IdxToJD) {
+
+  // 1. Collect search paths for each JITDylib.
+  DenseMap<const JITDylib *, SmallVector<StringRef, 2>> JDSearchPaths;
+
+  for (auto LSPItr = LibrarySearchPaths.begin(),
+            LSPEnd = LibrarySearchPaths.end();
+       LSPItr != LSPEnd; ++LSPItr) {
+    unsigned LibrarySearchPathIdx =
+        LibrarySearchPaths.getPosition(LSPItr - LibrarySearchPaths.begin());
+    auto &JD = *std::prev(IdxToJD.lower_bound(LibrarySearchPathIdx))->second;
+
+    StringRef LibrarySearchPath = *LSPItr;
+    if (sys::fs::get_file_type(LibrarySearchPath) !=
+        sys::fs::file_type::directory_file)
+      return make_error<StringError>("While linking " + JD.getName() + ", -L" +
+                                         LibrarySearchPath +
+                                         " does not point to a directory",
+                                     inconvertibleErrorCode());
+
+    JDSearchPaths[&JD].push_back(*LSPItr);
+  }
+
+  LLVM_DEBUG({
+    if (!JDSearchPaths.empty())
+      dbgs() << "Search paths:\n";
+    for (auto &KV : JDSearchPaths) {
+      dbgs() << "  " << KV.first->getName() << ": [";
+      for (auto &LibSearchPath : KV.second)
+        dbgs() << " \"" << LibSearchPath << "\"";
+      dbgs() << " ]\n";
+    }
+  });
+
+  // 2. Collect library loads
+  struct LibraryLoad {
+    std::string LibName;
+    bool IsPath = false;
+    unsigned Position;
+    StringRef *CandidateExtensions;
+    enum { Standard, Hidden } Modifier;
+  };
+
+  // Queue to load library as in the order as it appears in the argument list.
+  std::deque<LibraryLoad> LibraryLoadQueue;
+  // Add archive files from the inputs to LibraryLoads.
+  for (auto InputFileItr = InputFiles.begin(), InputFileEnd = InputFiles.end();
+       InputFileItr != InputFileEnd; ++InputFileItr) {
+    StringRef InputFile = *InputFileItr;
+    if (!InputFile.endswith(".a") && !InputFile.endswith(".lib"))
+      continue;
+    LibraryLoad LL;
+    LL.LibName = InputFile.str();
+    LL.IsPath = true;
+    LL.Position = InputFiles.getPosition(InputFileItr - InputFiles.begin());
+    LL.CandidateExtensions = nullptr;
+    LL.Modifier = LibraryLoad::Standard;
+    LibraryLoadQueue.push_back(std::move(LL));
+  }
+
+  // Add -load_hidden arguments to LibraryLoads.
+  for (auto LibItr = LoadHidden.begin(), LibEnd = LoadHidden.end();
+       LibItr != LibEnd; ++LibItr) {
+    LibraryLoad LL;
+    LL.LibName = *LibItr;
+    LL.IsPath = true;
+    LL.Position = LoadHidden.getPosition(LibItr - LoadHidden.begin());
+    LL.CandidateExtensions = nullptr;
+    LL.Modifier = LibraryLoad::Hidden;
+    LibraryLoadQueue.push_back(std::move(LL));
+  }
+  StringRef StandardExtensions[] = {".so", ".dylib", ".dll", ".a", ".lib"};
+  StringRef DynLibExtensionsOnly[] = {".so", ".dylib", ".dll"};
+  StringRef ArchiveExtensionsOnly[] = {".a", ".lib"};
+
+  // Add -lx arguments to LibraryLoads.
+  for (auto LibItr = Libraries.begin(), LibEnd = Libraries.end();
+       LibItr != LibEnd; ++LibItr) {
+    LibraryLoad LL;
+    LL.LibName = *LibItr;
+    LL.Position = Libraries.getPosition(LibItr - Libraries.begin());
+    LL.CandidateExtensions = StandardExtensions;
+    LL.Modifier = LibraryLoad::Standard;
+    LibraryLoadQueue.push_back(std::move(LL));
+  }
+
+  // Add -hidden-lx arguments to LibraryLoads.
+  for (auto LibHiddenItr = LibrariesHidden.begin(),
+            LibHiddenEnd = LibrariesHidden.end();
+       LibHiddenItr != LibHiddenEnd; ++LibHiddenItr) {
+    LibraryLoad LL;
+    LL.LibName = *LibHiddenItr;
+    LL.Position =
+        LibrariesHidden.getPosition(LibHiddenItr - LibrariesHidden.begin());
+    LL.CandidateExtensions = ArchiveExtensionsOnly;
+    LL.Modifier = LibraryLoad::Hidden;
+    LibraryLoadQueue.push_back(std::move(LL));
+  }
+
+  // If there are any load-<modified> options then turn on flag overrides
+  // to avoid flag mismatch errors.
+  if (!LibrariesHidden.empty() || !LoadHidden.empty())
+    S.ObjLayer.setOverrideObjectFlagsWithResponsibilityFlags(true);
+
+  // Sort library loads by position in the argument list.
+  llvm::sort(LibraryLoadQueue,
+             [](const LibraryLoad &LHS, const LibraryLoad &RHS) {
+               return LHS.Position < RHS.Position;
+             });
+
+  // 3. Process library loads.
+  auto AddArchive = [&](const char *Path, const LibraryLoad &LL)
+      -> Expected<std::unique_ptr<StaticLibraryDefinitionGenerator>> {
+    unique_function<Expected<MaterializationUnit::Interface>(
+        ExecutionSession & ES, MemoryBufferRef ObjBuffer)>
+        GetObjFileInterface;
+    switch (LL.Modifier) {
+    case LibraryLoad::Standard:
+      GetObjFileInterface = getObjectFileInterface;
+      break;
+    case LibraryLoad::Hidden:
+      GetObjFileInterface = getObjectFileInterfaceHidden;
+      break;
+    }
+    auto G = StaticLibraryDefinitionGenerator::Load(
+        S.ObjLayer, Path, S.ES.getExecutorProcessControl().getTargetTriple(),
+        std::move(GetObjFileInterface));
+    if (!G)
+      return G.takeError();
+
+    // Push additional dynamic libraries to search.
+    // Note that this mechanism only happens in COFF.
+    for (auto FileName : (*G)->getImportedDynamicLibraries()) {
+      LibraryLoad NewLL;
+      auto FileNameRef = StringRef(FileName);
+      if (!FileNameRef.endswith_insensitive(".dll"))
+        return make_error<StringError>(
+            "COFF Imported library not ending with dll extension?",
+            inconvertibleErrorCode());
+      NewLL.LibName = FileNameRef.drop_back(strlen(".dll")).str();
+      NewLL.Position = LL.Position;
+      NewLL.CandidateExtensions = DynLibExtensionsOnly;
+      NewLL.Modifier = LibraryLoad::Standard;
+      LibraryLoadQueue.push_front(std::move(NewLL));
+    }
+    return G;
+  };
+
+  SmallVector<StringRef, 5> SystemSearchPaths;
+  if (SearchSystemLibrary.getValue())
+    SystemSearchPaths = getSearchPathsFromEnvVar(S);
+  while (!LibraryLoadQueue.empty()) {
+    bool LibFound = false;
+    auto LL = LibraryLoadQueue.front();
+    LibraryLoadQueue.pop_front();
+    auto &JD = *std::prev(IdxToJD.lower_bound(LL.Position))->second;
+
+    // If this is the name of a JITDylib then link against that.
+    if (auto *LJD = S.ES.getJITDylibByName(LL.LibName)) {
+      JD.addToLinkOrder(*LJD);
+      continue;
+    }
+
+    if (LL.IsPath) {
+      auto G = AddArchive(LL.LibName.c_str(), LL);
+      if (!G)
+        return createFileError(LL.LibName, G.takeError());
+      JD.addGenerator(std::move(*G));
+      LLVM_DEBUG({
+        dbgs() << "Adding generator for static library " << LL.LibName << " to "
+               << JD.getName() << "\n";
+      });
+      continue;
+    }
+
+    // Otherwise look through the search paths.
+    auto CurJDSearchPaths = JDSearchPaths[&JD];
+    for (StringRef SearchPath :
+         concat<StringRef>(CurJDSearchPaths, SystemSearchPaths)) {
+      for (const char *LibExt : {".dylib", ".so", ".dll", ".a", ".lib"}) {
+        SmallVector<char, 256> LibPath;
+        LibPath.reserve(SearchPath.size() + strlen("lib") + LL.LibName.size() +
+                        strlen(LibExt) + 2); // +2 for pathsep, null term.
+        llvm::copy(SearchPath, std::back_inserter(LibPath));
+        if (StringRef(LibExt) != ".lib" && StringRef(LibExt) != ".dll")
+          sys::path::append(LibPath, "lib" + LL.LibName + LibExt);
+        else
+          sys::path::append(LibPath, LL.LibName + LibExt);
+        LibPath.push_back('\0');
+
+        // Skip missing or non-regular paths.
+        if (sys::fs::get_file_type(LibPath.data()) !=
+            sys::fs::file_type::regular_file) {
+          continue;
+        }
+
+        file_magic Magic;
+        if (auto EC = identify_magic(LibPath, Magic)) {
+          // If there was an error loading the file then skip it.
+          LLVM_DEBUG({
+            dbgs() << "Library search found \"" << LibPath
+                   << "\", but could not identify file type (" << EC.message()
+                   << "). Skipping.\n";
+          });
+          continue;
+        }
+
+        // We identified the magic. Assume that we can load it -- we'll reset
+        // in the default case.
+        LibFound = true;
+        switch (Magic) {
+        case file_magic::pecoff_executable:
+        case file_magic::elf_shared_object:
+        case file_magic::macho_dynamically_linked_shared_lib: {
+          if (auto Err = S.loadAndLinkDynamicLibrary(JD, LibPath.data()))
+            return Err;
+          break;
+        }
+        case file_magic::archive:
+        case file_magic::macho_universal_binary: {
+          auto G = AddArchive(LibPath.data(), LL);
+          if (!G)
+            return G.takeError();
+          JD.addGenerator(std::move(*G));
+          LLVM_DEBUG({
+            dbgs() << "Adding generator for static library " << LibPath.data()
+                   << " to " << JD.getName() << "\n";
+          });
+          break;
+        }
+        default:
+          // This file isn't a recognized library kind.
+          LLVM_DEBUG({
+            dbgs() << "Library search found \"" << LibPath
+                   << "\", but file type is not supported. Skipping.\n";
+          });
+          LibFound = false;
+          break;
+        }
+        if (LibFound)
+          break;
+      }
+      if (LibFound)
+        break;
+    }
+
+    if (!LibFound)
+      return make_error<StringError>("While linking " + JD.getName() +
+                                         ", could not find library for -l" +
+                                         LL.LibName,
+                                     inconvertibleErrorCode());
+  }
+
+  return Error::success();
+}
+
+static Error addSessionInputs(Session &S) {
+  std::map<unsigned, JITDylib *> IdxToJD;
+
+  if (auto Err = createJITDylibs(S, IdxToJD))
+    return Err;
+
+  if (auto Err = addAbsoluteSymbols(S, IdxToJD))
+    return Err;
+
+  if (auto Err = addAliases(S, IdxToJD))
+    return Err;
+
+  if (!TestHarnesses.empty())
+    if (auto Err = addTestHarnesses(S))
+      return Err;
+
+  if (auto Err = addObjects(S, IdxToJD))
+    return Err;
+
+  if (auto Err = addLibraries(S, IdxToJD))
+    return Err;
+
+  return Error::success();
+}
+
+namespace {
+struct TargetInfo {
+  const Target *TheTarget;
+  std::unique_ptr<MCSubtargetInfo> STI;
+  std::unique_ptr<MCRegisterInfo> MRI;
+  std::unique_ptr<MCAsmInfo> MAI;
+  std::unique_ptr<MCContext> Ctx;
+  std::unique_ptr<MCDisassembler> Disassembler;
+  std::unique_ptr<MCInstrInfo> MII;
+  std::unique_ptr<MCInstrAnalysis> MIA;
+  std::unique_ptr<MCInstPrinter> InstPrinter;
+};
+} // anonymous namespace
+
+static TargetInfo getTargetInfo(const Triple &TT) {
+  auto TripleName = TT.str();
   std::string ErrorStr;
   const Target *TheTarget = TargetRegistry::lookupTarget(TripleName, ErrorStr);
   if (!TheTarget)
@@ -979,19 +2058,49 @@ Error runChecks(Session &S) {
                                           TripleName,
                                       inconvertibleErrorCode()));
 
-  MCContext Ctx(MAI.get(), MRI.get(), nullptr);
+  auto Ctx = std::make_unique<MCContext>(Triple(TripleName), MAI.get(),
+                                         MRI.get(), STI.get());
 
   std::unique_ptr<MCDisassembler> Disassembler(
-      TheTarget->createMCDisassembler(*STI, Ctx));
+      TheTarget->createMCDisassembler(*STI, *Ctx));
   if (!Disassembler)
     ExitOnErr(make_error<StringError>("Unable to create disassembler for " +
                                           TripleName,
                                       inconvertibleErrorCode()));
 
   std::unique_ptr<MCInstrInfo> MII(TheTarget->createMCInstrInfo());
+  if (!MII)
+    ExitOnErr(make_error<StringError>("Unable to create instruction info for" +
+                                          TripleName,
+                                      inconvertibleErrorCode()));
+
+  std::unique_ptr<MCInstrAnalysis> MIA(
+      TheTarget->createMCInstrAnalysis(MII.get()));
+  if (!MIA)
+    ExitOnErr(make_error<StringError>(
+        "Unable to create instruction analysis for" + TripleName,
+        inconvertibleErrorCode()));
 
   std::unique_ptr<MCInstPrinter> InstPrinter(
       TheTarget->createMCInstPrinter(Triple(TripleName), 0, *MAI, *MII, *MRI));
+  if (!InstPrinter)
+    ExitOnErr(make_error<StringError>(
+        "Unable to create instruction printer for" + TripleName,
+        inconvertibleErrorCode()));
+  return {TheTarget,      std::move(STI), std::move(MRI),
+          std::move(MAI), std::move(Ctx), std::move(Disassembler),
+          std::move(MII), std::move(MIA), std::move(InstPrinter)};
+}
+
+static Error runChecks(Session &S) {
+  const auto &TT = S.ES.getExecutorProcessControl().getTargetTriple();
+
+  if (CheckFiles.empty())
+    return Error::success();
+
+  LLVM_DEBUG(dbgs() << "Running checks...\n");
+
+  auto TI = getTargetInfo(TT);
 
   auto IsSymbolValid = [&S](StringRef Symbol) {
     return S.isSymbolRegistered(Symbol);
@@ -1015,14 +2124,12 @@ Error runChecks(Session &S) {
 
   RuntimeDyldChecker Checker(
       IsSymbolValid, GetSymbolInfo, GetSectionInfo, GetStubInfo, GetGOTInfo,
-      S.TPC->getTargetTriple().isLittleEndian() ? support::little
-                                                : support::big,
-      Disassembler.get(), InstPrinter.get(), dbgs());
+      TT.isLittleEndian() ? support::little : support::big,
+      TI.Disassembler.get(), TI.InstPrinter.get(), dbgs());
 
   std::string CheckLineStart = "# " + CheckName + ":";
   for (auto &CheckFile : CheckFiles) {
-    auto CheckerFileBuf =
-        ExitOnErr(errorOrToExpected(MemoryBuffer::getFile(CheckFile)));
+    auto CheckerFileBuf = ExitOnErr(getFile(CheckFile));
     if (!Checker.checkAllRulesInBuffer(CheckLineStart, &*CheckerFileBuf))
       ExitOnErr(make_error<StringError>(
           "Some checks in " + CheckFile + " failed", inconvertibleErrorCode()));
@@ -1031,23 +2138,101 @@ Error runChecks(Session &S) {
   return Error::success();
 }
 
+static Error addSelfRelocations(LinkGraph &G) {
+  auto TI = getTargetInfo(G.getTargetTriple());
+  for (auto *Sym : G.defined_symbols())
+    if (Sym->isCallable())
+      if (auto Err = addFunctionPointerRelocationsToCurrentSymbol(
+              *Sym, G, *TI.Disassembler, *TI.MIA))
+        return Err;
+  return Error::success();
+}
+
 static void dumpSessionStats(Session &S) {
+  if (!ShowSizes)
+    return;
+  if (!OrcRuntime.empty())
+    outs() << "Note: Session stats include runtime and entry point lookup, but "
+              "not JITDylib initialization/deinitialization.\n";
   if (ShowSizes)
-    outs() << "Total size of all blocks before pruning: " << S.SizeBeforePruning
-           << "\nTotal size of all blocks after fixups: " << S.SizeAfterFixups
+    outs() << "  Total size of all blocks before pruning: "
+           << S.SizeBeforePruning
+           << "\n  Total size of all blocks after fixups: " << S.SizeAfterFixups
            << "\n";
 }
 
 static Expected<JITEvaluatedSymbol> getMainEntryPoint(Session &S) {
-  return S.ES.lookup(S.JDSearchOrder, EntryPointName);
+  return S.ES.lookup(S.JDSearchOrder, S.ES.intern(EntryPointName));
 }
 
+static Expected<JITEvaluatedSymbol> getOrcRuntimeEntryPoint(Session &S) {
+  std::string RuntimeEntryPoint = "__orc_rt_run_program_wrapper";
+  const auto &TT = S.ES.getExecutorProcessControl().getTargetTriple();
+  if (TT.getObjectFormat() == Triple::MachO)
+    RuntimeEntryPoint = '_' + RuntimeEntryPoint;
+  return S.ES.lookup(S.JDSearchOrder, S.ES.intern(RuntimeEntryPoint));
+}
+
+static Expected<JITEvaluatedSymbol> getEntryPoint(Session &S) {
+  JITEvaluatedSymbol EntryPoint;
+
+  // Find the entry-point function unconditionally, since we want to force
+  // it to be materialized to collect stats.
+  if (auto EP = getMainEntryPoint(S))
+    EntryPoint = *EP;
+  else
+    return EP.takeError();
+  LLVM_DEBUG({
+    dbgs() << "Using entry point \"" << EntryPointName
+           << "\": " << formatv("{0:x16}", EntryPoint.getAddress()) << "\n";
+  });
+
+  // If we're running with the ORC runtime then replace the entry-point
+  // with the __orc_rt_run_program symbol.
+  if (!OrcRuntime.empty()) {
+    if (auto EP = getOrcRuntimeEntryPoint(S))
+      EntryPoint = *EP;
+    else
+      return EP.takeError();
+    LLVM_DEBUG({
+      dbgs() << "(called via __orc_rt_run_program_wrapper at "
+             << formatv("{0:x16}", EntryPoint.getAddress()) << ")\n";
+    });
+  }
+
+  return EntryPoint;
+}
+
+static Expected<int> runWithRuntime(Session &S, ExecutorAddr EntryPointAddr) {
+  StringRef DemangledEntryPoint = EntryPointName;
+  const auto &TT = S.ES.getExecutorProcessControl().getTargetTriple();
+  if (TT.getObjectFormat() == Triple::MachO &&
+      DemangledEntryPoint.front() == '_')
+    DemangledEntryPoint = DemangledEntryPoint.drop_front();
+  using llvm::orc::shared::SPSString;
+  using SPSRunProgramSig =
+      int64_t(SPSString, SPSString, shared::SPSSequence<SPSString>);
+  int64_t Result;
+  if (auto Err = S.ES.callSPSWrapper<SPSRunProgramSig>(
+          EntryPointAddr, Result, S.MainJD->getName(), DemangledEntryPoint,
+          static_cast<std::vector<std::string> &>(InputArgv)))
+    return std::move(Err);
+  return Result;
+}
+
+static Expected<int> runWithoutRuntime(Session &S,
+                                       ExecutorAddr EntryPointAddr) {
+  return S.ES.getExecutorProcessControl().runAsMain(EntryPointAddr, InputArgv);
+}
+
+namespace {
 struct JITLinkTimers {
   TimerGroup JITLinkTG{"llvm-jitlink timers", "timers for llvm-jitlink phases"};
   Timer LoadObjectsTimer{"load", "time to load/add object files", JITLinkTG};
   Timer LinkTimer{"link", "time to link object files", JITLinkTG};
   Timer RunTimer{"run", "time to execute jitlink'd code", JITLinkTG};
 };
+} // namespace
 
 int main(int argc, char *argv[]) {
   InitLLVM X(argc, argv);
@@ -1056,6 +2241,7 @@ int main(int argc, char *argv[]) {
   InitializeAllTargetMCs();
   InitializeAllDisassemblers();
 
+  cl::HideUnrelatedOptions({&JITLinkCategory, &getColorCategory()});
   cl::ParseCommandLineOptions(argc, argv, "llvm jitlink tool");
   ExitOnErr.setBanner(std::string(argv[0]) + ": ");
 
@@ -1063,49 +2249,71 @@ int main(int argc, char *argv[]) {
   std::unique_ptr<JITLinkTimers> Timers =
       ShowTimes ? std::make_unique<JITLinkTimers>() : nullptr;
 
-  auto S = ExitOnErr(Session::Create(getFirstFileTriple()));
+  ExitOnErr(sanitizeArguments(getFirstFileTriple(), argv[0]));
 
-  ExitOnErr(sanitizeArguments(*S));
+  auto S = ExitOnErr(Session::Create(getFirstFileTriple()));
 
   {
     TimeRegion TR(Timers ? &Timers->LoadObjectsTimer : nullptr);
-    ExitOnErr(loadObjects(*S));
+    ExitOnErr(addSessionInputs(*S));
   }
-
-  if (!NoProcessSymbols)
-    ExitOnErr(loadProcessSymbols(*S));
-  ExitOnErr(loadDylibs());
 
   if (PhonyExternals)
     addPhonyExternalsGenerator(*S);
 
-
   if (ShowInitialExecutionSessionState)
     S->ES.dump(outs());
 
-  JITEvaluatedSymbol EntryPoint = 0;
+  Expected<JITEvaluatedSymbol> EntryPoint(nullptr);
   {
+    ExpectedAsOutParameter<JITEvaluatedSymbol> _(&EntryPoint);
     TimeRegion TR(Timers ? &Timers->LinkTimer : nullptr);
-    EntryPoint = ExitOnErr(getMainEntryPoint(*S));
+    EntryPoint = getEntryPoint(*S);
   }
+
+  // Print any reports regardless of whether we succeeded or failed.
+  if (ShowEntryExecutionSessionState)
+    S->ES.dump(outs());
 
   if (ShowAddrs)
     S->dumpSessionInfo(outs());
 
-  ExitOnErr(runChecks(*S));
-
   dumpSessionStats(*S);
+
+  if (!EntryPoint) {
+    if (Timers)
+      Timers->JITLinkTG.printAll(errs());
+    reportLLVMJITLinkError(EntryPoint.takeError());
+    exit(1);
+  }
+
+  ExitOnErr(runChecks(*S));
 
   if (NoExec)
     return 0;
 
   int Result = 0;
   {
-    using MainTy = int (*)(int, char *[]);
-    auto EntryFn = jitTargetAddressToFunction<MainTy>(EntryPoint.getAddress());
+    LLVM_DEBUG(dbgs() << "Running \"" << EntryPointName << "\"...\n");
     TimeRegion TR(Timers ? &Timers->RunTimer : nullptr);
-    Result = runAsMain(EntryFn, InputArgv, StringRef(InputFiles.front()));
+    if (!OrcRuntime.empty())
+      Result =
+          ExitOnErr(runWithRuntime(*S, ExecutorAddr(EntryPoint->getAddress())));
+    else
+      Result = ExitOnErr(
+          runWithoutRuntime(*S, ExecutorAddr(EntryPoint->getAddress())));
   }
+
+  // Destroy the session.
+  ExitOnErr(S->ES.endSession());
+  S.reset();
+
+  if (Timers)
+    Timers->JITLinkTG.printAll(errs());
+
+  // If the executing code set a test result override then use that.
+  if (UseTestResultOverride)
+    Result = TestResultOverride;
 
   return Result;
 }

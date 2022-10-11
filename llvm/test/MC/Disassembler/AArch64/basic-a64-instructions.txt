@@ -1,6 +1,6 @@
-# RUN: llvm-mc -triple=aarch64 -mattr=+fp-armv8 -disassemble < %s | FileCheck %s
-# RUN: llvm-mc -triple=arm64 -mattr=+fp-armv8 -disassemble < %s | FileCheck %s
-# RUN: llvm-mc -triple=arm64 -mattr=+fp-armv8,+fullfp16 -disassemble < %s | FileCheck %s --check-prefix=CHECK --check-prefix=FP16
+# RUN: llvm-mc -triple=aarch64 -mattr=+v8a,+fp-armv8 -disassemble < %s | FileCheck %s
+# RUN: llvm-mc -triple=arm64 -mattr=+v8a,+fp-armv8 -disassemble < %s | FileCheck %s
+# RUN: llvm-mc -triple=arm64 -mattr=+v8a,+fp-armv8,+fullfp16 -disassemble < %s | FileCheck %s --check-prefix=CHECK --check-prefix=FP16
 # RUN: llvm-mc -triple=arm64 -mattr=+v8.2a -disassemble < %s | FileCheck %s --check-prefix=CHECK-V82
 # RUN: llvm-mc -triple=arm64 -mattr=+v8.3a -disassemble < %s | FileCheck %s --check-prefix=CHECK-V83
 
@@ -3533,6 +3533,7 @@
 # CHECK: mrs      x9, {{id_aa64afr1_el1|ID_AA64AFR1_EL1}}
 # CHECK: mrs      x9, {{id_aa64isar0_el1|ID_AA64ISAR0_EL1}}
 # CHECK: mrs      x9, {{id_aa64isar1_el1|ID_AA64ISAR1_EL1}}
+# CHECK: mrs      x9, {{id_aa64isar2_el1|ID_AA64ISAR2_EL1}}
 # CHECK: mrs      x9, {{id_aa64mmfr0_el1|ID_AA64MMFR0_EL1}}
 # CHECK: mrs      x9, {{id_aa64mmfr1_el1|ID_AA64MMFR1_EL1}}
 # CHECK: mrs      x9, {{sctlr_el1|SCTLR_EL1}}
@@ -3873,6 +3874,7 @@
 0x2c 0x9e 0x18 0xd5
 0x4c 0x9e 0x18 0xd5
 0x6c 0x9e 0x1b 0xd5
+0xcc 0x9e 0x18 0xd5
 0xc 0xa2 0x18 0xd5
 0xc 0xa2 0x1c 0xd5
 0xc 0xa2 0x1e 0xd5
@@ -4090,6 +4092,7 @@
 0xa9 0x5 0x38 0xd5
 0x9 0x6 0x38 0xd5
 0x29 0x6 0x38 0xd5
+0x49 0x06 0x38 0xd5
 0x9 0x7 0x38 0xd5
 0x29 0x7 0x38 0xd5
 0x9 0x10 0x38 0xd5
@@ -4169,6 +4172,7 @@
 0x29 0x9e 0x38 0xd5
 0x49 0x9e 0x38 0xd5
 0x69 0x9e 0x3b 0xd5
+0xc9 0x9e 0x38 0xd5
 0x9 0xa2 0x38 0xd5
 0x9 0xa2 0x3c 0xd5
 0x9 0xa2 0x3e 0xd5

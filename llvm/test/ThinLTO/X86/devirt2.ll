@@ -15,8 +15,10 @@
 ; ENABLESPLITFLAG: !{i32 1, !"EnableSplitLTOUnit", i32 1}
 
 ; Generate unsplit module with summary for ThinLTO index-based WPD.
-; RUN: opt -thinlto-bc -o %t3.o %s
-; RUN: opt -thinlto-bc -o %t4.o %p/Inputs/devirt2.ll
+; Force generation of the bitcode index so that we also test lazy metadata
+; loader handling of the type metadata.
+; RUN: opt -bitcode-mdindex-threshold=0 -thinlto-bc -o %t3.o %s
+; RUN: opt -bitcode-mdindex-threshold=0 -thinlto-bc -o %t4.o %p/Inputs/devirt2.ll
 
 ; Check that we don't have module flag when splitting not enabled for ThinLTO,
 ; and that we generate summary information needed for index-based WPD.
@@ -34,32 +36,8 @@
 ; NOENABLESPLITFLAG-DAG: typeidCompatibleVTable: (name: "_ZTS1C", summary: ((offset: 16, [[C]])))
 ; NOENABLESPLITFLAG-DAG: typeidCompatibleVTable: (name: "_ZTS1D", summary: ((offset: 16, [[D]])))
 
-; Legacy PM, Index based WPD
+; Index based WPD
 ; RUN: llvm-lto2 run %t3.o %t4.o -save-temps -pass-remarks=. \
-; RUN:   -whole-program-visibility \
-; RUN:   -wholeprogramdevirt-print-index-based \
-; RUN:   -o %t5 \
-; RUN:   -r=%t3.o,test,px \
-; RUN:   -r=%t3.o,_ZTV1B, \
-; RUN:   -r=%t3.o,_ZTV1C, \
-; RUN:   -r=%t3.o,_ZTV1D, \
-; RUN:   -r=%t3.o,_ZN1D1mEi, \
-; RUN:   -r=%t3.o,test2, \
-; RUN:   -r=%t4.o,_ZN1B1fEi,p \
-; RUN:   -r=%t4.o,_ZN1C1fEi,p \
-; RUN:   -r=%t4.o,_ZN1D1mEi,p \
-; RUN:   -r=%t4.o,test2,px \
-; RUN:   -r=%t4.o,_ZTV1B,px \
-; RUN:   -r=%t4.o,_ZTV1C,px \
-; RUN:   -r=%t4.o,_ZTV1D,px \
-; RUN:   -r=%t4.o,_ZTV1E,px 2>&1 | FileCheck %s --check-prefix=REMARK --check-prefix=PRINT
-; RUN: llvm-dis %t5.1.4.opt.bc -o - | FileCheck %s --check-prefix=CHECK-IR1
-; RUN: llvm-dis %t5.2.4.opt.bc -o - | FileCheck %s --check-prefix=CHECK-IR2
-; RUN: llvm-nm %t5.1 | FileCheck %s --check-prefix=NM-INDEX1
-; RUN: llvm-nm %t5.2 | FileCheck %s --check-prefix=NM-INDEX2
-
-; New PM, Index based WPD
-; RUN: llvm-lto2 run %t3.o %t4.o -save-temps -use-new-pm -pass-remarks=. \
 ; RUN:   -whole-program-visibility \
 ; RUN:   -wholeprogramdevirt-print-index-based \
 ; RUN:   -o %t5 \
@@ -93,7 +71,7 @@
 ; NM-INDEX2-DAG: t _ZN1C1fEi
 
 ; Index based WPD, distributed backends
-; RUN: llvm-lto2 run %t3.o %t4.o -save-temps -use-new-pm \
+; RUN: llvm-lto2 run %t3.o %t4.o -save-temps \
 ; RUN:   -whole-program-visibility \
 ; RUN:   -thinlto-distributed-indexes -wholeprogramdevirt-print-index-based \
 ; RUN:   -o %t5 \
@@ -116,7 +94,7 @@
 ; PRINT-DAG: Devirtualized call to {{.*}} (_ZN1E1mEi)
 ; PRINT-DAG: Devirtualized call to {{.*}} (_ZN1D1mEi)
 
-; Legacy PM
+; New PM
 ; RUN: llvm-lto2 run %t1.o %t2.o -save-temps -pass-remarks=. \
 ; RUN:   -whole-program-visibility \
 ; RUN:   -o %t5 \
@@ -152,48 +130,12 @@
 ; RUN: llvm-nm %t5.1 | FileCheck %s --check-prefix=NM-HYBRID1
 ; RUN: llvm-nm %t5.2 | FileCheck %s --check-prefix=NM-HYBRID2
 
-; New PM
-; RUN: llvm-lto2 run %t1.o %t2.o -save-temps -use-new-pm -pass-remarks=. \
-; RUN:   -whole-program-visibility \
-; RUN:   -o %t5 \
-; RUN:   -r=%t1.o,test,px \
-; RUN:   -r=%t1.o,_ZTV1B, \
-; RUN:   -r=%t1.o,_ZTV1C, \
-; RUN:   -r=%t1.o,_ZTV1D, \
-; RUN:   -r=%t1.o,_ZTV1D, \
-; RUN:   -r=%t1.o,_ZN1D1mEi, \
-; RUN:   -r=%t1.o,_ZN1D1mEi, \
-; RUN:   -r=%t1.o,test2, \
-; RUN:   -r=%t2.o,_ZN1A1nEi,p \
-; RUN:   -r=%t2.o,_ZN1B1fEi,p \
-; RUN:   -r=%t2.o,_ZN1C1fEi,p \
-; RUN:   -r=%t2.o,_ZN1D1mEi,p \
-; RUN:   -r=%t2.o,_ZN1E1mEi,p \
-; RUN:   -r=%t2.o,_ZTV1B, \
-; RUN:   -r=%t2.o,_ZTV1C, \
-; RUN:   -r=%t2.o,_ZTV1D, \
-; RUN:   -r=%t2.o,_ZTV1E, \
-; RUN:   -r=%t2.o,test2,px \
-; RUN:   -r=%t2.o,_ZN1A1nEi, \
-; RUN:   -r=%t2.o,_ZN1B1fEi, \
-; RUN:   -r=%t2.o,_ZN1C1fEi, \
-; RUN:   -r=%t2.o,_ZN1D1mEi, \
-; RUN:   -r=%t2.o,_ZN1E1mEi, \
-; RUN:   -r=%t2.o,_ZTV1B,px \
-; RUN:   -r=%t2.o,_ZTV1C,px \
-; RUN:   -r=%t2.o,_ZTV1D,px \
-; RUN:   -r=%t2.o,_ZTV1E,px 2>&1 | FileCheck %s --check-prefix=REMARK
-; RUN: llvm-dis %t5.1.4.opt.bc -o - | FileCheck %s --check-prefix=CHECK-IR1
-; RUN: llvm-dis %t5.2.4.opt.bc -o - | FileCheck %s --check-prefix=CHECK-IR2
-; RUN: llvm-nm %t5.1 | FileCheck %s --check-prefix=NM-HYBRID1
-; RUN: llvm-nm %t5.2 | FileCheck %s --check-prefix=NM-HYBRID2
-
-; NM-HYBRID1-DAG: U _ZN1A1nEi$
-; NM-HYBRID1-DAG: U _ZN1E1mEi$
+; NM-HYBRID1-DAG: U _ZN1A1nEi.{{[0-9a-f]*}}
+; NM-HYBRID1-DAG: U _ZN1E1mEi.{{[0-9a-f]*}}
 ; NM-HYBRID1-DAG: U _ZN1D1mEi
 
-; NM-HYBRID2-DAG: T _ZN1A1nEi$
-; NM-HYBRID2-DAG: T _ZN1E1mEi$
+; NM-HYBRID2-DAG: T _ZN1A1nEi.{{[0-9a-f]*}}
+; NM-HYBRID2-DAG: T _ZN1E1mEi.{{[0-9a-f]*}}
 ; NM-HYBRID2-DAG: W _ZN1D1mEi
 ; NM-HYBRID2-DAG: T _ZN1B1fEi
 ; NM-HYBRID2-DAG: T _ZN1C1fEi
@@ -238,7 +180,7 @@ entry:
   ; Check that the call was devirtualized. Ignore extra character before
   ; symbol name which would happen if it was promoted during module
   ; splitting for hybrid WPD.
-  ; CHECK-IR1: %call = tail call i32 bitcast (void ()* @{{.*}}_ZN1A1nEi
+  ; CHECK-IR1: %call = tail call i32 @_ZN1A1nEi
   %call = tail call i32 %fptr1(%struct.A* nonnull %obj, i32 %a)
 
   %3 = bitcast i8** %vtable to i32 (%struct.A*, i32)**

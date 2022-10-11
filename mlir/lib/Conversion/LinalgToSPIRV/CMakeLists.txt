@@ -1,4 +1,4 @@
-add_mlir_conversion_library(MLIRLinalgToSPIRVTransforms
+add_mlir_conversion_library(MLIRLinalgToSPIRV
   LinalgToSPIRV.cpp
   LinalgToSPIRVPass.cpp
 
@@ -11,9 +11,10 @@ add_mlir_conversion_library(MLIRLinalgToSPIRVTransforms
 
   LINK_LIBS PUBLIC
   MLIRIR
-  MLIRLinalgOps
+  MLIRLinalgDialect
   MLIRLinalgUtils
   MLIRPass
-  MLIRSPIRV
+  MLIRSPIRVDialect
+  MLIRSPIRVConversion
   MLIRSupport
   )

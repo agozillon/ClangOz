@@ -36,6 +36,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Config/config.h"
 #include "llvm/Demangle/Demangle.h"
+#include "llvm/Support/ExitCodes.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/Format.h"
@@ -46,7 +47,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <string>
-#include <sysexits.h>
 #ifdef HAVE_BACKTRACE
 # include BACKTRACE_HEADER         // For backtrace().
 #endif
@@ -79,8 +79,8 @@
 
 using namespace llvm;
 
-static RETSIGTYPE SignalHandler(int Sig);  // defined below.
-static RETSIGTYPE InfoSignalHandler(int Sig);  // defined below.
+static void SignalHandler(int Sig);  // defined below.
+static void InfoSignalHandler(int Sig);  // defined below.
 
 using SignalHandlerFunctionType = void (*)();
 /// The function to call if ctrl-c is pressed.
@@ -239,8 +239,8 @@ static const int InfoSigs[] = {
 };
 
 static const size_t NumSigs =
-    array_lengthof(IntSigs) + array_lengthof(KillSigs) +
-    array_lengthof(InfoSigs) + 1 /* SIGPIPE */;
+    std::size(IntSigs) + std::size(KillSigs) +
+    std::size(InfoSigs) + 1 /* SIGPIPE */;
 
 
 static std::atomic<unsigned> NumRegisteredSignals = ATOMIC_VAR_INIT(0);
@@ -255,7 +255,7 @@ static struct {
 // stack if we remove our signal handlers; that can't be done reliably if
 // someone else is also trying to do the same thing.
 static stack_t OldAltStack;
-static void* NewAltStackPointer;
+LLVM_ATTRIBUTE_USED static void *NewAltStackPointer;
 
 static void CreateSigAltStack() {
   const size_t AltStackSize = MINSIGSTKSZ + 64 * 1024;
@@ -298,7 +298,7 @@ static void RegisterHandlers() { // Not signal-safe.
   enum class SignalKind { IsKill, IsInfo };
   auto registerHandler = [&](int Signal, SignalKind Kind) {
     unsigned Index = NumRegisteredSignals.load();
-    assert(Index < array_lengthof(RegisteredSignalInfo) &&
+    assert(Index < std::size(RegisteredSignalInfo) &&
            "Out of space for signal handlers!");
 
     struct sigaction NewHandler;
@@ -331,7 +331,7 @@ static void RegisterHandlers() { // Not signal-safe.
     registerHandler(S, SignalKind::IsInfo);
 }
 
-static void UnregisterHandlers() {
+void sys::unregisterHandlers() {
   // Restore all of the signal handlers to how they were before we showed up.
   for (unsigned i = 0, e = NumRegisteredSignals.load(); i != e; ++i) {
     sigaction(RegisteredSignalInfo[i].SigNo,
@@ -362,12 +362,12 @@ void sys::CleanupOnSignal(uintptr_t Context) {
 }
 
 // The signal handler that runs.
-static RETSIGTYPE SignalHandler(int Sig) {
+static void SignalHandler(int Sig) {
   // Restore the signal behavior to default, so that the program actually
   // crashes when we return and the signal reissues.  This also ensures that if
   // we crash in our signal handler that the program will terminate immediately
   // instead of recursing in the signal handler.
-  UnregisterHandlers();
+  sys::unregisterHandlers();
 
   // Unmask all potentially blocked kill signals.
   sigset_t SigMask;
@@ -382,13 +382,15 @@ static RETSIGTYPE SignalHandler(int Sig) {
               OneShotPipeSignalFunction.exchange(nullptr))
         return OldOneShotPipeFunction();
 
-    if (llvm::is_contained(IntSigs, Sig)) {
+    bool IsIntSig = llvm::is_contained(IntSigs, Sig);
+    if (IsIntSig)
       if (auto OldInterruptFunction = InterruptFunction.exchange(nullptr))
         return OldInterruptFunction();
 
-      raise(Sig);   // Execute the default handler.
+    if (Sig == SIGPIPE || IsIntSig) {
+      raise(Sig); // Execute the default handler.
       return;
-   }
+    }
   }
 
   // Otherwise if it is a fault (like SEGV) run any handler.
@@ -404,7 +406,7 @@ static RETSIGTYPE SignalHandler(int Sig) {
 #endif
 }
 
-static RETSIGTYPE InfoSignalHandler(int Sig) {
+static void InfoSignalHandler(int Sig) {
   SaveAndRestore<int> SaveErrnoDuringASignalHandler(errno);
   if (SignalHandlerFunctionType CurrentInfoFunction = InfoSignalFunction)
     CurrentInfoFunction();
@@ -430,6 +432,10 @@ void llvm::sys::SetOneShotPipeSignalFunction(void (*Handler)()) {
 }
 
 void llvm::sys::DefaultOneShotPipeSignalHandler() {
+  // UNIX03 conformance requires a non-zero exit code and an error message
+  // to stderr when writing to a closed stdout fails.
+  errs() << "error: write on a pipe with no reader\n";
+
   // Send a special return code that drivers can check for, from sysexits.h.
   exit(EX_IOERR);
 }
@@ -553,26 +559,32 @@ static int unwindBacktrace(void **StackTrace, int MaxEntries) {
 //
 // On glibc systems we have the 'backtrace' function, which works nicely, but
 // doesn't demangle symbols.
-void llvm::sys::PrintStackTrace(raw_ostream &OS) {
+void llvm::sys::PrintStackTrace(raw_ostream &OS, int Depth) {
 #if ENABLE_BACKTRACES
   static void *StackTrace[256];
   int depth = 0;
 #if defined(HAVE_BACKTRACE)
   // Use backtrace() to output a backtrace on Linux systems with glibc.
   if (!depth)
-    depth = backtrace(StackTrace, static_cast<int>(array_lengthof(StackTrace)));
+    depth = backtrace(StackTrace, static_cast<int>(std::size(StackTrace)));
 #endif
 #if defined(HAVE__UNWIND_BACKTRACE)
   // Try _Unwind_Backtrace() if backtrace() failed.
   if (!depth)
     depth = unwindBacktrace(StackTrace,
-                        static_cast<int>(array_lengthof(StackTrace)));
+                        static_cast<int>(std::size(StackTrace)));
 #endif
   if (!depth)
     return;
-
-  if (printSymbolizedStackTrace(Argv0, StackTrace, depth, OS))
+  // If "Depth" is not provided by the caller, use the return value of
+  // backtrace() for printing a symbolized stack trace.
+  if (!Depth)
+    Depth = depth;
+  if (printSymbolizedStackTrace(Argv0, StackTrace, Depth, OS))
     return;
+  OS << "Stack dump without symbol names (ensure you have llvm-symbolizer in "
+        "your PATH or set the environment var `LLVM_SYMBOLIZER_PATH` to point "
+        "to it):\n";
 #if HAVE_DLFCN_H && HAVE_DLADDR
   int width = 0;
   for (int i = 0; i < depth; ++i) {
@@ -614,7 +626,7 @@ void llvm::sys::PrintStackTrace(raw_ostream &OS) {
     OS << '\n';
   }
 #elif defined(HAVE_BACKTRACE)
-  backtrace_symbols_fd(StackTrace, depth, STDERR_FILENO);
+  backtrace_symbols_fd(StackTrace, Depth, STDERR_FILENO);
 #endif
 #endif
 }

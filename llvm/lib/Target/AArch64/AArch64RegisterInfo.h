@@ -35,14 +35,13 @@ public:
   }
 
   bool isReservedReg(const MachineFunction &MF, MCRegister Reg) const;
+  bool isStrictlyReservedReg(const MachineFunction &MF, MCRegister Reg) const;
   bool isAnyArgRegReserved(const MachineFunction &MF) const;
   void emitReservedArgRegCallError(const MachineFunction &MF) const;
 
   void UpdateCustomCalleeSavedRegs(MachineFunction &MF) const;
   void UpdateCustomCallPreservedMask(MachineFunction &MF,
                                      const uint32_t **Mask) const;
-
-  static bool hasSVEArgsOrReturn(const MachineFunction *MF);
 
   /// Code Generation virtual methods...
   const MCPhysReg *getCalleeSavedRegs(const MachineFunction *MF) const override;
@@ -72,6 +71,10 @@ public:
   // Funclets on ARM64 Windows don't preserve any registers.
   const uint32_t *getNoPreservedMask() const override;
 
+  // Unwinders may not preserve all Neon and SVE registers.
+  const uint32_t *
+  getCustomEHPadPreservedMask(const MachineFunction &MF) const override;
+
   /// getThisReturnPreservedMask - Returns a call preserved mask specific to the
   /// case that 'returned' is on an i64 first argument if the calling convention
   /// is one that can (partially) model this attribute with a preserved mask
@@ -86,10 +89,13 @@ public:
   /// Stack probing calls preserve different CSRs to the normal CC.
   const uint32_t *getWindowsStackProbePreservedMask() const;
 
+  BitVector getStrictlyReservedRegs(const MachineFunction &MF) const;
   BitVector getReservedRegs(const MachineFunction &MF) const override;
+  llvm::Optional<std::string>
+  explainReservedReg(const MachineFunction &MF,
+                     MCRegister PhysReg) const override;
   bool isAsmClobberable(const MachineFunction &MF,
                        MCRegister PhysReg) const override;
-  bool isConstantPhysReg(MCRegister PhysReg) const override;
   const TargetRegisterClass *
   getPointerRegClass(const MachineFunction &MF,
                      unsigned Kind = 0) const override;
@@ -103,9 +109,8 @@ public:
   bool needsFrameBaseReg(MachineInstr *MI, int64_t Offset) const override;
   bool isFrameOffsetLegal(const MachineInstr *MI, Register BaseReg,
                           int64_t Offset) const override;
-  void materializeFrameBaseRegister(MachineBasicBlock *MBB, Register BaseReg,
-                                    int FrameIdx,
-                                    int64_t Offset) const override;
+  Register materializeFrameBaseRegister(MachineBasicBlock *MBB, int FrameIdx,
+                                        int64_t Offset) const override;
   void resolveFrameIndex(MachineInstr &MI, Register BaseReg,
                          int64_t Offset) const override;
   void eliminateFrameIndex(MachineBasicBlock::iterator II, int SPAdj,
@@ -117,6 +122,9 @@ public:
   bool hasBasePointer(const MachineFunction &MF) const;
   unsigned getBaseRegister() const;
 
+  bool isArgumentRegister(const MachineFunction &MF,
+                          MCRegister Reg) const override;
+
   // Debug information queries.
   Register getFrameRegister(const MachineFunction &MF) const override;
 
@@ -125,6 +133,15 @@ public:
 
   unsigned getLocalAddressRegister(const MachineFunction &MF) const;
   bool regNeedsCFI(unsigned Reg, unsigned &RegToUseForCFI) const;
+
+  /// SrcRC and DstRC will be morphed into NewRC if this returns true
+  bool shouldCoalesce(MachineInstr *MI, const TargetRegisterClass *SrcRC,
+                      unsigned SubReg, const TargetRegisterClass *DstRC,
+                      unsigned DstSubReg, const TargetRegisterClass *NewRC,
+                      LiveIntervals &LIS) const override;
+
+  void getOffsetOpcodes(const StackOffset &Offset,
+                        SmallVectorImpl<uint64_t> &Ops) const override;
 };
 
 } // end namespace llvm

@@ -34,7 +34,7 @@ class:
     /// ExprAST - Base class for all expression nodes.
     class ExprAST {
     public:
-      virtual ~ExprAST() {}
+      virtual ~ExprAST() = default;
       virtual Value *codegen() = 0;
     };
 
@@ -44,7 +44,7 @@ class:
 
     public:
       NumberExprAST(double Val) : Val(Val) {}
-      virtual Value *codegen();
+      Value *codegen() override;
     };
     ...
 
@@ -90,7 +90,7 @@ detail, we just need a single instance to pass into APIs that require it.
 
 The ``Builder`` object is a helper object that makes it easy to generate
 LLVM instructions. Instances of the
-`IRBuilder <https://llvm.org/doxygen/IRBuilder_8h-source.html>`_
+`IRBuilder <https://llvm.org/doxygen/IRBuilder_8h_source.html>`_
 class template keep track of the current place to insert instructions
 and has methods to create new instructions.
 
@@ -197,7 +197,7 @@ suffix. Local value names for instructions are purely optional, but it
 makes it much easier to read the IR dumps.
 
 `LLVM instructions <../../LangRef.html#instruction-reference>`_ are constrained by strict
-rules: for example, the Left and Right operators of an `add
+rules: for example, the Left and Right operands of an `add
 instruction <../../LangRef.html#add-instruction>`_ must have the same type, and the
 result type of the add must match the operand types. Because all values
 in Kaleidoscope are doubles, this makes for very simple code for add,

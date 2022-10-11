@@ -8,12 +8,12 @@
 #ifndef LLVM_TRANSFORMS_INSTRUMENTATION_DATAFLOWSANITIZER_H
 #define LLVM_TRANSFORMS_INSTRUMENTATION_DATAFLOWSANITIZER_H
 
-#include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include <string>
 #include <vector>
 
 namespace llvm {
+class Module;
 
 class DataFlowSanitizerPass : public PassInfoMixin<DataFlowSanitizerPass> {
 private:
@@ -24,6 +24,7 @@ public:
       const std::vector<std::string> &ABIListFiles = std::vector<std::string>())
       : ABIListFiles(ABIListFiles) {}
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+  static bool isRequired() { return true; }
 };
 
 } // namespace llvm

@@ -1,3 +1,4 @@
+; RUN: opt < %s -disable-loop-unrolling -debug-only=loop-vectorize -passes='default<O3>' -S 2>&1 | FileCheck %s
 ; RUN: opt < %s -disable-loop-unrolling -debug-only=loop-vectorize -O3 -S 2>&1 | FileCheck %s
 ; REQUIRES: asserts
 ; We want to make sure that we don't even try to vectorize loops again
@@ -11,7 +12,7 @@ target triple = "x86_64-unknown-linux-gnu"
 
 ; Function Attrs: nounwind readonly uwtable
 define i32 @vect() {
-; CHECK: LV: Checking a loop in "vect"
+; CHECK: LV: Checking a loop in 'vect'
 entry:
   br label %for.body
 
@@ -32,7 +33,7 @@ for.body:                                         ; preds = %for.body, %entry
 ; CHECK: vector.body:
 ; CHECK: br {{.*}} label %vector.body, !llvm.loop [[vect:![0-9]+]]
 ; CHECK: for.body:
-; CHECK: br {{.*}} label %for.body, !llvm.loop [[scalar:![0-9]+]]
+; CHECK: br {{.*}} label %for.body{{.*}}, !llvm.loop [[scalar:![0-9]+]]
 
 for.end:                                          ; preds = %for.body
   ret i32 %add

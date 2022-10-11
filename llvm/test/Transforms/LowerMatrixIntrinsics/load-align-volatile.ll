@@ -1,4 +1,3 @@
-; RUN: opt -lower-matrix-intrinsics -S < %s | FileCheck %s
 ; RUN: opt -passes='lower-matrix-intrinsics' -S < %s | FileCheck %s
 
 define <9 x double> @strided_load_3x3_volatile(double* %in, i64 %stride) {
@@ -115,7 +114,7 @@ define <6 x float> @strided_load_2x3_align16_stride2(float* %in) {
 ; CHECK-NEXT:    [[VEC_CAST4:%.*]] = bitcast float* [[VEC_GEP3]] to <2 x float>*
 ; CHECK-NEXT:    [[COL_LOAD5:%.*]] = load <2 x float>, <2 x float>* [[VEC_CAST4]], align 16
 ; CHECK-NEXT:    [[TMP1:%.*]] = shufflevector <2 x float> [[COL_LOAD]], <2 x float> [[COL_LOAD2]], <4 x i32> <i32 0, i32 1, i32 2, i32 3>
-; CHECK-NEXT:    [[TMP2:%.*]] = shufflevector <2 x float> [[COL_LOAD5]], <2 x float> undef, <4 x i32> <i32 0, i32 1, i32 undef, i32 undef>
+; CHECK-NEXT:    [[TMP2:%.*]] = shufflevector <2 x float> [[COL_LOAD5]], <2 x float> poison, <4 x i32> <i32 0, i32 1, i32 undef, i32 undef>
 ; CHECK-NEXT:    [[TMP3:%.*]] = shufflevector <4 x float> [[TMP1]], <4 x float> [[TMP2]], <6 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5>
 ; CHECK-NEXT:    ret <6 x float> [[TMP3]]
 ;

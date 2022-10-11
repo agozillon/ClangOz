@@ -14,10 +14,10 @@
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptorBuilder.h"
-#include "llvm/DebugInfo/PDB/Native/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/BinaryStreamWriter.h"
+#include "llvm/Support/Parallel.h"
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -29,7 +29,7 @@ DbiStreamBuilder::DbiStreamBuilder(msf::MSFBuilder &Msf)
       PdbDllVersion(0), PdbDllRbld(0), Flags(0), MachineType(PDB_Machine::x86),
       Header(nullptr) {}
 
-DbiStreamBuilder::~DbiStreamBuilder() {}
+DbiStreamBuilder::~DbiStreamBuilder() = default;
 
 void DbiStreamBuilder::setVersionHeader(PdbRaw_DbiVer V) { VerHeader = V; }
 
@@ -71,7 +71,7 @@ void DbiStreamBuilder::setPublicsStreamIndex(uint32_t Index) {
 }
 
 void DbiStreamBuilder::addNewFpoData(const codeview::FrameData &FD) {
-  if (!NewFpoData.hasValue())
+  if (!NewFpoData)
     NewFpoData.emplace(false);
 
   NewFpoData->addFrameData(FD);
@@ -285,7 +285,7 @@ Error DbiStreamBuilder::finalize() {
 }
 
 Error DbiStreamBuilder::finalizeMsfLayout() {
-  if (NewFpoData.hasValue()) {
+  if (NewFpoData) {
     DbgStreams[(int)DbgHeaderType::NewFPO].emplace();
     DbgStreams[(int)DbgHeaderType::NewFPO]->Size =
         NewFpoData->calculateSerializedSize();
@@ -306,7 +306,7 @@ Error DbiStreamBuilder::finalizeMsfLayout() {
   }
 
   for (auto &S : DbgStreams) {
-    if (!S.hasValue())
+    if (!S)
       continue;
     auto ExpectedIndex = Msf.addStream(S->Size);
     if (!ExpectedIndex)
@@ -331,8 +331,6 @@ static uint16_t toSecMapFlags(uint32_t Flags) {
     Ret |= static_cast<uint16_t>(OMFSegDescFlags::Read);
   if (Flags & COFF::IMAGE_SCN_MEM_WRITE)
     Ret |= static_cast<uint16_t>(OMFSegDescFlags::Write);
-  if (Flags & COFF::IMAGE_SCN_MEM_EXECUTE)
-    Ret |= static_cast<uint16_t>(OMFSegDescFlags::Execute);
   if (Flags & COFF::IMAGE_SCN_MEM_EXECUTE)
     Ret |= static_cast<uint16_t>(OMFSegDescFlags::Execute);
   if (!(Flags & COFF::IMAGE_SCN_MEM_16BIT))
@@ -394,9 +392,16 @@ Error DbiStreamBuilder::commit(const msf::MSFLayout &Layout,
     return EC;
 
   for (auto &M : ModiList) {
-    if (auto EC = M->commit(Writer, Layout, MsfBuffer))
+    if (auto EC = M->commit(Writer))
       return EC;
   }
+
+  // Commit symbol streams. This is a lot of data, so do it in parallel.
+  if (auto EC = parallelForEachError(
+          ModiList, [&](std::unique_ptr<DbiModuleDescriptorBuilder> &M) {
+            return M->commitSymbolStream(Layout, MsfBuffer);
+          }))
+    return EC;
 
   if (!SectionContribs.empty()) {
     if (auto EC = Writer.writeEnum(DbiSecContribVer60))
@@ -422,14 +427,14 @@ Error DbiStreamBuilder::commit(const msf::MSFLayout &Layout,
 
   for (auto &Stream : DbgStreams) {
     uint16_t StreamNumber = kInvalidStreamIndex;
-    if (Stream.hasValue())
+    if (Stream)
       StreamNumber = Stream->StreamNumber;
     if (auto EC = Writer.writeInteger(StreamNumber))
       return EC;
   }
 
   for (auto &Stream : DbgStreams) {
-    if (!Stream.hasValue())
+    if (!Stream)
       continue;
     assert(Stream->StreamNumber != kInvalidStreamIndex);
 

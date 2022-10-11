@@ -42,15 +42,26 @@ def push_dynamic_library_lookup_path(config, new_path):
       (new_path, config.environment.get(dynamic_library_lookup_var, '')))
     config.environment[dynamic_library_lookup_var] = new_ld_32_library_path
 
+  if platform.system() == 'SunOS':
+    dynamic_library_lookup_var = 'LD_LIBRARY_PATH_32'
+    new_ld_library_path_32 = os.path.pathsep.join(
+      (new_path, config.environment.get(dynamic_library_lookup_var, '')))
+    config.environment[dynamic_library_lookup_var] = new_ld_library_path_32
+
+    dynamic_library_lookup_var = 'LD_LIBRARY_PATH_64'
+    new_ld_library_path_64 = os.path.pathsep.join(
+      (new_path, config.environment.get(dynamic_library_lookup_var, '')))
+    config.environment[dynamic_library_lookup_var] = new_ld_library_path_64
+
 # Setup config name.
 config.name = 'AddressSanitizer' + config.name_suffix
 
 # Platform-specific default ASAN_OPTIONS for lit tests.
 default_asan_opts = list(config.default_sanitizer_opts)
 
-# On Darwin, leak checking is not enabled by default. Enable for x86_64
+# On Darwin, leak checking is not enabled by default. Enable on macOS
 # tests to prevent regressions
-if config.host_os == 'Darwin' and config.target_arch == 'x86_64':
+if config.host_os == 'Darwin' and config.apple_platform == 'osx':
   default_asan_opts += ['detect_leaks=1']
 
 default_asan_opts_str = ':'.join(default_asan_opts)
@@ -156,14 +167,6 @@ if platform.system() == 'Windows':
   config.substitutions.append( ("%asan_cxx_lib", base_lib % "_cxx") )
   config.substitutions.append( ("%asan_dll_thunk", base_lib % "_dll_thunk") )
 
-if platform.system() == 'Windows':
-  # Don't use -std=c++11 on Windows, as the driver will detect the appropriate
-  # default needed to use with the STL.
-  config.substitutions.append(("%stdcxx11 ", ""))
-else:
-  # Some tests uses C++11 features such as lambdas and need to pass -std=c++11.
-  config.substitutions.append(("%stdcxx11 ", "-std=c++11 "))
-
 # FIXME: De-hardcode this path.
 asan_source_dir = os.path.join(
   get_required_attr(config, "compiler_rt_src_root"), "lib", "asan")
@@ -194,14 +197,15 @@ config.substitutions.append( ("%libdl", libdl_flag) )
 config.available_features.add("asan-" + config.bits + "-bits")
 
 # Fast unwinder doesn't work with Thumb
-if re.search('mthumb', config.target_cflags) is None:
+if not config.arm_thumb:
   config.available_features.add('fast-unwinder-works')
 
 # Turn on leak detection on 64-bit Linux.
-leak_detection_linux = (config.host_os == 'Linux') and (not config.android) and (config.target_arch == 'x86_64' or config.target_arch == 'i386')
-leak_detection_mac = (config.host_os == 'Darwin') and (config.target_arch == 'x86_64')
+leak_detection_android = config.android and 'android-thread-properties-api' in config.available_features and (config.target_arch in ['x86_64', 'i386', 'i686', 'aarch64'])
+leak_detection_linux = (config.host_os == 'Linux') and (not config.android) and (config.target_arch in ['x86_64', 'i386', 'riscv64'])
+leak_detection_mac = (config.host_os == 'Darwin') and (config.apple_platform == 'osx')
 leak_detection_netbsd = (config.host_os == 'NetBSD') and (config.target_arch in ['x86_64', 'i386'])
-if leak_detection_linux or leak_detection_mac or leak_detection_netbsd:
+if leak_detection_android or leak_detection_linux or leak_detection_mac or leak_detection_netbsd:
   config.available_features.add('leak-detection')
 
 # Set LD_LIBRARY_PATH to pick dynamic runtime up properly.

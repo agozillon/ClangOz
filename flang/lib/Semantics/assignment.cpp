@@ -66,16 +66,11 @@ void AssignmentContext::Analyze(const parser::AssignmentStmt &stmt) {
     const SomeExpr &rhs{assignment->rhs};
     auto lhsLoc{std::get<parser::Variable>(stmt.t).GetSource()};
     auto rhsLoc{std::get<parser::Expr>(stmt.t).source};
-    auto shape{evaluate::GetShape(foldingContext(), lhs)};
-    if (shape && !shape->empty() && !shape->back().has_value()) { // C1014
-      Say(lhsLoc,
-          "Left-hand side of assignment may not be a whole assumed-size array"_err_en_US);
-    }
     if (CheckForPureContext(lhs, rhs, rhsLoc, false)) {
       const Scope &scope{context_.FindScope(lhsLoc)};
       if (auto whyNot{WhyNotModifiable(lhsLoc, lhs, scope, true)}) {
         if (auto *msg{Say(lhsLoc,
-                "Left-hand side of assignment is not modifiable"_err_en_US)}) { // C1158
+                "Left-hand side of assignment is not modifiable"_err_en_US)}) {
           msg->Attach(*whyNot);
         }
       }
@@ -108,7 +103,7 @@ static const char *WhyBaseObjectIsSuspicious(
     const Symbol &x, const Scope &scope) {
   // See C1594, first paragraph.  These conditions enable checks on both
   // left-hand and right-hand sides in various circumstances.
-  if (IsHostAssociated(x, scope)) {
+  if (IsHostAssociatedIntoSubprogram(x, scope)) {
     return "host-associated";
   } else if (IsUseAssociated(x, scope)) {
     return "USE-associated";
@@ -221,10 +216,13 @@ bool AssignmentContext::CheckForPureContext(const SomeExpr &lhs,
   return true;
 }
 
-// 10.2.3.1(2) The masks and LHS of assignments must all have the same shape
+// 10.2.3.1(2) The masks and LHS of assignments must be arrays of the same shape
 void AssignmentContext::CheckShape(parser::CharBlock at, const SomeExpr *expr) {
   if (auto shape{evaluate::GetShape(foldingContext(), expr)}) {
     std::size_t size{shape->size()};
+    if (size == 0) {
+      Say(at, "The mask or variable must not be scalar"_err_en_US);
+    }
     if (whereDepth_ == 0) {
       whereExtents_.resize(size);
     } else if (whereExtents_.size() != size) {
@@ -251,7 +249,7 @@ void AssignmentContext::CheckShape(parser::CharBlock at, const SomeExpr *expr) {
 
 template <typename A> void AssignmentContext::PushWhereContext(const A &x) {
   const auto &expr{std::get<parser::LogicalExpr>(x.t)};
-  CheckShape(expr.thing.value().source, GetExpr(expr));
+  CheckShape(expr.thing.value().source, GetExpr(context_, expr));
   ++whereDepth_;
 }
 

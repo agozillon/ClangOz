@@ -53,8 +53,9 @@ extern "C" {
     const char *module_name; // Module name as a C string. This pointer is a
                              // unique identifier of a module.
     uptr has_dynamic_init;   // Non-zero if the global has dynamic initializer.
-    __asan_global_source_location *location;  // Source location of a global,
-                                              // or NULL if it is unknown.
+    uptr windows_padding;    // TODO: Figure out how to remove this padding
+                             // that's simply here to make the MSVC incremental
+                             // linker happy...
     uptr odr_indicator;      // The address of the ODR indicator symbol.
   };
 
@@ -173,8 +174,8 @@ extern "C" {
 
   SANITIZER_INTERFACE_ATTRIBUTE void __asan_print_accumulated_stats();
 
-  SANITIZER_INTERFACE_ATTRIBUTE SANITIZER_WEAK_ATTRIBUTE
-  const char* __asan_default_options();
+  SANITIZER_INTERFACE_ATTRIBUTE
+  const char *__asan_default_options();
 
   SANITIZER_INTERFACE_ATTRIBUTE
   extern uptr __asan_shadow_memory_dynamic_address;

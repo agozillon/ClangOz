@@ -11,10 +11,8 @@
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCExpr.h"
-#include "llvm/MC/MCInstrInfo.h"
-#include "llvm/MC/MCParser/MCAsmLexer.h"
-#include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCParser/MCAsmParserExtension.h"
+#include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCTargetOptions.h"
 #include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Support/SMLoc.h"
@@ -23,10 +21,12 @@
 
 namespace llvm {
 
+class MCContext;
 class MCInst;
-class MCParsedAsmOperand;
+class MCInstrInfo;
 class MCStreamer;
 class MCSubtargetInfo;
+class MCSymbol;
 template <typename T> class SmallVectorImpl;
 
 using OperandVector = SmallVectorImpl<std::unique_ptr<MCParsedAsmOperand>>;
@@ -101,10 +101,14 @@ struct AsmRewrite {
   int64_t Val;
   StringRef Label;
   IntelExpr IntelExp;
+  bool IntelExpRestricted;
 
 public:
-  AsmRewrite(AsmRewriteKind kind, SMLoc loc, unsigned len = 0, int64_t val = 0)
-    : Kind(kind), Loc(loc), Len(len), Done(false), Val(val) {}
+  AsmRewrite(AsmRewriteKind kind, SMLoc loc, unsigned len = 0, int64_t val = 0,
+             bool Restricted = false)
+      : Kind(kind), Loc(loc), Len(len), Done(false), Val(val) {
+    IntelExpRestricted = Restricted;
+  }
   AsmRewrite(AsmRewriteKind kind, SMLoc loc, unsigned len, StringRef label)
     : AsmRewrite(kind, loc, len) { Label = label; }
   AsmRewrite(SMLoc loc, unsigned len, IntelExpr exp)
@@ -370,7 +374,7 @@ public:
 
   // Target-specific parsing of expression.
   virtual bool parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
-    return getParser().parsePrimaryExpr(Res, EndLoc);
+    return getParser().parsePrimaryExpr(Res, EndLoc, nullptr);
   }
 
   virtual bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc,
@@ -478,7 +482,7 @@ public:
   }
 
   // For actions that have to be performed before a label is emitted
-  virtual void doBeforeLabelEmit(MCSymbol *Symbol) {}
+  virtual void doBeforeLabelEmit(MCSymbol *Symbol, SMLoc IDLoc) {}
   
   virtual void onLabelParsed(MCSymbol *Symbol) {}
 
@@ -491,6 +495,9 @@ public:
                                               MCContext &Ctx) {
     return nullptr;
   }
+
+  // For any initialization at the beginning of parsing.
+  virtual void onBeginOfFile() {}
 
   // For any checks or cleanups at the end of parsing.
   virtual void onEndOfFile() {}

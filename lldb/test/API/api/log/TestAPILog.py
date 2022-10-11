@@ -11,22 +11,12 @@ from lldbsuite.test.lldbtest import *
 
 class APILogTestCase(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-
     NO_DEBUG_INFO_TESTCASE = True
 
     def test_api_log(self):
         """Test API logging"""
         logfile = self.getBuildArtifact("api-log.txt")
 
-        def cleanup():
-            if os.path.exists(logfile):
-                os.unlink(logfile)
-
-        if configuration.is_reproducer_replay():
-            logfile = self.getReproducerRemappedPath(logfile)
-
-        self.addTearDownHook(cleanup)
         self.expect("log enable lldb api -f {}".format(logfile))
 
         self.dbg.SetDefaultArchitecture(None)

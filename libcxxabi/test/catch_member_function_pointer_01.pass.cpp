@@ -1,4 +1,4 @@
-//===--------------- catch_member_function_pointer_01.cpp -----------------===//
+//===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -161,10 +161,12 @@ void test_void()
     }
 }
 
-int main()
+int main(int, char**)
 {
     test1();
     test2();
     test_derived();
     test_void();
+
+    return 0;
 }

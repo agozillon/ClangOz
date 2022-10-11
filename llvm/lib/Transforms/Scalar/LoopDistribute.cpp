@@ -33,7 +33,6 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/iterator_range.h"
-#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/LoopAccessAnalysis.h"
@@ -48,7 +47,6 @@
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
@@ -232,7 +230,7 @@ public:
     // having to update as many def-use and use-def chains.
     for (auto *Inst : reverse(Unused)) {
       if (!Inst->use_empty())
-        Inst->replaceAllUsesWith(UndefValue::get(Inst->getType()));
+        Inst->replaceAllUsesWith(PoisonValue::get(Inst->getType()));
       Inst->eraseFromParent();
     }
   }
@@ -399,7 +397,7 @@ public:
         continue;
 
       auto PartI = I->getData();
-      for (auto PartJ : make_range(std::next(ToBeMerged.member_begin(I)),
+      for (auto *PartJ : make_range(std::next(ToBeMerged.member_begin(I)),
                                    ToBeMerged.member_end())) {
         PartJ->moveTo(*PartI);
       }
@@ -463,16 +461,14 @@ public:
     // update PH to point to the newly added preheader.
     BasicBlock *TopPH = OrigPH;
     unsigned Index = getSize() - 1;
-    for (auto I = std::next(PartitionContainer.rbegin()),
-              E = PartitionContainer.rend();
-         I != E; ++I, --Index, TopPH = NewLoop->getLoopPreheader()) {
-      auto *Part = &*I;
+    for (auto &Part : llvm::drop_begin(llvm::reverse(PartitionContainer))) {
+      NewLoop = Part.cloneLoopWithPreheader(TopPH, Pred, Index, LI, DT);
 
-      NewLoop = Part->cloneLoopWithPreheader(TopPH, Pred, Index, LI, DT);
-
-      Part->getVMap()[ExitBlock] = TopPH;
-      Part->remapInstructions();
-      setNewLoopID(OrigLoopID, Part);
+      Part.getVMap()[ExitBlock] = TopPH;
+      Part.remapInstructions();
+      setNewLoopID(OrigLoopID, &Part);
+      --Index;
+      TopPH = NewLoop->getLoopPreheader();
     }
     Pred->getTerminator()->replaceUsesOfWith(OrigPH, TopPH);
 
@@ -602,9 +598,9 @@ private:
         {LLVMLoopDistributeFollowupAll,
          Part->hasDepCycle() ? LLVMLoopDistributeFollowupSequential
                              : LLVMLoopDistributeFollowupCoincident});
-    if (PartitionID.hasValue()) {
+    if (PartitionID) {
       Loop *NewLoop = Part->getDistributedLoop();
-      NewLoop->setLoopID(PartitionID.getValue());
+      NewLoop->setLoopID(PartitionID.value());
     }
   }
 };
@@ -637,7 +633,7 @@ public:
     Accesses.append(Instructions.begin(), Instructions.end());
 
     LLVM_DEBUG(dbgs() << "Backward dependences:\n");
-    for (auto &Dep : Dependences)
+    for (const auto &Dep : Dependences)
       if (Dep.isPossiblyBackward()) {
         // Note that the designations source and destination follow the program
         // order, i.e. source is always first.  (The direction is given by the
@@ -664,21 +660,23 @@ public:
 
   /// Try to distribute an inner-most loop.
   bool processLoop(std::function<const LoopAccessInfo &(Loop &)> &GetLAA) {
-    assert(L->empty() && "Only process inner loops.");
+    assert(L->isInnermost() && "Only process inner loops.");
 
     LLVM_DEBUG(dbgs() << "\nLDist: In \""
                       << L->getHeader()->getParent()->getName()
                       << "\" checking " << *L << "\n");
 
+    // Having a single exit block implies there's also one exiting block.
     if (!L->getExitBlock())
       return fail("MultipleExitBlocks", "multiple exit blocks");
     if (!L->isLoopSimplifyForm())
       return fail("NotLoopSimplifyForm",
                   "loop is not in loop-simplify form");
+    if (!L->isRotatedForm())
+      return fail("NotBottomTested", "loop is not bottom tested");
 
     BasicBlock *PH = L->getLoopPreheader();
 
-    // LAA will check that we only have a single exiting block.
     LAI = &GetLAA(*L);
 
     // Currently, we only distribute to isolate the part of the loop with
@@ -717,7 +715,7 @@ public:
                                      *Dependences);
 
     int NumUnsafeDependencesActive = 0;
-    for (auto &InstDep : MID) {
+    for (const auto &InstDep : MID) {
       Instruction *I = InstDep.Inst;
       // We update NumUnsafeDependencesActive post-instruction, catch the
       // start of a dependence directly via NumUnsafeDependencesStartOrEnd.
@@ -769,19 +767,19 @@ public:
 
     // Don't distribute the loop if we need too many SCEV run-time checks, or
     // any if it's illegal.
-    const SCEVUnionPredicate &Pred = LAI->getPSE().getUnionPredicate();
+    const SCEVPredicate &Pred = LAI->getPSE().getPredicate();
     if (LAI->hasConvergentOp() && !Pred.isAlwaysTrue()) {
       return fail("RuntimeCheckWithConvergent",
                   "may not insert runtime check with convergent operation");
     }
 
-    if (Pred.getComplexity() > (IsForced.getValueOr(false)
+    if (Pred.getComplexity() > (IsForced.value_or(false)
                                     ? PragmaDistributeSCEVCheckThreshold
                                     : DistributeSCEVCheckThreshold))
       return fail("TooManySCEVRuntimeChecks",
                   "too many SCEV run-time checks needed.\n");
 
-    if (!IsForced.getValueOr(false) && hasDisableAllTransformsHint(L))
+    if (!IsForced.value_or(false) && hasDisableAllTransformsHint(L))
       return fail("HeuristicDisabled", "distribution heuristic disabled");
 
     LLVM_DEBUG(dbgs() << "\nDistributing loop: " << *L << "\n");
@@ -814,9 +812,7 @@ public:
 
       LLVM_DEBUG(dbgs() << "\nPointers:\n");
       LLVM_DEBUG(LAI->getRuntimePointerChecking()->printChecks(dbgs(), Checks));
-      LoopVersioning LVer(*LAI, L, LI, DT, SE, false);
-      LVer.setAliasChecks(std::move(Checks));
-      LVer.setSCEVChecks(LAI->getPSE().getUnionPredicate());
+      LoopVersioning LVer(*LAI, Checks, L, LI, DT, SE);
       LVer.versionLoop(DefsUsedOutside);
       LVer.annotateLoopWithNoAlias();
 
@@ -828,7 +824,7 @@ public:
                              {LLVMLoopDistributeFollowupAll,
                               LLVMLoopDistributeFollowupFallback},
                              "llvm.loop.distribute.", true)
-              .getValue();
+              .value();
       LVer.getNonVersionedLoop()->setLoopID(UnversionedLoopID);
     }
 
@@ -860,7 +856,7 @@ public:
   /// Provide diagnostics then \return with false.
   bool fail(StringRef RemarkName, StringRef Message) {
     LLVMContext &Ctx = F->getContext();
-    bool Forced = isForced().getValueOr(false);
+    bool Forced = isForced().value_or(false);
 
     LLVM_DEBUG(dbgs() << "Skipping; " << Message << "\n");
 
@@ -982,7 +978,7 @@ static bool runImpl(Function &F, LoopInfo *LI, DominatorTree *DT,
   for (Loop *TopLevelLoop : *LI)
     for (Loop *L : depth_first(TopLevelLoop))
       // We only handle inner-most loops.
-      if (L->empty())
+      if (L->isInnermost())
         Worklist.push_back(L);
 
   // Now walk the identified inner loops.
@@ -992,7 +988,7 @@ static bool runImpl(Function &F, LoopInfo *LI, DominatorTree *DT,
 
     // If distribution was forced for the specific loop to be
     // enabled/disabled, follow that.  Otherwise use the global flag.
-    if (LDL.isForced().getValueOr(EnableLoopDistribute))
+    if (LDL.isForced().value_or(EnableLoopDistribute))
       Changed |= LDL.processLoop(GetLAA);
   }
 
@@ -1058,7 +1054,8 @@ PreservedAnalyses LoopDistributePass::run(Function &F,
   auto &LAM = AM.getResult<LoopAnalysisManagerFunctionProxy>(F).getManager();
   std::function<const LoopAccessInfo &(Loop &)> GetLAA =
       [&](Loop &L) -> const LoopAccessInfo & {
-    LoopStandardAnalysisResults AR = {AA, AC, DT, LI, SE, TLI, TTI, nullptr};
+    LoopStandardAnalysisResults AR = {AA,  AC,  DT,      LI,      SE,
+                                      TLI, TTI, nullptr, nullptr, nullptr};
     return LAM.getResult<LoopAccessAnalysis>(L, AR);
   };
 
@@ -1068,7 +1065,6 @@ PreservedAnalyses LoopDistributePass::run(Function &F,
   PreservedAnalyses PA;
   PA.preserve<LoopAnalysis>();
   PA.preserve<DominatorTreeAnalysis>();
-  PA.preserve<GlobalsAA>();
   return PA;
 }
 

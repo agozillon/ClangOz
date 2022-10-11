@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple x86_64-apple-darwin -std=c++11 -emit-llvm -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-apple-darwin -std=c++11 -emit-llvm -o - %s | FileCheck %s
 
 // Verify assume_safety vectorization is recognized.
 void vectorize_test(int *List, int Length) {
@@ -47,12 +47,12 @@ void interleave_test(int *List, int Length) {
 }
 
 // CHECK: ![[ACCESS_GROUP_2]] = distinct !{}
-// CHECK: ![[LOOP1_HINTS]] = distinct !{![[LOOP1_HINTS]], ![[PARALLEL_ACCESSES_7:[0-9]+]], ![[UNROLL_DISABLE:[0-9]+]], ![[INTERLEAVE_1:[0-9]+]], ![[INTENABLE_1:[0-9]+]]}
+// CHECK: ![[LOOP1_HINTS]] = distinct !{![[LOOP1_HINTS]], [[MP:![0-9]+]], ![[PARALLEL_ACCESSES_7:[0-9]+]], ![[UNROLL_DISABLE:[0-9]+]], ![[INTERLEAVE_1:[0-9]+]], ![[INTENABLE_1:[0-9]+]]}
 // CHECK: ![[PARALLEL_ACCESSES_7]] = !{!"llvm.loop.parallel_accesses", ![[ACCESS_GROUP_2]]}
 // CHECK: ![[UNROLL_DISABLE]] = !{!"llvm.loop.unroll.disable"}
 // CHECK: ![[INTERLEAVE_1]] = !{!"llvm.loop.interleave.count", i32 1}
 // CHECK: ![[INTENABLE_1]] = !{!"llvm.loop.vectorize.enable", i1 true}
 // CHECK: ![[ACCESS_GROUP_8]] = distinct !{}
-// CHECK: ![[LOOP2_HINTS]] = distinct !{![[LOOP2_HINTS]], ![[PARALLEL_ACCESSES_11:[0-9]+]], ![[UNROLL_DISABLE]], ![[WIDTH_1:[0-9]+]], ![[INTENABLE_1]]}
+// CHECK: ![[LOOP2_HINTS]] = distinct !{![[LOOP2_HINTS]], [[MP]], ![[PARALLEL_ACCESSES_11:[0-9]+]], ![[UNROLL_DISABLE]], ![[WIDTH_1:[0-9]+]], ![[INTENABLE_1]]}
 // CHECK: ![[PARALLEL_ACCESSES_11]] = !{!"llvm.loop.parallel_accesses", ![[ACCESS_GROUP_8]]}
 // CHECK: ![[WIDTH_1]] = !{!"llvm.loop.vectorize.width", i32 1}

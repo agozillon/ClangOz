@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -emit-llvm -fblocks -fobjc-arc -fobjc-runtime-has-weak -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-apple-darwin10 -emit-llvm -fblocks -fobjc-arc -fobjc-runtime-has-weak -o - %s | FileCheck %s
 
 __attribute((objc_root_class)) @interface A @end
 @interface B : A @end
@@ -8,7 +8,7 @@ __attribute((objc_root_class)) @interface A @end
 void test0(__weak B **src) {
   __weak A *dest = *src;
 }
-// CHECK-LABEL: define void @test0
+// CHECK-LABEL: define{{.*}} void @test0
 // CHECK:       [[SRC:%.*]] = alloca [[B:%.*]]**, align 8
 // CHECK:       [[DEST:%.*]] = alloca [[A:%.*]]*, align 8
 // CHECK:       [[T0:%.*]] = load [[B]]**, [[B]]*** [[SRC]], align 8

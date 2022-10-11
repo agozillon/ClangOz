@@ -9,11 +9,9 @@
 #ifndef LLVM_DEBUGINFO_PDB_PDBSYMBOL_H
 #define LLVM_DEBUGINFO_PDB_PDBSYMBOL_H
 
-#include "ConcreteSymbolEnumerator.h"
 #include "IPDBRawSymbol.h"
 #include "PDBExtras.h"
 #include "PDBTypes.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 
 #define FORWARD_SYMBOL_METHOD(MethodName)                                      \
@@ -42,8 +40,10 @@ class StringRef;
 class raw_ostream;
 
 namespace pdb {
-class IPDBRawSymbol;
 class IPDBSession;
+class PDBSymDumper;
+class PDBSymbol;
+template <typename ChildType> class ConcreteSymbolEnumerator;
 
 #define DECLARE_PDB_SYMBOL_CONCRETE_TYPE(TagValue)                             \
 private:                                                                       \
@@ -141,7 +141,14 @@ public:
                                                      StringRef Name,
                                                      PDB_NameSearchFlags Flags,
                                                      uint32_t RVA) const;
+  std::unique_ptr<IPDBEnumSymbols> findInlineFramesByVA(uint64_t VA) const;
   std::unique_ptr<IPDBEnumSymbols> findInlineFramesByRVA(uint32_t RVA) const;
+  std::unique_ptr<IPDBEnumLineNumbers>
+  findInlineeLinesByVA(uint64_t VA, uint32_t Length) const;
+  std::unique_ptr<IPDBEnumLineNumbers>
+  findInlineeLinesByRVA(uint32_t RVA, uint32_t Length) const;
+
+  std::string getName() const;
 
   const IPDBRawSymbol &getRawSymbol() const { return *RawSymbol; }
   IPDBRawSymbol &getRawSymbol() { return *RawSymbol; }

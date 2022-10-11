@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/CodeGen/CommandFlags.h"
@@ -35,19 +36,21 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/InitializePasses.h"
+#include "llvm/MC/MCTargetOptionsCommandFlags.h"
 #include "llvm/MC/SubtargetFeature.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Pass.h"
+#include "llvm/Remarks/HotnessThresholdParser.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/InitLLVM.h"
-#include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/PluginLoader.h"
 #include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
@@ -81,6 +84,28 @@ TimeCompilations("time-compilations", cl::Hidden, cl::init(1u),
                  cl::value_desc("N"),
                  cl::desc("Repeat compilation N times for timing"));
 
+static cl::opt<bool> TimeTrace("time-trace", cl::desc("Record time trace"));
+
+static cl::opt<unsigned> TimeTraceGranularity(
+    "time-trace-granularity",
+    cl::desc(
+        "Minimum time granularity (in microseconds) traced by time profiler"),
+    cl::init(500), cl::Hidden);
+
+static cl::opt<std::string>
+    TimeTraceFile("time-trace-file",
+                  cl::desc("Specify time trace file destination"),
+                  cl::value_desc("filename"));
+
+static cl::opt<std::string>
+    BinutilsVersion("binutils-version", cl::Hidden,
+                    cl::desc("Produced object files can use all ELF features "
+                             "supported by this binutils version and newer."
+                             "If -no-integrated-as is specified, the generated "
+                             "assembly will consider GNU as support."
+                             "'none' means that all ELF features can be used, "
+                             "regardless of binutils support"));
+
 static cl::opt<bool>
 NoIntegratedAssembler("no-integrated-as", cl::Hidden,
                       cl::desc("Disable integrated assembler"));
@@ -92,12 +117,10 @@ static cl::opt<bool>
 
 // Determine optimization level.
 static cl::opt<char>
-OptLevel("O",
-         cl::desc("Optimization level. [-O0, -O1, -O2, or -O3] "
-                  "(default = '-O2')"),
-         cl::Prefix,
-         cl::ZeroOrMore,
-         cl::init(' '));
+    OptLevel("O",
+             cl::desc("Optimization level. [-O0, -O1, -O2, or -O3] "
+                      "(default = '-O2')"),
+             cl::Prefix, cl::init(' '));
 
 static cl::opt<std::string>
 TargetTriple("mtriple", cl::desc("Override target triple for module"));
@@ -116,9 +139,10 @@ static cl::opt<bool> DisableSimplifyLibCalls("disable-simplify-libcalls",
 static cl::opt<bool> ShowMCEncoding("show-mc-encoding", cl::Hidden,
                                     cl::desc("Show encoding in .s output"));
 
-static cl::opt<bool> EnableDwarfDirectory(
-    "enable-dwarf-directory", cl::Hidden,
-    cl::desc("Use .file directives with an explicit directory."));
+static cl::opt<bool>
+    DwarfDirectory("dwarf-directory", cl::Hidden,
+                   cl::desc("Use .file directives with an explicit directory"),
+                   cl::init(true));
 
 static cl::opt<bool> AsmVerbose("asm-verbose",
                                 cl::desc("Add comments to directives."),
@@ -142,11 +166,13 @@ static cl::opt<bool> RemarksWithHotness(
     cl::desc("With PGO, include profile count in optimization remarks"),
     cl::Hidden);
 
-static cl::opt<unsigned>
-    RemarksHotnessThreshold("pass-remarks-hotness-threshold",
-                            cl::desc("Minimum profile count required for "
-                                     "an optimization remark to be output"),
-                            cl::Hidden);
+static cl::opt<Optional<uint64_t>, false, remarks::HotnessThresholdParser>
+    RemarksHotnessThreshold(
+        "pass-remarks-hotness-threshold",
+        cl::desc("Minimum profile count required for "
+                 "an optimization remark to be output. "
+                 "Use 'auto' to apply the threshold from profile summary."),
+        cl::value_desc("N or 'auto'"), cl::init(0), cl::Hidden);
 
 static cl::opt<std::string>
     RemarksFilename("pass-remarks-output",
@@ -165,7 +191,11 @@ static cl::opt<std::string> RemarksFormat(
     cl::value_desc("format"), cl::init("yaml"));
 
 namespace {
-static ManagedStatic<std::vector<std::string>> RunPassNames;
+
+std::vector<std::string> &getRunPassNames() {
+  static std::vector<std::string> RunPassNames;
+  return RunPassNames;
+}
 
 struct RunPassOption {
   void operator=(const std::string &Val) const {
@@ -174,7 +204,7 @@ struct RunPassOption {
     SmallVector<StringRef, 8> PassNames;
     StringRef(Val).split(PassNames, ',', -1, false);
     for (auto PassName : PassNames)
-      RunPassNames->push_back(std::string(PassName));
+      getRunPassNames().push_back(std::string(PassName));
   }
 };
 }
@@ -184,9 +214,27 @@ static RunPassOption RunPassOpt;
 static cl::opt<RunPassOption, true, cl::parser<std::string>> RunPass(
     "run-pass",
     cl::desc("Run compiler only for specified passes (comma separated list)"),
-    cl::value_desc("pass-name"), cl::ZeroOrMore, cl::location(RunPassOpt));
+    cl::value_desc("pass-name"), cl::location(RunPassOpt));
 
 static int compileModule(char **, LLVMContext &);
+
+[[noreturn]] static void reportError(Twine Msg, StringRef Filename = "") {
+  SmallString<256> Prefix;
+  if (!Filename.empty()) {
+    if (Filename == "-")
+      Filename = "<stdin>";
+    ("'" + Twine(Filename) + "': ").toStringRef(Prefix);
+  }
+  WithColor::error(errs(), "llc") << Prefix << Msg << "\n";
+  exit(1);
+}
+
+[[noreturn]] static void reportError(Error Err, StringRef Filename) {
+  assert(Err);
+  handleAllErrors(createFileError(Filename, std::move(Err)),
+                  [&](const ErrorInfoBase &EI) { reportError(EI.message()); });
+  llvm_unreachable("reportError() should not return");
+}
 
 static std::unique_ptr<ToolOutputFile> GetOutputStream(const char *TargetName,
                                                        Triple::OSType OS,
@@ -224,7 +272,7 @@ static std::unique_ptr<ToolOutputFile> GetOutputStream(const char *TargetName,
           OutputFilename += ".o";
         break;
       case CGFT_Null:
-        OutputFilename += ".null";
+        OutputFilename = "-";
         break;
       }
     }
@@ -245,10 +293,10 @@ static std::unique_ptr<ToolOutputFile> GetOutputStream(const char *TargetName,
   std::error_code EC;
   sys::fs::OpenFlags OpenFlags = sys::fs::OF_None;
   if (!Binary)
-    OpenFlags |= sys::fs::OF_Text;
+    OpenFlags |= sys::fs::OF_TextWithCRLF;
   auto FDOut = std::make_unique<ToolOutputFile>(OutputFilename, EC, OpenFlags);
   if (EC) {
-    WithColor::error() << EC.message() << '\n';
+    reportError(EC.message());
     return nullptr;
   }
 
@@ -259,6 +307,22 @@ struct LLCDiagnosticHandler : public DiagnosticHandler {
   bool *HasError;
   LLCDiagnosticHandler(bool *HasErrorPtr) : HasError(HasErrorPtr) {}
   bool handleDiagnostics(const DiagnosticInfo &DI) override {
+    if (DI.getKind() == llvm::DK_SrcMgr) {
+      const auto &DISM = cast<DiagnosticInfoSrcMgr>(DI);
+      const SMDiagnostic &SMD = DISM.getSMDiag();
+
+      if (SMD.getKind() == SourceMgr::DK_Error)
+        *HasError = true;
+
+      SMD.print(nullptr, errs());
+
+      // For testing purposes, we print the LocCookie here.
+      if (DISM.isInlineAsmDiag() && DISM.getLocCookie())
+        WithColor::note() << "!srcloc = " << DISM.getLocCookie() << "\n";
+
+      return true;
+    }
+
     if (DI.getSeverity() == DS_Error)
       *HasError = true;
 
@@ -274,19 +338,6 @@ struct LLCDiagnosticHandler : public DiagnosticHandler {
   }
 };
 
-static void InlineAsmDiagHandler(const SMDiagnostic &SMD, void *Context,
-                                 unsigned LocCookie) {
-  bool *HasError = static_cast<bool *>(Context);
-  if (SMD.getKind() == SourceMgr::DK_Error)
-    *HasError = true;
-
-  SMD.print(nullptr, errs());
-
-  // For testing purposes, we print the LocCookie here.
-  if (LocCookie)
-    WithColor::note() << "!srcloc = " << LocCookie << "\n";
-}
-
 // main - Entry point for the llc compiler.
 //
 int main(int argc, char **argv) {
@@ -294,8 +345,6 @@ int main(int argc, char **argv) {
 
   // Enable debug stream buffering.
   EnableDebugBuffering = true;
-
-  LLVMContext Context;
 
   // Initialize targets first, so that --version shows registered targets.
   InitializeAllTargets();
@@ -310,16 +359,17 @@ int main(int argc, char **argv) {
   initializeCodeGen(*Registry);
   initializeLoopStrengthReducePass(*Registry);
   initializeLowerIntrinsicsPass(*Registry);
-  initializeEntryExitInstrumenterPass(*Registry);
-  initializePostInlineEntryExitInstrumenterPass(*Registry);
   initializeUnreachableBlockElimLegacyPassPass(*Registry);
   initializeConstantHoistingLegacyPassPass(*Registry);
   initializeScalarOpts(*Registry);
   initializeVectorization(*Registry);
-  initializeScalarizeMaskedMemIntrinPass(*Registry);
+  initializeScalarizeMaskedMemIntrinLegacyPassPass(*Registry);
   initializeExpandReductionsPass(*Registry);
+  initializeExpandVectorPredicationPass(*Registry);
   initializeHardwareLoopsPass(*Registry);
   initializeTransformUtils(*Registry);
+  initializeReplaceWithVeclibLegacyPass(*Registry);
+  initializeTLSVariableHoistLegacyPassPass(*Registry);
 
   // Initialize debugging passes.
   initializeScavengerTestPass(*Registry);
@@ -329,30 +379,38 @@ int main(int argc, char **argv) {
 
   cl::ParseCommandLineOptions(argc, argv, "llvm system compiler\n");
 
+  if (TimeTrace)
+    timeTraceProfilerInitialize(TimeTraceGranularity, argv[0]);
+  auto TimeTraceScopeExit = make_scope_exit([]() {
+    if (TimeTrace) {
+      if (auto E = timeTraceProfilerWrite(TimeTraceFile, OutputFilename)) {
+        handleAllErrors(std::move(E), [&](const StringError &SE) {
+          errs() << SE.getMessage() << "\n";
+        });
+        return;
+      }
+      timeTraceProfilerCleanup();
+    }
+  });
+
+  LLVMContext Context;
   Context.setDiscardValueNames(DiscardValueNames);
 
   // Set a diagnostic handler that doesn't exit on the first error
   bool HasError = false;
   Context.setDiagnosticHandler(
       std::make_unique<LLCDiagnosticHandler>(&HasError));
-  Context.setInlineAsmDiagnosticHandler(InlineAsmDiagHandler, &HasError);
 
   Expected<std::unique_ptr<ToolOutputFile>> RemarksFileOrErr =
       setupLLVMOptimizationRemarks(Context, RemarksFilename, RemarksPasses,
                                    RemarksFormat, RemarksWithHotness,
                                    RemarksHotnessThreshold);
-  if (Error E = RemarksFileOrErr.takeError()) {
-    WithColor::error(errs(), argv[0]) << toString(std::move(E)) << '\n';
-    return 1;
-  }
+  if (Error E = RemarksFileOrErr.takeError())
+    reportError(std::move(E), RemarksFilename);
   std::unique_ptr<ToolOutputFile> RemarksFile = std::move(*RemarksFileOrErr);
 
-  if (InputLanguage != "" && InputLanguage != "ir" &&
-      InputLanguage != "mir") {
-    WithColor::error(errs(), argv[0])
-        << "input language must be '', 'IR' or 'MIR'\n";
-    return 1;
-  }
+  if (InputLanguage != "" && InputLanguage != "ir" && InputLanguage != "mir")
+    reportError("input language must be '', 'IR' or 'MIR'");
 
   // Compile the module TimeCompilations times to give better compile time
   // metrics.
@@ -409,8 +467,8 @@ static int compileModule(char **argv, LLVMContext &Context) {
   };
 
   auto MAttrs = codegen::getMAttrs();
-  bool SkipModule = codegen::getMCPU() == "help" ||
-                    (!MAttrs.empty() && MAttrs.front() == "help");
+  bool SkipModule =
+      CPUStr == "help" || (!MAttrs.empty() && MAttrs.front() == "help");
 
   CodeGenOpt::Level OLvl = CodeGenOpt::Default;
   switch (OptLevel) {
@@ -424,16 +482,46 @@ static int compileModule(char **argv, LLVMContext &Context) {
   case '3': OLvl = CodeGenOpt::Aggressive; break;
   }
 
-  TargetOptions Options = codegen::InitTargetOptionsFromCodeGenFlags();
-  Options.DisableIntegratedAS = NoIntegratedAssembler;
-  Options.MCOptions.ShowMCEncoding = ShowMCEncoding;
-  Options.MCOptions.MCUseDwarfDirectory = EnableDwarfDirectory;
-  Options.MCOptions.AsmVerbose = AsmVerbose;
-  Options.MCOptions.PreserveAsmComments = PreserveComments;
-  Options.MCOptions.IASSearchPaths = IncludeDirs;
-  Options.MCOptions.SplitDwarfFile = SplitDwarfFile;
+  // Parse 'none' or '$major.$minor'. Disallow -binutils-version=0 because we
+  // use that to indicate the MC default.
+  if (!BinutilsVersion.empty() && BinutilsVersion != "none") {
+    StringRef V = BinutilsVersion.getValue();
+    unsigned Num;
+    if (V.consumeInteger(10, Num) || Num == 0 ||
+        !(V.empty() ||
+          (V.consume_front(".") && !V.consumeInteger(10, Num) && V.empty()))) {
+      WithColor::error(errs(), argv[0])
+          << "invalid -binutils-version, accepting 'none' or major.minor\n";
+      return 1;
+    }
+  }
+  TargetOptions Options;
+  auto InitializeOptions = [&](const Triple &TheTriple) {
+    Options = codegen::InitTargetOptionsFromCodeGenFlags(TheTriple);
+    Options.BinutilsVersion =
+        TargetMachine::parseBinutilsVersion(BinutilsVersion);
+    Options.DisableIntegratedAS = NoIntegratedAssembler;
+    Options.MCOptions.ShowMCEncoding = ShowMCEncoding;
+    Options.MCOptions.AsmVerbose = AsmVerbose;
+    Options.MCOptions.PreserveAsmComments = PreserveComments;
+    Options.MCOptions.IASSearchPaths = IncludeDirs;
+    Options.MCOptions.SplitDwarfFile = SplitDwarfFile;
+    if (DwarfDirectory.getPosition()) {
+      Options.MCOptions.MCUseDwarfDirectory =
+          DwarfDirectory ? MCTargetOptions::EnableDwarfDirectory
+                         : MCTargetOptions::DisableDwarfDirectory;
+    } else {
+      // -dwarf-directory is not set explicitly. Some assemblers
+      // (e.g. GNU as or ptxas) do not support `.file directory'
+      // syntax prior to DWARFv5. Let the target decide the default
+      // value.
+      Options.MCOptions.MCUseDwarfDirectory =
+          MCTargetOptions::DefaultDwarfDirectory;
+    }
+  };
 
   Optional<Reloc::Model> RM = codegen::getExplicitRelocModel();
+  Optional<CodeModel::Model> CM = codegen::getExplicitCodeModel();
 
   const Target *TheTarget = nullptr;
   std::unique_ptr<TargetMachine> Target;
@@ -460,15 +548,13 @@ static int compileModule(char **argv, LLVMContext &Context) {
 
       // On AIX, setting the relocation model to anything other than PIC is
       // considered a user error.
-      if (TheTriple.isOSAIX() && RM.hasValue() && *RM != Reloc::PIC_) {
-        WithColor::error(errs(), argv[0])
-            << "invalid relocation model, AIX only supports PIC.\n";
-        exit(1);
-      }
+      if (TheTriple.isOSAIX() && RM && *RM != Reloc::PIC_)
+        reportError("invalid relocation model, AIX only supports PIC",
+                    InputFilename);
 
+      InitializeOptions(TheTriple);
       Target = std::unique_ptr<TargetMachine>(TheTarget->createTargetMachine(
-          TheTriple.getTriple(), CPUStr, FeaturesStr, Options, RM,
-          codegen::getExplicitCodeModel(), OLvl));
+          TheTriple.getTriple(), CPUStr, FeaturesStr, Options, RM, CM, OLvl));
       assert(Target && "Could not allocate target machine!");
 
       return Target->createDataLayout().getStringRepresentation();
@@ -488,6 +574,10 @@ static int compileModule(char **argv, LLVMContext &Context) {
     }
     if (!TargetTriple.empty())
       M->setTargetTriple(Triple::normalize(TargetTriple));
+
+    Optional<CodeModel::Model> CM_IR = M->getCodeModel();
+    if (!CM && CM_IR)
+      Target->setCodeModel(CM_IR.value());
   } else {
     TheTriple = Triple(Triple::normalize(TargetTriple));
     if (TheTriple.getTriple().empty())
@@ -504,15 +594,15 @@ static int compileModule(char **argv, LLVMContext &Context) {
 
     // On AIX, setting the relocation model to anything other than PIC is
     // considered a user error.
-    if (TheTriple.isOSAIX() && RM.hasValue() && *RM != Reloc::PIC_) {
+    if (TheTriple.isOSAIX() && RM && *RM != Reloc::PIC_) {
       WithColor::error(errs(), argv[0])
           << "invalid relocation model, AIX only supports PIC.\n";
       return 1;
     }
 
+    InitializeOptions(TheTriple);
     Target = std::unique_ptr<TargetMachine>(TheTarget->createTargetMachine(
-        TheTriple.getTriple(), CPUStr, FeaturesStr, Options, RM,
-        codegen::getExplicitCodeModel(), OLvl));
+        TheTriple.getTriple(), CPUStr, FeaturesStr, Options, RM, CM, OLvl));
     assert(Target && "Could not allocate target machine!");
 
     // If we don't have a module then just exit now. We do this down
@@ -530,15 +620,16 @@ static int compileModule(char **argv, LLVMContext &Context) {
       GetOutputStream(TheTarget->getName(), TheTriple.getOS(), argv[0]);
   if (!Out) return 1;
 
+  // Ensure the filename is passed down to CodeViewDebug.
+  Target->Options.ObjectFilenameForDebug = Out->outputFilename();
+
   std::unique_ptr<ToolOutputFile> DwoOut;
   if (!SplitDwarfOutputFile.empty()) {
     std::error_code EC;
     DwoOut = std::make_unique<ToolOutputFile>(SplitDwarfOutputFile, EC,
                                                sys::fs::OF_None);
-    if (EC) {
-      WithColor::error(errs(), argv[0]) << EC.message() << '\n';
-      return 1;
-    }
+    if (EC)
+      reportError(EC.message(), SplitDwarfOutputFile);
   }
 
   // Build up all of the passes that we want to do to the module.
@@ -554,12 +645,8 @@ static int compileModule(char **argv, LLVMContext &Context) {
 
   // Verify module immediately to catch problems before doInitialization() is
   // called on any passes.
-  if (!NoVerify && verifyModule(*M, &errs())) {
-    std::string Prefix =
-        (Twine(argv[0]) + Twine(": ") + Twine(InputFilename)).str();
-    WithColor::error(errs(), Prefix) << "input module is broken!\n";
-    return 1;
-  }
+  if (!NoVerify && verifyModule(*M, &errs()))
+    reportError("input module cannot be verified", InputFilename);
 
   // Override function attributes based on CPUStr, FeaturesStr, and command line
   // flags.
@@ -590,7 +677,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
 
     // Construct a custom pass pipeline that starts after instruction
     // selection.
-    if (!RunPassNames->empty()) {
+    if (!getRunPassNames().empty()) {
       if (!MIR) {
         WithColor::warning(errs(), argv[0])
             << "run-pass is for .mir file only.\n";
@@ -608,7 +695,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
       PM.add(&TPC);
       PM.add(MMIWP);
       TPC.printAndVerify("");
-      for (const std::string &RunPassName : *RunPassNames) {
+      for (const std::string &RunPassName : getRunPassNames()) {
         if (addPass(PM, argv0, RunPassName, TPC))
           return 1;
       }
@@ -618,10 +705,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
     } else if (Target->addPassesToEmitFile(
                    PM, *OS, DwoOut ? &DwoOut->os() : nullptr,
                    codegen::getFileType(), NoVerify, MMIWP)) {
-      WithColor::warning(errs(), argv[0])
-          << "target does not support generation of this"
-          << " file type!\n";
-      return 1;
+      reportError("target does not support generation of this file type");
     }
 
     const_cast<TargetLoweringObjectFile *>(LLVMTM.getObjFileLowering())

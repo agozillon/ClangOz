@@ -15,18 +15,39 @@
 
 #include "RISCVRegisterInfo.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
+#include "llvm/IR/DiagnosticInfo.h"
 
 #define GET_INSTRINFO_HEADER
+#define GET_INSTRINFO_OPERAND_ENUM
 #include "RISCVGenInstrInfo.inc"
 
 namespace llvm {
 
 class RISCVSubtarget;
 
+namespace RISCVCC {
+
+enum CondCode {
+  COND_EQ,
+  COND_NE,
+  COND_LT,
+  COND_GE,
+  COND_LTU,
+  COND_GEU,
+  COND_INVALID
+};
+
+CondCode getOppositeBranchCondition(CondCode);
+
+} // end of namespace RISCVCC
+
 class RISCVInstrInfo : public RISCVGenInstrInfo {
 
 public:
   explicit RISCVInstrInfo(RISCVSubtarget &STI);
+
+  MCInst getNop() const override;
+  const MCInstrDesc &getBrCond(RISCVCC::CondCode CC) const;
 
   unsigned isLoadFromStackSlot(const MachineInstr &MI,
                                int &FrameIndex) const override;
@@ -48,6 +69,14 @@ public:
                             int FrameIndex, const TargetRegisterClass *RC,
                             const TargetRegisterInfo *TRI) const override;
 
+  using TargetInstrInfo::foldMemoryOperandImpl;
+  MachineInstr *foldMemoryOperandImpl(MachineFunction &MF, MachineInstr &MI,
+                                      ArrayRef<unsigned> Ops,
+                                      MachineBasicBlock::iterator InsertPt,
+                                      int FrameIndex,
+                                      LiveIntervals *LIS = nullptr,
+                                      VirtRegMap *VRM = nullptr) const override;
+
   // Materializes the given integer Val into DstReg.
   void movImm(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
               const DebugLoc &DL, Register DstReg, uint64_t Val,
@@ -65,10 +94,10 @@ public:
                         const DebugLoc &dl,
                         int *BytesAdded = nullptr) const override;
 
-  unsigned insertIndirectBranch(MachineBasicBlock &MBB,
-                                MachineBasicBlock &NewDestBB,
-                                const DebugLoc &DL, int64_t BrOffset,
-                                RegScavenger *RS = nullptr) const override;
+  void insertIndirectBranch(MachineBasicBlock &MBB,
+                            MachineBasicBlock &NewDestBB,
+                            MachineBasicBlock &RestoreBB, const DebugLoc &DL,
+                            int64_t BrOffset, RegScavenger *RS) const override;
 
   unsigned removeBranch(MachineBasicBlock &MBB,
                         int *BytesRemoved = nullptr) const override;
@@ -82,6 +111,9 @@ public:
                              int64_t BrOffset) const override;
 
   bool isAsCheapAsAMove(const MachineInstr &MI) const override;
+
+  Optional<DestSourcePair>
+  isCopyInstrImpl(const MachineInstr &MI) const override;
 
   bool verifyInstruction(const MachineInstr &MI,
                          StringRef &ErrInfo) const override;
@@ -102,94 +134,91 @@ public:
   getSerializableDirectMachineOperandTargetFlags() const override;
 
   // Return true if the function can safely be outlined from.
-  virtual bool
-  isFunctionSafeToOutlineFrom(MachineFunction &MF,
-                              bool OutlineFromLinkOnceODRs) const override;
+  bool isFunctionSafeToOutlineFrom(MachineFunction &MF,
+                                   bool OutlineFromLinkOnceODRs) const override;
 
   // Return true if MBB is safe to outline from, and return any target-specific
   // information in Flags.
-  virtual bool isMBBSafeToOutlineFrom(MachineBasicBlock &MBB,
-                                      unsigned &Flags) const override;
+  bool isMBBSafeToOutlineFrom(MachineBasicBlock &MBB,
+                              unsigned &Flags) const override;
+
+  bool shouldOutlineFromFunctionByDefault(MachineFunction &MF) const override;
 
   // Calculate target-specific information for a set of outlining candidates.
   outliner::OutlinedFunction getOutliningCandidateInfo(
       std::vector<outliner::Candidate> &RepeatedSequenceLocs) const override;
 
   // Return if/how a given MachineInstr should be outlined.
-  virtual outliner::InstrType
-  getOutliningType(MachineBasicBlock::iterator &MBBI,
-                   unsigned Flags) const override;
+  outliner::InstrType getOutliningType(MachineBasicBlock::iterator &MBBI,
+                                       unsigned Flags) const override;
 
   // Insert a custom frame for outlined functions.
-  virtual void
-  buildOutlinedFrame(MachineBasicBlock &MBB, MachineFunction &MF,
-                     const outliner::OutlinedFunction &OF) const override;
+  void buildOutlinedFrame(MachineBasicBlock &MBB, MachineFunction &MF,
+                          const outliner::OutlinedFunction &OF) const override;
 
   // Insert a call to an outlined function into a given basic block.
-  virtual MachineBasicBlock::iterator
+  MachineBasicBlock::iterator
   insertOutlinedCall(Module &M, MachineBasicBlock &MBB,
                      MachineBasicBlock::iterator &It, MachineFunction &MF,
-                     const outliner::Candidate &C) const override;
+                     outliner::Candidate &C) const override;
+
+  bool findCommutedOpIndices(const MachineInstr &MI, unsigned &SrcOpIdx1,
+                             unsigned &SrcOpIdx2) const override;
+  MachineInstr *commuteInstructionImpl(MachineInstr &MI, bool NewMI,
+                                       unsigned OpIdx1,
+                                       unsigned OpIdx2) const override;
+
+  MachineInstr *convertToThreeAddress(MachineInstr &MI, LiveVariables *LV,
+                                      LiveIntervals *LIS) const override;
+
+  // MIR printer helper function to annotate Operands with a comment.
+  std::string
+  createMIROperandComment(const MachineInstr &MI, const MachineOperand &Op,
+                          unsigned OpIdx,
+                          const TargetRegisterInfo *TRI) const override;
+
+  Register getVLENFactoredAmount(
+      MachineFunction &MF, MachineBasicBlock &MBB,
+      MachineBasicBlock::iterator II, const DebugLoc &DL, int64_t Amount,
+      MachineInstr::MIFlag Flag = MachineInstr::NoFlags) const;
+
 protected:
   const RISCVSubtarget &STI;
 };
 
 namespace RISCV {
-// Match with the definitions in RISCVInstrFormatsV.td
-enum RVVConstraintType {
-  NoConstraint = 0,
-  VS2Constraint = 0b0001,
-  VS1Constraint = 0b0010,
-  VMConstraint = 0b0100,
-  OneInput = 0b1000,
 
-  // Illegal instructions:
-  //
-  // * The destination vector register group for a masked vector instruction
-  // cannot overlap the source mask register (v0), unless the destination vector
-  // register is being written with a mask value (e.g., comparisons) or the
-  // scalar result of a reduction.
-  //
-  // * Widening: The destination vector register group cannot overlap a source
-  // vector register group of a different EEW
-  //
-  // * Narrowing: The destination vector register group cannot overlap the
-  // first source vector register group
-  //
-  // * For vadc and vsbc, an illegal instruction exception is raised if the
-  // destination vector register is v0.
-  //
-  // * For vmadc and vmsbc, an illegal instruction exception is raised if the
-  // destination vector register overlaps a source vector register group.
-  //
-  // * viota: An illegal instruction exception is raised if the destination
-  // vector register group overlaps the source vector mask register. If the
-  // instruction is masked, an illegal instruction exception is issued if the
-  // destination vector register group overlaps v0.
-  //
-  // * v[f]slide[1]up: The destination vector register group for vslideup cannot
-  // overlap the source vector register group.
-  //
-  // * vrgather: The destination vector register group cannot overlap with the
-  // source vector register groups.
-  //
-  // * vcompress: The destination vector register group cannot overlap the
-  // source vector register group or the source mask register
-  WidenV = VS2Constraint | VS1Constraint | VMConstraint,
-  WidenW = VS1Constraint | VMConstraint,
-  WidenCvt = VS2Constraint | VMConstraint | OneInput,
-  Narrow = VS2Constraint | VMConstraint,
-  NarrowCvt = VS2Constraint | VMConstraint | OneInput,
-  Vmadc = VS2Constraint | VS1Constraint,
-  Iota = VS2Constraint | VMConstraint | OneInput,
-  SlideUp = VS2Constraint | VMConstraint,
-  Vrgather = VS2Constraint | VS1Constraint | VMConstraint,
-  Vcompress = VS2Constraint | VS1Constraint,
+// Returns true if this is the sext.w pattern, addiw rd, rs1, 0.
+bool isSEXT_W(const MachineInstr &MI);
+bool isZEXT_W(const MachineInstr &MI);
+bool isZEXT_B(const MachineInstr &MI);
 
-  ConstraintOffset = 5,
-  ConstraintMask = 0b1111
+// Returns true if the given MI is an RVV instruction opcode for which we may
+// expect to see a FrameIndex operand.
+bool isRVVSpill(const MachineInstr &MI);
+
+Optional<std::pair<unsigned, unsigned>> isRVVSpillForZvlsseg(unsigned Opcode);
+
+bool isFaultFirstLoad(const MachineInstr &MI);
+
+// Implemented in RISCVGenInstrInfo.inc
+int16_t getNamedOperandIdx(uint16_t Opcode, uint16_t NamedIndex);
+
+// Special immediate for AVL operand of V pseudo instructions to indicate VLMax.
+static constexpr int64_t VLMaxSentinel = -1LL;
+} // namespace RISCV
+
+namespace RISCVVPseudosTable {
+
+struct PseudoInfo {
+  uint16_t Pseudo;
+  uint16_t BaseInstr;
 };
-} // end namespace RISCV
+
+#define GET_RISCVVPseudosTable_DECL
+#include "RISCVGenSearchableTables.inc"
+
+} // end namespace RISCVVPseudosTable
 
 } // end namespace llvm
 #endif

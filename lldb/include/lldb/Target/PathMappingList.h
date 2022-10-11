@@ -9,10 +9,11 @@
 #ifndef LLDB_TARGET_PATHMAPPINGLIST_H
 #define LLDB_TARGET_PATHMAPPINGLIST_H
 
-#include <map>
-#include <vector>
 #include "lldb/Utility/ConstString.h"
 #include "lldb/Utility/Status.h"
+#include "llvm/Support/JSON.h"
+#include <map>
+#include <vector>
 
 namespace lldb_private {
 
@@ -32,8 +33,7 @@ public:
 
   const PathMappingList &operator=(const PathMappingList &rhs);
 
-  void Append(ConstString path, ConstString replacement,
-              bool notify);
+  void Append(llvm::StringRef path, llvm::StringRef replacement, bool notify);
 
   void Append(const PathMappingList &rhs, bool notify);
 
@@ -42,6 +42,8 @@ public:
   // By default, dump all pairs.
   void Dump(Stream *s, int pair_index = -1);
 
+  llvm::json::Value ToJSON();
+
   bool IsEmpty() const { return m_pairs.empty(); }
 
   size_t GetSize() const { return m_pairs.size(); }
@@ -49,17 +51,16 @@ public:
   bool GetPathsAtIndex(uint32_t idx, ConstString &path,
                        ConstString &new_path) const;
 
-  void Insert(ConstString path, ConstString replacement,
+  void Insert(llvm::StringRef path, llvm::StringRef replacement,
               uint32_t insert_idx, bool notify);
 
   bool Remove(size_t index, bool notify);
 
   bool Remove(ConstString path, bool notify);
 
-  bool Replace(ConstString path, ConstString replacement,
-               bool notify);
+  bool Replace(llvm::StringRef path, llvm::StringRef replacement, bool notify);
 
-  bool Replace(ConstString path, ConstString replacement,
+  bool Replace(llvm::StringRef path, llvm::StringRef replacement,
                uint32_t index, bool notify);
   bool RemapPath(ConstString path, ConstString &new_path) const;
 
@@ -72,13 +73,19 @@ public:
   /// \param[in] path
   ///     The original source file path to try and remap.
   ///
-  /// \param[out] new_path
-  ///     The newly remapped filespec that is may or may not exist.
+  /// \param[in] only_if_exists
+  ///     If \b true, besides matching \p path with the remapping rules, this
+  ///     tries to check with the filesystem that the remapped file exists. If
+  ///     no valid file is found, \b None is returned. This might be expensive,
+  ///     specially on a network.
+  ///
+  ///     If \b false, then the existence of the returned remapping is not
+  ///     checked.
   ///
   /// \return
-  ///     /b true if \a path was successfully located and \a new_path
-  ///     is filled in with a new source path, \b false otherwise.
-  bool RemapPath(llvm::StringRef path, std::string &new_path) const;
+  ///     The remapped filespec that may or may not exist on disk.
+  llvm::Optional<FileSpec> RemapPath(llvm::StringRef path,
+                                     bool only_if_exists = false) const;
   bool RemapPath(const char *, std::string &) const = delete;
 
   bool ReverseRemapPath(const FileSpec &file, FileSpec &fixed) const;
@@ -94,16 +101,11 @@ public:
   /// \param[in] orig_spec
   ///     The original source file path to try and remap.
   ///
-  /// \param[out] new_spec
-  ///     The newly remapped filespec that is guaranteed to exist.
-  ///
   /// \return
-  ///     /b true if \a orig_spec was successfully located and
-  ///     \a new_spec is filled in with an existing file spec,
-  ///     \b false otherwise.
-  bool FindFile(const FileSpec &orig_spec, FileSpec &new_spec) const;
+  ///     The newly remapped filespec that is guaranteed to exist.
+  llvm::Optional<FileSpec> FindFile(const FileSpec &orig_spec) const;
 
-  uint32_t FindIndexForPath(ConstString path) const;
+  uint32_t FindIndexForPath(llvm::StringRef path) const;
 
   uint32_t GetModificationID() const { return m_mod_id; }
 
@@ -118,9 +120,9 @@ protected:
   const_iterator FindIteratorForPath(ConstString path) const;
 
   collection m_pairs;
-  ChangedCallback m_callback;
-  void *m_callback_baton;
-  uint32_t m_mod_id; // Incremented anytime anything is added or removed.
+  ChangedCallback m_callback = nullptr;
+  void *m_callback_baton = nullptr;
+  uint32_t m_mod_id = 0; // Incremented anytime anything is added or removed.
 };
 
 } // namespace lldb_private

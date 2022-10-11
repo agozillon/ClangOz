@@ -5,15 +5,28 @@
 
 # RUN: llvm-objdump -d %t | FileCheck %s --check-prefix=DISASM
 # RUN: llvm-dwarfdump -gdb-index %t | FileCheck %s --check-prefix=DWARF
-# RUN: llvm-readelf -sections %t | FileCheck %s --check-prefix=SECTION
 
-# RUN: llvm-mc -compress-debug-sections=zlib-gnu -filetype=obj -triple=x86_64-pc-linux \
+## Drop .debug_gnu_pubnames and .debug_gnu_pubtypes.
+## Also drop their relocation sections if --emit-relocs is specified.
+# RUN: ld.lld --gdb-index --emit-relocs %t1.o %t2.o -o %t1
+# RUN: llvm-readelf --sections %t1 | FileCheck %s --check-prefix=SECTION
+
+# SECTION-NOT: .debug_gnu_pubnames
+# SECTION-NOT: .debug_gnu_pubtypes
+
+# RUN: llvm-mc -compress-debug-sections=zlib -filetype=obj -triple=x86_64-pc-linux \
 # RUN:   %p/Inputs/gdb-index.s -o %t2.o
 # RUN: ld.lld --gdb-index %t1.o %t2.o -o %t
 
 # RUN: llvm-objdump -d %t | FileCheck %s --check-prefix=DISASM
 # RUN: llvm-dwarfdump -gdb-index %t | FileCheck %s --check-prefix=DWARF
-# RUN: llvm-readelf -sections %t | FileCheck %s --check-prefix=SECTION
+# RUN: llvm-readelf -S %t | FileCheck %s --check-prefix=SECTION
+
+# RUN: %if zstd %{ llvm-mc -compress-debug-sections=zlib -filetype=obj -triple=x86_64 %p/Inputs/gdb-index.s -o %t2.o %}
+# RUN: %if zstd %{ ld.lld --gdb-index %t1.o %t2.o -o %t %}
+# RUN: %if zstd %{ llvm-objdump -d %t | FileCheck %s --check-prefix=DISASM %}
+# RUN: %if zstd %{ llvm-dwarfdump --gdb-index %t | FileCheck %s --check-prefix=DWARF %}
+# RUN: %if zstd %{ llvm-readelf -S %t | FileCheck %s --check-prefix=SECTION %}
 
 # DISASM:       Disassembly of section .text:
 # DISASM-EMPTY:
@@ -45,8 +58,6 @@
 # DWARF-NEXT:    0(0x0): 0x30000001
 # DWARF-NEXT:    1(0x8): 0x30000000
 # DWARF-NEXT:    2(0x10): 0x90000000 0x90000001
-
-# SECTION-NOT: debug_gnu_pubnames
 
 # RUN: ld.lld --gdb-index --no-gdb-index %t1.o %t2.o -o %t2
 # RUN: llvm-readobj --sections %t2 | FileCheck -check-prefix=NOGDB %s
@@ -111,7 +122,7 @@ entrypoint:
 .section .debug_gnu_pubnames,"",@progbits
 .long 0x1e
 .value 0x2
-.long 0
+.long .debug_info
 .long 0x33
 .long 0x18
 .byte 0x30
@@ -121,7 +132,7 @@ entrypoint:
 .section .debug_gnu_pubtypes,"",@progbits
 .long 0x17
 .value 0x2
-.long 0
+.long .debug_info
 .long 0x33
 .long 0x2b
 .byte 0x90

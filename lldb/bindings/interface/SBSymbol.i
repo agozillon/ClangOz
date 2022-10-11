@@ -10,9 +10,7 @@ namespace lldb {
 
 %feature("docstring",
 "Represents the symbol possibly associated with a stack frame.
-SBModule contains SBSymbol(s). SBSymbol can also be retrieved from SBFrame.
-
-See also SBModule and SBFrame."
+:py:class:`SBModule` contains SBSymbol(s). SBSymbol can also be retrieved from :py:class:`SBFrame` ."
 ) SBSymbol;
 class SBSymbol
 {
@@ -50,6 +48,10 @@ public:
 
     SBAddress
     GetEndAddress ();
+
+    uint64_t GetValue();
+
+    uint64_t GetSize();
 
     uint32_t
     GetPrologueByteSize ();

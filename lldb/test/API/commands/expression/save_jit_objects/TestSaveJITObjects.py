@@ -10,7 +10,6 @@ from lldbsuite.test.lldbtest import *
 from lldbsuite.test import lldbutil
 
 class SaveJITObjectsTestCase(TestBase):
-    mydir = TestBase.compute_mydir(__file__)
 
     def enumerateJITFiles(self):
         return [f for f in os.listdir(self.getBuildDir()) if f.startswith("jit")]
@@ -24,7 +23,6 @@ class SaveJITObjectsTestCase(TestBase):
         return
 
     @expectedFailureAll(oslist=["windows"])
-    @expectedFailureNetBSD
     def test_save_jit_objects(self):
         self.build()
         os.chdir(self.getBuildDir())
@@ -39,14 +37,14 @@ class SaveJITObjectsTestCase(TestBase):
         self.cleanJITFiles()
         frame.EvaluateExpression("(void*)malloc(0x1)")
         self.assertEquals(self.countJITFiles(), 0,
-                        "No files emitted with save-jit-objects=false")
-
-        self.runCmd("settings set target.save-jit-objects true")
+                          "No files emitted with save-jit-objects-dir empty")
+        
+        self.runCmd("settings set target.save-jit-objects-dir {0}".format(self.getBuildDir()))
         frame.EvaluateExpression("(void*)malloc(0x1)")
         jit_files_count = self.countJITFiles()
         self.cleanJITFiles()
         self.assertNotEqual(jit_files_count, 0,
-                        "At least one file emitted with save-jit-objects=true")
+                            "At least one file emitted with save-jit-objects-dir set to the build dir")
 
         process.Kill()
         os.chdir(self.getSourceDir())

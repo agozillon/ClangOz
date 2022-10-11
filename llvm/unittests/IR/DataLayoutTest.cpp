@@ -7,8 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Testing/Support/Error.h"
 #include "gtest/gtest.h"
 
 using namespace llvm;
@@ -56,4 +59,49 @@ TEST(DataLayoutTest, ValueOrABITypeAlignment) {
             DL.getValueOrABITypeAlignment(MaybeAlign(), FourByteAlignType));
 }
 
-}  // anonymous namespace
+TEST(DataLayoutTest, GlobalsAddressSpace) {
+  // When not explicitly defined the globals address space should be zero:
+  EXPECT_EQ(DataLayout("").getDefaultGlobalsAddressSpace(), 0u);
+  EXPECT_EQ(DataLayout("P1-A2").getDefaultGlobalsAddressSpace(), 0u);
+  EXPECT_EQ(DataLayout("G2").getDefaultGlobalsAddressSpace(), 2u);
+  // Check that creating a GlobalVariable without an explicit address space
+  // in a module with a default globals address space respects that default:
+  LLVMContext Context;
+  std::unique_ptr<Module> M(new Module("MyModule", Context));
+  // Default is globals in address space zero:
+  auto *Int32 = Type::getInt32Ty(Context);
+  auto *DefaultGlobal1 = new GlobalVariable(
+      *M, Int32, false, GlobalValue::ExternalLinkage, nullptr);
+  EXPECT_EQ(DefaultGlobal1->getAddressSpace(), 0u);
+  auto *ExplicitGlobal1 = new GlobalVariable(
+      *M, Int32, false, GlobalValue::ExternalLinkage, nullptr, "", nullptr,
+      GlobalValue::NotThreadLocal, 123);
+  EXPECT_EQ(ExplicitGlobal1->getAddressSpace(), 123u);
+
+  // When using a datalayout with the global address space set to 200, global
+  // variables should default to 200
+  M->setDataLayout("G200");
+  auto *DefaultGlobal2 = new GlobalVariable(
+      *M, Int32, false, GlobalValue::ExternalLinkage, nullptr);
+  EXPECT_EQ(DefaultGlobal2->getAddressSpace(), 200u);
+  auto *ExplicitGlobal2 = new GlobalVariable(
+      *M, Int32, false, GlobalValue::ExternalLinkage, nullptr, "", nullptr,
+      GlobalValue::NotThreadLocal, 123);
+  EXPECT_EQ(ExplicitGlobal2->getAddressSpace(), 123u);
+}
+
+TEST(DataLayoutTest, VectorAlign) {
+  Expected<DataLayout> DL = DataLayout::parse("v64:64");
+  EXPECT_THAT_EXPECTED(DL, Succeeded());
+
+  LLVMContext Context;
+  Type *const FloatTy = Type::getFloatTy(Context);
+  Type *const V8F32Ty = FixedVectorType::get(FloatTy, 8);
+
+  // The alignment for a vector type larger than any specified vector type uses
+  // the natural alignment as a fallback.
+  EXPECT_EQ(Align(4 * 8), DL->getABITypeAlign(V8F32Ty));
+  EXPECT_EQ(Align(4 * 8), DL->getPrefTypeAlign(V8F32Ty));
+}
+
+} // anonymous namespace

@@ -4,14 +4,14 @@
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
 
-@b = common local_unnamed_addr global i64 0, align 8
-@a = common local_unnamed_addr global i8 0, align 1
+@b = common dso_local local_unnamed_addr global i64 0, align 8
+@a = common dso_local local_unnamed_addr global i8 0, align 1
 
 ; Function Attrs: norecurse nounwind uwtable
-define void @c() local_unnamed_addr #0 {
+define dso_local void @c() local_unnamed_addr #0 {
 ; CHECK-LABEL: c:
 ; CHECK:       # %bb.0: # %entry
-; CHECK-NEXT:    movq {{.*}}(%rip), %rax
+; CHECK-NEXT:    movq b(%rip), %rax
 ; CHECK-NEXT:    leaq (%rax,%rax,4), %rcx
 ; CHECK-NEXT:    negq %rcx
 ; CHECK-NEXT:    leaq (%rax,%rax,8), %rax
@@ -19,11 +19,11 @@ define void @c() local_unnamed_addr #0 {
 ; CHECK-NEXT:    testq %rax, %rcx
 ; CHECK-NEXT:    je .LBB0_2
 ; CHECK-NEXT:  # %bb.1: # %if.then
-; CHECK-NEXT:    movb $0, {{.*}}(%rip)
+; CHECK-NEXT:    movb $0, a(%rip)
 ; CHECK-NEXT:  .LBB0_2: # %if.end
 ; CHECK-NEXT:    retq
 entry:
-  %0 = load i64, i64* @b, align 8, !tbaa !2
+  %0 = load i64, ptr @b, align 8, !tbaa !2
   %mul = mul nsw i64 %0, -5
   %mul1 = mul nsw i64 %0, 45
   %and = and i64 %mul, %mul1
@@ -31,7 +31,7 @@ entry:
   br i1 %tobool, label %if.end, label %if.then
 
 if.then:                                          ; preds = %entry
-  store i8 0, i8* @a, align 1, !tbaa !6
+  store i8 0, ptr @a, align 1, !tbaa !6
   br label %if.end
 
 if.end:                                           ; preds = %entry, %if.then

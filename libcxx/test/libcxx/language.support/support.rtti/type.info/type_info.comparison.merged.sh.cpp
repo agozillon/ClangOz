@@ -6,7 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-// UNSUPPORTED: -fno-rtti
+// UNSUPPORTED: no-rtti
+
+// In MSVC mode, the two anonymous types have identical type index in both object files.
+// XFAIL: msvc
 
 // RUN: %{cxx} %s %{flags} %{compile_flags} -c -o %t.tu1.o -DTU1 -D_LIBCPP_TYPEINFO_COMPARISON_IMPLEMENTATION=1
 // RUN: %{cxx} %s %{flags} %{compile_flags} -c -o %t.tu2.o -DTU2 -D_LIBCPP_TYPEINFO_COMPARISON_IMPLEMENTATION=1
@@ -32,12 +35,13 @@ void register2();
 #elif defined(MAIN)
   std::vector<std::type_index> registry;
 
-  int main() {
+  int main(int, char**) {
     register1();
     register2();
 
     assert(registry.size() == 2);
     assert(registry[0] != registry[1]);
+    return 0;
   }
 #else
 # error

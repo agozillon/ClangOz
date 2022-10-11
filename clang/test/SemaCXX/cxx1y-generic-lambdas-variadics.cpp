@@ -2,6 +2,10 @@
 // RUN: %clang_cc1 -std=c++1y -verify -fsyntax-only -fblocks -fdelayed-template-parsing %s -DDELAYED_TEMPLATE_PARSING
 // RUN: %clang_cc1 -std=c++1y -verify -fsyntax-only -fblocks -fms-extensions %s -DMS_EXTENSIONS
 // RUN: %clang_cc1 -std=c++1y -verify -fsyntax-only -fblocks -fdelayed-template-parsing -fms-extensions %s -DMS_EXTENSIONS -DDELAYED_TEMPLATE_PARSING
+// RUN: %clang_cc1 -std=c++1y -verify -fsyntax-only -fblocks -triple i386-windows %s
+// RUN: %clang_cc1 -std=c++1y -verify -fsyntax-only -fblocks -triple i386-windows -fdelayed-template-parsing %s -DDELAYED_TEMPLATE_PARSING
+// RUN: %clang_cc1 -std=c++1y -verify -fsyntax-only -fblocks -triple i386-windows -fms-extensions %s -DMS_EXTENSIONS
+// RUN: %clang_cc1 -std=c++1y -verify -fsyntax-only -fblocks -triple i386-windows -fdelayed-template-parsing -fms-extensions %s -DMS_EXTENSIONS -DDELAYED_TEMPLATE_PARSING
 
 namespace explicit_argument_variadics {
 
@@ -100,7 +104,9 @@ namespace variadic_expansion {
 
 namespace PR33082 {
   template<int ...I> void a() {
-    int arr[] = { [](auto ...K) { (void)I; } ... }; // expected-error {{no viable conversion}} expected-note {{candidate}}
+    int arr[] = { [](auto ...K) { (void)I; } ... };
+    // expected-error@-1   {{no viable conversion}}
+    // expected-note-re@-2 {{candidate template ignored: could not match 'auto (*)(type-parameter-0-0...){{.*}}' against 'int'}}
   }
 
   template<typename ...T> struct Pack {};

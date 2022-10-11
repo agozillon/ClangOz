@@ -16,8 +16,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
-#include "llvm/Support/ErrorOr.h"
-#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
@@ -28,14 +27,16 @@ static void codegen(Module *M, llvm::raw_pwrite_stream &OS,
                     function_ref<std::unique_ptr<TargetMachine>()> TMFactory,
                     CodeGenFileType FileType) {
   std::unique_ptr<TargetMachine> TM = TMFactory();
+  assert(TM && "Failed to create target machine!");
+
   legacy::PassManager CodeGenPasses;
   if (TM->addPassesToEmitFile(CodeGenPasses, OS, nullptr, FileType))
     report_fatal_error("Failed to setup codegen");
   CodeGenPasses.run(*M);
 }
 
-std::unique_ptr<Module> llvm::splitCodeGen(
-    std::unique_ptr<Module> M, ArrayRef<llvm::raw_pwrite_stream *> OSs,
+void llvm::splitCodeGen(
+    Module &M, ArrayRef<llvm::raw_pwrite_stream *> OSs,
     ArrayRef<llvm::raw_pwrite_stream *> BCOSs,
     const std::function<std::unique_ptr<TargetMachine>()> &TMFactory,
     CodeGenFileType FileType, bool PreserveLocals) {
@@ -43,9 +44,9 @@ std::unique_ptr<Module> llvm::splitCodeGen(
 
   if (OSs.size() == 1) {
     if (!BCOSs.empty())
-      WriteBitcodeToFile(*M, *BCOSs[0]);
-    codegen(M.get(), *OSs[0], TMFactory, FileType);
-    return M;
+      WriteBitcodeToFile(M, *BCOSs[0]);
+    codegen(&M, *OSs[0], TMFactory, FileType);
+    return;
   }
 
   // Create ThreadPool in nested scope so that threads will be joined
@@ -55,7 +56,7 @@ std::unique_ptr<Module> llvm::splitCodeGen(
     int ThreadCount = 0;
 
     SplitModule(
-        std::move(M), OSs.size(),
+        M, OSs.size(),
         [&](std::unique_ptr<Module> MPart) {
           // We want to clone the module in a new context to multi-thread the
           // codegen. We do it by serializing partition modules to bitcode
@@ -93,6 +94,4 @@ std::unique_ptr<Module> llvm::splitCodeGen(
         },
         PreserveLocals);
   }
-
-  return {};
 }

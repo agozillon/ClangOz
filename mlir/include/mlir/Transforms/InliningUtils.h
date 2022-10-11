@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef MLIR_TRANSFORMS_INLINING_UTILS_H
-#define MLIR_TRANSFORMS_INLINING_UTILS_H
+#ifndef MLIR_TRANSFORMS_INLININGUTILS_H
+#define MLIR_TRANSFORMS_INLININGUTILS_H
 
 #include "mlir/IR/DialectInterface.h"
 #include "mlir/IR/Location.h"
@@ -23,7 +23,6 @@ class Block;
 class BlockAndValueMapping;
 class CallableOpInterface;
 class CallOpInterface;
-class FuncOp;
 class OpBuilder;
 class Operation;
 class Region;
@@ -47,22 +46,39 @@ public:
   // Analysis Hooks
   //===--------------------------------------------------------------------===//
 
+  /// Returns true if the given operation 'callable', that implements the
+  /// 'CallableOpInterface', can be inlined into the position given call
+  /// operation 'call', that is registered to the current dialect and implements
+  /// the `CallOpInterface`. 'wouldBeCloned' is set to true if the region of the
+  /// given 'callable' is set to be cloned during the inlining process, or false
+  /// if the region is set to be moved in-place(i.e. no duplicates would be
+  /// created).
+  virtual bool isLegalToInline(Operation *call, Operation *callable,
+                               bool wouldBeCloned) const {
+    return false;
+  }
+
   /// Returns true if the given region 'src' can be inlined into the region
   /// 'dest' that is attached to an operation registered to the current dialect.
-  /// 'valueMapping' contains any remapped values from within the 'src' region.
-  /// This can be used to examine what values will replace entry arguments into
-  /// the 'src' region for example.
-  virtual bool isLegalToInline(Region *dest, Region *src,
+  /// 'wouldBeCloned' is set to true if the given 'src' region is set to be
+  /// cloned during the inlining process, or false if the region is set to be
+  /// moved in-place(i.e. no duplicates would be created). 'valueMapping'
+  /// contains any remapped values from within the 'src' region. This can be
+  /// used to examine what values will replace entry arguments into the 'src'
+  /// region for example.
+  virtual bool isLegalToInline(Region *dest, Region *src, bool wouldBeCloned,
                                BlockAndValueMapping &valueMapping) const {
     return false;
   }
 
   /// Returns true if the given operation 'op', that is registered to this
   /// dialect, can be inlined into the given region, false otherwise.
-  /// 'valueMapping' contains any remapped values from within the 'src' region.
-  /// This can be used to examine what values may potentially replace the
-  /// operands to 'op'.
-  virtual bool isLegalToInline(Operation *op, Region *dest,
+  /// 'wouldBeCloned' is set to true if the given 'op' is set to be cloned
+  /// during the inlining process, or false if the operation is set to be moved
+  /// in-place(i.e. no duplicates would be created). 'valueMapping' contains any
+  /// remapped values from within the 'src' region. This can be used to examine
+  /// what values may potentially replace the operands to 'op'.
+  virtual bool isLegalToInline(Operation *op, Region *dest, bool wouldBeCloned,
                                BlockAndValueMapping &valueMapping) const {
     return false;
   }
@@ -123,6 +139,11 @@ public:
                                                Location conversionLoc) const {
     return nullptr;
   }
+
+  /// Process a set of blocks that have been inlined for a call. This callback
+  /// is invoked before inlined terminator operations have been processed.
+  virtual void processInlinedCallBlocks(
+      Operation *call, iterator_range<Region::iterator> inlinedBlocks) const {}
 };
 
 /// This interface provides the hooks into the inlining interface.
@@ -146,9 +167,11 @@ public:
   // Analysis Hooks
   //===--------------------------------------------------------------------===//
 
-  virtual bool isLegalToInline(Region *dest, Region *src,
+  virtual bool isLegalToInline(Operation *call, Operation *callable,
+                               bool wouldBeCloned) const;
+  virtual bool isLegalToInline(Region *dest, Region *src, bool wouldBeCloned,
                                BlockAndValueMapping &valueMapping) const;
-  virtual bool isLegalToInline(Operation *op, Region *dest,
+  virtual bool isLegalToInline(Operation *op, Region *dest, bool wouldBeCloned,
                                BlockAndValueMapping &valueMapping) const;
   virtual bool shouldAnalyzeRecursively(Operation *op) const;
 
@@ -159,6 +182,8 @@ public:
   virtual void handleTerminator(Operation *op, Block *newDest) const;
   virtual void handleTerminator(Operation *op,
                                 ArrayRef<Value> valuesToRepl) const;
+  virtual void processInlinedCallBlocks(
+      Operation *call, iterator_range<Region::iterator> inlinedBlocks) const;
 };
 
 //===----------------------------------------------------------------------===//
@@ -185,12 +210,24 @@ LogicalResult inlineRegion(InlinerInterface &interface, Region *src,
                            TypeRange regionResultTypes,
                            Optional<Location> inlineLoc = llvm::None,
                            bool shouldCloneInlinedRegion = true);
+LogicalResult inlineRegion(InlinerInterface &interface, Region *src,
+                           Block *inlineBlock, Block::iterator inlinePoint,
+                           BlockAndValueMapping &mapper,
+                           ValueRange resultsToReplace,
+                           TypeRange regionResultTypes,
+                           Optional<Location> inlineLoc = llvm::None,
+                           bool shouldCloneInlinedRegion = true);
 
 /// This function is an overload of the above 'inlineRegion' that allows for
 /// providing the set of operands ('inlinedOperands') that should be used
 /// in-favor of the region arguments when inlining.
 LogicalResult inlineRegion(InlinerInterface &interface, Region *src,
-                           Operation *inlinePoint,
+                           Operation *inlinePoint, ValueRange inlinedOperands,
+                           ValueRange resultsToReplace,
+                           Optional<Location> inlineLoc = llvm::None,
+                           bool shouldCloneInlinedRegion = true);
+LogicalResult inlineRegion(InlinerInterface &interface, Region *src,
+                           Block *inlineBlock, Block::iterator inlinePoint,
                            ValueRange inlinedOperands,
                            ValueRange resultsToReplace,
                            Optional<Location> inlineLoc = llvm::None,
@@ -206,6 +243,6 @@ LogicalResult inlineCall(InlinerInterface &interface, CallOpInterface call,
                          CallableOpInterface callable, Region *src,
                          bool shouldCloneInlinedRegion = true);
 
-} // end namespace mlir
+} // namespace mlir
 
-#endif // MLIR_TRANSFORMS_INLINING_UTILS_H
+#endif // MLIR_TRANSFORMS_INLININGUTILS_H

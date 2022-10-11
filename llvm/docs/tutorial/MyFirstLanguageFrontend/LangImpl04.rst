@@ -522,6 +522,11 @@ In HandleDefinition, we add two lines to transfer the newly defined function to
 the JIT and open a new module. In HandleExtern, we just need to add one line to
 add the prototype to FunctionProtos.
 
+.. warning::
+    Duplication of symbols in separate modules is not allowed since LLVM-9. That means you can not redefine function in your Kaleidoscope as its shown below. Just skip this part.
+
+    The reason is that the newer OrcV2 JIT APIs are trying to stay very close to the static and dynamic linker rules, including rejecting duplicate symbols. Requiring symbol names to be unique allows us to support concurrent compilation for symbols using the (unique) symbol names as keys for tracking.
+
 With these changes made, let's try our REPL again (I removed the dump of the
 anonymous functions this time, you should get the idea by now :) :
 
@@ -642,7 +647,7 @@ the LLVM JIT and optimizer. To build this example, use:
 .. code-block:: bash
 
     # Compile
-    clang++ -g toy.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core mcjit native` -O3 -o toy
+    clang++ -g toy.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core orcjit native` -O3 -o toy
     # Run
     ./toy
 

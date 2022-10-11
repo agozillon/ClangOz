@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple x86_64-apple-macosx10.7.0 -emit-llvm -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -triple x86_64-apple-macosx10.7.0 -emit-llvm -o - %s | FileCheck %s
 
 // PR4610
 #pragma pack(4)
@@ -64,5 +64,5 @@ struct S4
 // CHECK: %struct.S4 = type { [3 x i8], %struct.T4, i32 }
 // CHECK: %struct.T4 = type <{ i8, i32 }>
 
-// CHECK: @refs = global [[struct_ref]]
-// CHECK: @ss = global [[struct_S]]
+// CHECK: @refs ={{.*}} global [[struct_ref]]
+// CHECK: @ss ={{.*}} global [[struct_S]]
