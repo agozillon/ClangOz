@@ -51,6 +51,10 @@ private:
                          MachineBasicBlock::iterator MBBI, AtomicRMWInst::BinOp,
                          bool IsMasked, int Width,
                          MachineBasicBlock::iterator &NextMBBI);
+  bool expandAtomicMinMaxOp(MachineBasicBlock &MBB,
+                            MachineBasicBlock::iterator MBBI,
+                            AtomicRMWInst::BinOp, bool IsMasked, int Width,
+                            MachineBasicBlock::iterator &NextMBBI);
 };
 
 char LoongArchExpandAtomicPseudo::ID = 0;
@@ -87,6 +91,39 @@ bool LoongArchExpandAtomicPseudo::expandMI(
   case LoongArch::PseudoAtomicSwap32:
     return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::Xchg, false, 32,
                              NextMBBI);
+  case LoongArch::PseudoMaskedAtomicLoadAdd32:
+    return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::Add, true, 32, NextMBBI);
+  case LoongArch::PseudoMaskedAtomicLoadSub32:
+    return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::Sub, true, 32, NextMBBI);
+  case LoongArch::PseudoAtomicLoadNand32:
+    return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::Nand, false, 32,
+                             NextMBBI);
+  case LoongArch::PseudoAtomicLoadNand64:
+    return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::Nand, false, 64,
+                             NextMBBI);
+  case LoongArch::PseudoMaskedAtomicLoadNand32:
+    return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::Nand, true, 32,
+                             NextMBBI);
+  case LoongArch::PseudoAtomicLoadAdd32:
+    return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::Add, false, 32,
+                             NextMBBI);
+  case LoongArch::PseudoAtomicLoadSub32:
+    return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::Sub, false, 32,
+                             NextMBBI);
+  case LoongArch::PseudoAtomicLoadAnd32:
+    return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::And, false, 32,
+                             NextMBBI);
+  case LoongArch::PseudoAtomicLoadOr32:
+    return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::Or, false, 32, NextMBBI);
+  case LoongArch::PseudoAtomicLoadXor32:
+    return expandAtomicBinOp(MBB, MBBI, AtomicRMWInst::Xor, false, 32,
+                             NextMBBI);
+  case LoongArch::PseudoMaskedAtomicLoadUMax32:
+    return expandAtomicMinMaxOp(MBB, MBBI, AtomicRMWInst::UMax, true, 32,
+                                NextMBBI);
+  case LoongArch::PseudoMaskedAtomicLoadUMin32:
+    return expandAtomicMinMaxOp(MBB, MBBI, AtomicRMWInst::UMin, true, 32,
+                                NextMBBI);
   }
   return false;
 }
@@ -104,12 +141,13 @@ static void doAtomicBinOpExpansion(const LoongArchInstrInfo *TII,
 
   // .loop:
   //   dbar 0
-  //   ll.w dest, (addr)
+  //   ll.[w|d] dest, (addr)
   //   binop scratch, dest, val
-  //   sc.w scratch, scratch, (addr)
-  //   beq scratch, zero, loop
+  //   sc.[w|d] scratch, scratch, (addr)
+  //   beqz scratch, loop
   BuildMI(LoopMBB, DL, TII->get(LoongArch::DBAR)).addImm(0);
-  BuildMI(LoopMBB, DL, TII->get(LoongArch::LL_W), DestReg)
+  BuildMI(LoopMBB, DL,
+          TII->get(Width == 32 ? LoongArch::LL_W : LoongArch::LL_D), DestReg)
       .addReg(AddrReg)
       .addImm(0);
   switch (BinOp) {
@@ -120,14 +158,47 @@ static void doAtomicBinOpExpansion(const LoongArchInstrInfo *TII,
         .addReg(IncrReg)
         .addReg(LoongArch::R0);
     break;
+  case AtomicRMWInst::Nand:
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::AND), ScratchReg)
+        .addReg(DestReg)
+        .addReg(IncrReg);
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::XORI), ScratchReg)
+        .addReg(ScratchReg)
+        .addImm(-1);
+    break;
+  case AtomicRMWInst::Add:
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::ADD_W), ScratchReg)
+        .addReg(DestReg)
+        .addReg(IncrReg);
+    break;
+  case AtomicRMWInst::Sub:
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::SUB_W), ScratchReg)
+        .addReg(DestReg)
+        .addReg(IncrReg);
+    break;
+  case AtomicRMWInst::And:
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::AND), ScratchReg)
+        .addReg(DestReg)
+        .addReg(IncrReg);
+    break;
+  case AtomicRMWInst::Or:
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::OR), ScratchReg)
+        .addReg(DestReg)
+        .addReg(IncrReg);
+    break;
+  case AtomicRMWInst::Xor:
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::XOR), ScratchReg)
+        .addReg(DestReg)
+        .addReg(IncrReg);
+    break;
   }
-  BuildMI(LoopMBB, DL, TII->get(LoongArch::SC_W), ScratchReg)
+  BuildMI(LoopMBB, DL,
+          TII->get(Width == 32 ? LoongArch::SC_W : LoongArch::SC_D), ScratchReg)
       .addReg(ScratchReg)
       .addReg(AddrReg)
       .addImm(0);
-  BuildMI(LoopMBB, DL, TII->get(LoongArch::BEQ))
+  BuildMI(LoopMBB, DL, TII->get(LoongArch::BEQZ))
       .addReg(ScratchReg)
-      .addReg(LoongArch::R0)
       .addMBB(LoopMBB);
 }
 
@@ -170,7 +241,7 @@ static void doMaskedAtomicBinOpExpansion(
   //   and scratch, scratch, masktargetdata
   //   xor scratch, destreg, scratch
   //   sc.w scratch, scratch, (alignedaddr)
-  //   beq scratch, zero, loop
+  //   beqz scratch, loop
   BuildMI(LoopMBB, DL, TII->get(LoongArch::DBAR)).addImm(0);
   BuildMI(LoopMBB, DL, TII->get(LoongArch::LL_W), DestReg)
       .addReg(AddrReg)
@@ -183,6 +254,23 @@ static void doMaskedAtomicBinOpExpansion(
         .addReg(IncrReg)
         .addImm(0);
     break;
+  case AtomicRMWInst::Add:
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::ADD_W), ScratchReg)
+        .addReg(DestReg)
+        .addReg(IncrReg);
+    break;
+  case AtomicRMWInst::Sub:
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::SUB_W), ScratchReg)
+        .addReg(DestReg)
+        .addReg(IncrReg);
+    break;
+  case AtomicRMWInst::Nand:
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::AND), ScratchReg)
+        .addReg(DestReg)
+        .addReg(IncrReg);
+    BuildMI(LoopMBB, DL, TII->get(LoongArch::XORI), ScratchReg)
+        .addReg(ScratchReg)
+        .addImm(-1);
     // TODO: support other AtomicRMWInst.
   }
 
@@ -193,9 +281,8 @@ static void doMaskedAtomicBinOpExpansion(
       .addReg(ScratchReg)
       .addReg(AddrReg)
       .addImm(0);
-  BuildMI(LoopMBB, DL, TII->get(LoongArch::BEQ))
+  BuildMI(LoopMBB, DL, TII->get(LoongArch::BEQZ))
       .addReg(ScratchReg)
-      .addReg(LoongArch::R0)
       .addMBB(LoopMBB);
 }
 
@@ -232,6 +319,114 @@ bool LoongArchExpandAtomicPseudo::expandAtomicBinOp(
 
   LivePhysRegs LiveRegs;
   computeAndAddLiveIns(LiveRegs, *LoopMBB);
+  computeAndAddLiveIns(LiveRegs, *DoneMBB);
+
+  return true;
+}
+
+bool LoongArchExpandAtomicPseudo::expandAtomicMinMaxOp(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+    AtomicRMWInst::BinOp BinOp, bool IsMasked, int Width,
+    MachineBasicBlock::iterator &NextMBBI) {
+  assert(IsMasked == true &&
+         "Should only need to expand masked atomic max/min");
+  assert(Width == 32 && "Should never need to expand masked 64-bit operations");
+
+  MachineInstr &MI = *MBBI;
+  DebugLoc DL = MI.getDebugLoc();
+  MachineFunction *MF = MBB.getParent();
+  auto LoopHeadMBB = MF->CreateMachineBasicBlock(MBB.getBasicBlock());
+  auto LoopIfBodyMBB = MF->CreateMachineBasicBlock(MBB.getBasicBlock());
+  auto LoopTailMBB = MF->CreateMachineBasicBlock(MBB.getBasicBlock());
+  auto DoneMBB = MF->CreateMachineBasicBlock(MBB.getBasicBlock());
+
+  // Insert new MBBs.
+  MF->insert(++MBB.getIterator(), LoopHeadMBB);
+  MF->insert(++LoopHeadMBB->getIterator(), LoopIfBodyMBB);
+  MF->insert(++LoopIfBodyMBB->getIterator(), LoopTailMBB);
+  MF->insert(++LoopTailMBB->getIterator(), DoneMBB);
+
+  // Set up successors and transfer remaining instructions to DoneMBB.
+  LoopHeadMBB->addSuccessor(LoopIfBodyMBB);
+  LoopHeadMBB->addSuccessor(LoopTailMBB);
+  LoopIfBodyMBB->addSuccessor(LoopTailMBB);
+  LoopTailMBB->addSuccessor(LoopHeadMBB);
+  LoopTailMBB->addSuccessor(DoneMBB);
+  DoneMBB->splice(DoneMBB->end(), &MBB, MI, MBB.end());
+  DoneMBB->transferSuccessors(&MBB);
+  MBB.addSuccessor(LoopHeadMBB);
+
+  Register DestReg = MI.getOperand(0).getReg();
+  Register Scratch1Reg = MI.getOperand(1).getReg();
+  Register Scratch2Reg = MI.getOperand(2).getReg();
+  Register AddrReg = MI.getOperand(3).getReg();
+  Register IncrReg = MI.getOperand(4).getReg();
+  Register MaskReg = MI.getOperand(5).getReg();
+
+  //
+  // .loophead:
+  //   dbar 0
+  //   ll.w destreg, (alignedaddr)
+  //   and scratch2, destreg, mask
+  //   move scratch1, destreg
+  BuildMI(LoopHeadMBB, DL, TII->get(LoongArch::DBAR)).addImm(0);
+  BuildMI(LoopHeadMBB, DL, TII->get(LoongArch::LL_W), DestReg)
+      .addReg(AddrReg)
+      .addImm(0);
+  BuildMI(LoopHeadMBB, DL, TII->get(LoongArch::AND), Scratch2Reg)
+      .addReg(DestReg)
+      .addReg(MaskReg);
+  BuildMI(LoopHeadMBB, DL, TII->get(LoongArch::OR), Scratch1Reg)
+      .addReg(DestReg)
+      .addReg(LoongArch::R0);
+
+  switch (BinOp) {
+  default:
+    llvm_unreachable("Unexpected AtomicRMW BinOp");
+  // bgeu scratch2, incr, .looptail
+  case AtomicRMWInst::UMax:
+    BuildMI(LoopHeadMBB, DL, TII->get(LoongArch::BGEU))
+        .addReg(Scratch2Reg)
+        .addReg(IncrReg)
+        .addMBB(LoopTailMBB);
+    break;
+  // bgeu incr, scratch2, .looptail
+  case AtomicRMWInst::UMin:
+    BuildMI(LoopHeadMBB, DL, TII->get(LoongArch::BGEU))
+        .addReg(IncrReg)
+        .addReg(Scratch2Reg)
+        .addMBB(LoopTailMBB);
+    break;
+    // TODO: support other AtomicRMWInst.
+  }
+
+  // .loopifbody:
+  //   xor scratch1, destreg, incr
+  //   and scratch1, scratch1, mask
+  //   xor scratch1, destreg, scratch1
+  insertMaskedMerge(TII, DL, LoopIfBodyMBB, Scratch1Reg, DestReg, IncrReg,
+                    MaskReg, Scratch1Reg);
+
+  // .looptail:
+  //   sc.w scratch1, scratch1, (addr)
+  //   beqz scratch1, loop
+  //   dbar 0x700
+  BuildMI(LoopTailMBB, DL, TII->get(LoongArch::SC_W), Scratch1Reg)
+      .addReg(Scratch1Reg)
+      .addReg(AddrReg)
+      .addImm(0);
+  BuildMI(LoopTailMBB, DL, TII->get(LoongArch::BEQZ))
+      .addReg(Scratch1Reg)
+      .addMBB(LoopHeadMBB);
+  BuildMI(LoopTailMBB, DL, TII->get(LoongArch::DBAR)).addImm(0x700);
+
+  NextMBBI = MBB.end();
+  MI.eraseFromParent();
+
+  LivePhysRegs LiveRegs;
+  computeAndAddLiveIns(LiveRegs, *LoopHeadMBB);
+  computeAndAddLiveIns(LiveRegs, *LoopIfBodyMBB);
+  computeAndAddLiveIns(LiveRegs, *LoopTailMBB);
   computeAndAddLiveIns(LiveRegs, *DoneMBB);
 
   return true;

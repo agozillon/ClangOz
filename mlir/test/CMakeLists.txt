@@ -5,8 +5,8 @@ if (MLIR_ENABLE_BINDINGS_PYTHON)
   add_subdirectory(python)
 endif()
 
-# Passed to lit.site.cfg.py.so that the out of tree Standalone dialect test
-# can find MLIR's CMake configuration
+# Provide the MLIR CMake module dir so that the out of tree Standalone
+# dialect and can add it to the module path.
 set(MLIR_CMAKE_DIR
   "${CMAKE_BINARY_DIR}/lib${LLVM_LIBDIR_SUFFIX}/cmake/mlir")
 
@@ -70,9 +70,10 @@ set(MLIR_TEST_DEPENDS
   mlir-capi-ir-test
   mlir-capi-llvm-test
   mlir-capi-pass-test
-  mlir-capi-sparse-tensor-test
-  mlir-capi-quant-test
   mlir-capi-pdl-test
+  mlir-capi-quant-test
+  mlir-capi-sparse-tensor-test
+  mlir-capi-transform-test
   mlir-linalg-ods-yaml-gen
   mlir-lsp-server
   mlir-pdll-lsp-server

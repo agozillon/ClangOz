@@ -289,8 +289,14 @@ class StmtComparer {
 
   bool IsStmtEquivalent(const SubstNonTypeTemplateParmExpr *E1,
                         const SubstNonTypeTemplateParmExpr *E2) {
-    return IsStructurallyEquivalent(Context, E1->getParameter(),
-                                    E2->getParameter());
+    if (!IsStructurallyEquivalent(Context, E1->getAssociatedDecl(),
+                                  E2->getAssociatedDecl()))
+      return false;
+    if (E1->getIndex() != E2->getIndex())
+      return false;
+    if (E1->getPackIndex() != E2->getPackIndex())
+      return false;
+    return true;
   }
 
   bool IsStmtEquivalent(const SubstNonTypeTemplateParmPackExpr *E1,
@@ -510,8 +516,9 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
         *P2 = N2.getAsSubstTemplateTemplateParmPack();
     return IsStructurallyEquivalent(Context, P1->getArgumentPack(),
                                     P2->getArgumentPack()) &&
-           IsStructurallyEquivalent(Context, P1->getParameterPack(),
-                                    P2->getParameterPack());
+           IsStructurallyEquivalent(Context, P1->getAssociatedDecl(),
+                                    P2->getAssociatedDecl()) &&
+           P1->getIndex() == P2->getIndex();
   }
 
    case TemplateName::Template:
@@ -957,11 +964,17 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
     if (!IsStructurallyEquivalent(Context, cast<UsingType>(T1)->getFoundDecl(),
                                   cast<UsingType>(T2)->getFoundDecl()))
       return false;
+    if (!IsStructurallyEquivalent(Context,
+                                  cast<UsingType>(T1)->getUnderlyingType(),
+                                  cast<UsingType>(T2)->getUnderlyingType()))
+      return false;
     break;
 
   case Type::Typedef:
     if (!IsStructurallyEquivalent(Context, cast<TypedefType>(T1)->getDecl(),
-                                  cast<TypedefType>(T2)->getDecl()))
+                                  cast<TypedefType>(T2)->getDecl()) ||
+        !IsStructurallyEquivalent(Context, cast<TypedefType>(T1)->desugar(),
+                                  cast<TypedefType>(T2)->desugar()))
       return false;
     break;
 
@@ -974,8 +987,8 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
 
   case Type::TypeOf:
     if (!IsStructurallyEquivalent(Context,
-                                  cast<TypeOfType>(T1)->getUnderlyingType(),
-                                  cast<TypeOfType>(T2)->getUnderlyingType()))
+                                  cast<TypeOfType>(T1)->getUnmodifiedType(),
+                                  cast<TypeOfType>(T2)->getUnmodifiedType()))
       return false;
     break;
 
@@ -1055,12 +1068,15 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
   case Type::SubstTemplateTypeParm: {
     const auto *Subst1 = cast<SubstTemplateTypeParmType>(T1);
     const auto *Subst2 = cast<SubstTemplateTypeParmType>(T2);
-    if (!IsStructurallyEquivalent(Context,
-                                  QualType(Subst1->getReplacedParameter(), 0),
-                                  QualType(Subst2->getReplacedParameter(), 0)))
-      return false;
     if (!IsStructurallyEquivalent(Context, Subst1->getReplacementType(),
                                   Subst2->getReplacementType()))
+      return false;
+    if (!IsStructurallyEquivalent(Context, Subst1->getAssociatedDecl(),
+                                  Subst2->getAssociatedDecl()))
+      return false;
+    if (Subst1->getIndex() != Subst2->getIndex())
+      return false;
+    if (Subst1->getPackIndex() != Subst2->getPackIndex())
       return false;
     break;
   }
@@ -1068,9 +1084,10 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
   case Type::SubstTemplateTypeParmPack: {
     const auto *Subst1 = cast<SubstTemplateTypeParmPackType>(T1);
     const auto *Subst2 = cast<SubstTemplateTypeParmPackType>(T2);
-    if (!IsStructurallyEquivalent(Context,
-                                  QualType(Subst1->getReplacedParameter(), 0),
-                                  QualType(Subst2->getReplacedParameter(), 0)))
+    if (!IsStructurallyEquivalent(Context, Subst1->getAssociatedDecl(),
+                                  Subst2->getAssociatedDecl()))
+      return false;
+    if (Subst1->getIndex() != Subst2->getIndex())
       return false;
     if (!IsStructurallyEquivalent(Context, Subst1->getArgumentPack(),
                                   Subst2->getArgumentPack()))

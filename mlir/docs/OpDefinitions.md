@@ -106,7 +106,7 @@ An operation is defined by specializing the `Op` class with concrete contents
 for all the fields it requires. For example, `tf.AvgPool` is defined as
 
 ```tablegen
-def TF_AvgPoolOp : TF_Op<"AvgPool", [NoSideEffect]> {
+def TF_AvgPoolOp : TF_Op<"AvgPool", [NoMemoryEffect]> {
   let summary = "Performs average pooling on the input.";
 
   let description = [{
@@ -651,11 +651,11 @@ The available directives are as follows:
     -   See the [Custom Directives](#custom-directives) section below for more
         details.
 
-*   `functional-type` ( inputs , results )
+*   `functional-type` ( inputs , outputs )
 
-    -   Formats the `inputs` and `results` arguments as a
+    -   Formats the `inputs` and `outputs` arguments as a
         [function type](Dialects/Builtin.md/#functiontype).
-    -   The constraints on `inputs` and `results` are the same as the `input` of
+    -   The constraints on `inputs` and `outputs` are the same as the `input` of
         the `type` directive.
 
 *   `oilist` ( \`keyword\` elements | \`otherKeyword\` elements ...)
@@ -856,17 +856,18 @@ of the assembly format can be marked as `optional` based on the presence of this
 information. An optional group is defined as follows:
 
 ```
-optional-group: `(` elements `)` (`:` `(` else-elements `)`)? `?`
+optional-group: `(` then-elements `)` (`:` `(` else-elements `)`)? `?`
 ```
 
-The `elements` of an optional group have the following requirements:
+The elements of an optional group have the following requirements:
 
-*   The first element of the group must either be a attribute, literal, operand,
-    or region.
+*   The first element of `then-elements` must either be a attribute, literal,
+    operand, or region.
     -   This is because the first element must be optionally parsable.
-*   Exactly one argument variable or type directive within the group must be
-    marked as the anchor of the group.
-    -   The anchor is the element whose presence controls whether the group
+*   Exactly one argument variable or type directive within either
+    `then-elements` or `else-elements` must be marked as the anchor of the
+    group.
+    -   The anchor is the element whose presence controls which elements
         should be printed/parsed.
     -   An element is marked as the anchor by adding a trailing `^`.
     -   The first element is *not* required to be the anchor of the group.

@@ -1900,6 +1900,8 @@ template <class BidirectionalIterator, class Compare>
 #include <__algorithm/upper_bound.h>
 
 // standard-mandated includes
+
+// [algorithm.syn]
 #include <initializer_list>
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
@@ -1911,7 +1913,7 @@ template <class BidirectionalIterator, class Compare>
 #endif
 
 #if !defined(_LIBCPP_REMOVE_TRANSITIVE_INCLUDES) && _LIBCPP_STD_VER <= 17
-#  include <chrono> // IGNORE-CYCLE due to <format>
+#  include <chrono>
 #endif
 
 #if !defined(_LIBCPP_REMOVE_TRANSITIVE_INCLUDES) && _LIBCPP_STD_VER <= 20

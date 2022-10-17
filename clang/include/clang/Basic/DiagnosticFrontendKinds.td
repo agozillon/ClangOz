@@ -47,6 +47,9 @@ def warn_fe_backend_unsupported_fp_rounding : Warning<
 def warn_fe_backend_unsupported_fp_exceptions : Warning<
     "overriding currently unsupported use of floating point exceptions "
     "on this target">, InGroup<UnsupportedFPOpt>;
+def warn_fe_backend_invalid_feature_flag : Warning<
+    "feature flag '%0' must start with either '+' to enable the feature or '-'"
+    " to disable it; flag ignored">, InGroup<InvalidCommandLineArgument>;
 
 def err_incompatible_fp_eval_method_options : Error<
     "option 'ffp-eval-method' cannot be used with option "
@@ -127,6 +130,8 @@ def err_fe_invalid_exception_model
 def warn_fe_concepts_ts_flag : Warning<
   "-fconcepts-ts is deprecated - use '-std=c++20' for Concepts support">,
   InGroup<Deprecated>;
+def err_fe_invalid_source_date_epoch : Error<
+    "environment variable 'SOURCE_DATE_EPOCH' ('%0') must be a non-negative decimal integer <= %1">;
 
 def err_fe_unable_to_load_basic_block_sections_file : Error<
     "unable to load basic block sections function list: '%0'">;

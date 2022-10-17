@@ -10,7 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -30,8 +30,8 @@ struct TestTensorTransforms
   TestTensorTransforms(const TestTensorTransforms &pass) : PassWrapper(pass) {}
 
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<arith::ArithmeticDialect, scf::SCFDialect,
-                    linalg::LinalgDialect>();
+    registry
+        .insert<arith::ArithDialect, scf::SCFDialect, linalg::LinalgDialect>();
   }
 
   StringRef getArgument() const final {
@@ -51,6 +51,12 @@ struct TestTensorTransforms
   Option<bool> testFoldConstantExtractSlice{
       *this, "test-fold-constant-extract-slice",
       llvm::cl::desc("Test folding arith.constant and tensor.extract_slice"),
+      llvm::cl::init(false)};
+
+  Option<bool> testFoldConsecutiveInsertExtractSlice{
+      *this, "test-fold-consecutive-insert-extract-slice",
+      llvm::cl::desc(
+          "Test folding consecutive tensor.insert_slice/tensor.extract_slice"),
       llvm::cl::init(false)};
 
   Option<bool> testRewriteExtractSliceWithTiledCollapseShape{
@@ -90,6 +96,12 @@ static void applyFoldConstantExtractSlicePatterns(Operation *rootOp) {
   (void)applyPatternsAndFoldGreedily(rootOp, std::move(patterns));
 }
 
+static void applyFoldConsecutiveInsertExtractSlicePatterns(Operation *rootOp) {
+  RewritePatternSet patterns(rootOp->getContext());
+  tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
+  (void)applyPatternsAndFoldGreedily(rootOp, std::move(patterns));
+}
+
 namespace {
 /// Base pattern to rewrite  a `tensor.collapse_shape -> tensor.extract_slice`.
 /// The `tensor.extract_slice` is replaced by a loop or gather operation that
@@ -124,8 +136,8 @@ struct RewriteExtractSliceFromCollapseShapeBase
     // Create the destination tensor using the above values.
     Type elementType = op.getSourceType().getElementType();
     SmallVector<OpFoldResult> outputShape = getAsOpFoldResult(reifiedShapes[0]);
-    Value dest = rewriter.create<linalg::InitTensorOp>(
-        op->getLoc(), outputShape, elementType);
+    Value dest = rewriter.create<tensor::EmptyOp>(op->getLoc(), outputShape,
+                                                  elementType);
 
     // Calculate the parameters for the tile loop nest.
     FailureOr<tensor::ExtractSliceFromCollapseHelper> params =
@@ -151,6 +163,13 @@ struct RewriteExtractSliceFromCollapseShapeUsingScfFor
     auto one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     SmallVector<Value> lbs(numTiledDims, zero);
     SmallVector<Value> steps(numTiledDims, one);
+
+    // Below, we pass out the result of the loop body builder lambda via the
+    // `insertResult` variable. In certain cases, no loops will be created, but
+    // the body builder will still execute. In this case, the results will not
+    // be passed to the LoopNest object.
+    // TODO: remove this workaround if `scf::buildLoopNest` behavior is updated.
+    Value insertResult = nullptr;
     scf::LoopNest nest = scf::buildLoopNest(
         rewriter, loc, lbs, helper.getIterationSpaceSizes(), steps, dest,
         [&](OpBuilder &nestedBuilder, Location loc, ValueRange outputIvs,
@@ -159,11 +178,16 @@ struct RewriteExtractSliceFromCollapseShapeUsingScfFor
               helper.emitLoopNestBody(nestedBuilder, loc, outputIvs);
 
           // Insert the slice into the destination.
-          Value result = nestedBuilder.create<tensor::InsertSliceOp>(
+          insertResult = nestedBuilder.create<tensor::InsertSliceOp>(
               loc, tile, iterArgs[0], insertParams);
-          return {result};
+          return {insertResult};
         });
-    rewriter.replaceOp(op, nest.getResults()[0]);
+
+    if (!nest.loops.empty())
+      rewriter.replaceOp(op, nest.getResults());
+    else
+      rewriter.replaceOp(op, insertResult);
+
     return success();
   }
 };
@@ -221,6 +245,8 @@ void TestTensorTransforms::runOnOperation() {
     applySplitPaddingPatterns(rootOp);
   if (testFoldConstantExtractSlice)
     applyFoldConstantExtractSlicePatterns(rootOp);
+  if (testFoldConsecutiveInsertExtractSlice)
+    applyFoldConsecutiveInsertExtractSlicePatterns(rootOp);
   if (testRewriteExtractSliceWithTiledCollapseShape) {
     if (failed(
             applyRewriteExtractFromCollapseShapePatterns(rootOp, useForeach)))

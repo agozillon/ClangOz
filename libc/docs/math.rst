@@ -1,21 +1,19 @@
-===========================
-Math Functions in LLVM-libc
-===========================
+==============
+Math Functions
+==============
 
-.. role::  raw-html(raw)
-    :format: html
-
-.. |check| replace:: :raw-html:`&#x2705`
+.. include:: check.rst
 
 .. contents:: Table of Contents
   :depth: 4
   :local:
 
-Summary
-=======
+Source Locations
+================
 
-* This document tracks the status of the implementation of math functions in
-  LLVM libc.
+- The main source is located at: `libc/src/math <https://github.com/llvm/llvm-project/tree/main/libc/src/math>`_.
+- The tests are located at: `libc/test/src/math <https://github.com/llvm/llvm-project/tree/main/libc/test/src/math>`_.
+- The floating point utilities are located at: `libc/src/__support/FPUtil <https://github.com/llvm/llvm-project/tree/main/libc/src/__support/FPUtil>`_.
 
 Implementation Requirements / Goals
 ===================================
@@ -47,13 +45,6 @@ Implementation Requirements / Goals
   as possible within the memory or latency budgets, and consistent across all
   platforms.
 
-
-Source Locations
-================
-
-- The main source is located at: `libc/src/math <https://github.com/llvm/llvm-project/tree/main/libc/src/math>`_.
-- The tests are located at: `libc/test/src/math <https://github.com/llvm/llvm-project/tree/main/libc/test/src/math>`_.
-- The floating point utilities are located at: `libc/src/__support/FPUtil <https://github.com/llvm/llvm-project/tree/main/libc/src/__support/FPUtil>`_.
 
 Add a new math function to LLVM libc
 ====================================
@@ -129,6 +120,7 @@ cosh           |check|
 erf
 erfc
 exp            |check|
+exp10          |check|
 exp2           |check|
 expm1          |check|
 fma            |check|          |check|
@@ -161,6 +153,7 @@ atanh          |check|
 cos            |check|          large
 cosh           |check|
 exp            |check|
+exp10          |check|
 exp2           |check|
 expm1          |check|
 fma            |check|          |check|
@@ -215,11 +208,13 @@ Performance
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
 | cosf         |        13 |                32 |        53 |                59 | :math:`[0, 2\pi]`                   | Ryzen 1700 | Ubuntu 20.04 LTS x86_64 | Clang 12.0.0 | FMA           |
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
-| coshf        |        15 |                20 |        51 |                48 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 22.04 LTS x86_64 | Clang 14.0.0 | FMA           |
+| coshf        |        14 |                20 |        50 |                48 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 22.04 LTS x86_64 | Clang 14.0.0 | FMA           |
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
 | expf         |         9 |                 7 |        44 |                38 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 20.04 LTS x86_64 | Clang 12.0.0 | FMA           |
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
-| exp2f        |         9 |                 6 |        37 |                31 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 22.04 LTS x86_64 | Clang 14.0.0 | FMA           |
+| exp10f       |        10 |                 8 |        40 |                38 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 22.04 LTS x86_64 | Clang 14.0.0 | FMA           |
++--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
+| exp2f        |         9 |                 6 |        35 |                31 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 22.04 LTS x86_64 | Clang 14.0.0 | FMA           |
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
 | expm1f       |         9 |                44 |        42 |               121 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 20.04 LTS x86_64 | Clang 12.0.0 | FMA           |
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
@@ -245,11 +240,11 @@ Performance
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
 | sincosf      |        19 |                30 |        57 |                68 | :math:`[-\pi, \pi]`                 | Ryzen 1700 | Ubuntu 20.04 LTS x86_64 | Clang 12.0.0 | FMA           |
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
-| sinhf        |        14 |                63 |        49 |               137 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 22.04 LTS x86_64 | Clang 14.0.0 | FMA           |
+| sinhf        |        13 |                63 |        48 |               137 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 22.04 LTS x86_64 | Clang 14.0.0 | FMA           |
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
-| tanf         |        19 |                50 |        82 |               107 | :math:`[-\pi, \pi]`                 | Ryzen 1700 | Ubuntu 20.04 LTS x86_64 | Clang 12.0.0 | FMA           |
+| tanf         |        16 |                50 |        61 |               107 | :math:`[-\pi, \pi]`                 | Ryzen 1700 | Ubuntu 22.04 LTS x86_64 | Clang 14.0.0 | FMA           |
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
-| tanhf        |        25 |                59 |        95 |               125 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 20.04 LTS x86_64 | Clang 12.0.0 | FMA           |
+| tanhf        |        13 |                55 |        57 |               123 | :math:`[-10, 10]`                   | Ryzen 1700 | Ubuntu 22.04 LTS x86_64 | Clang 14.0.0 | FMA           |
 +--------------+-----------+-------------------+-----------+-------------------+-------------------------------------+------------+-------------------------+--------------+---------------+
 
 References

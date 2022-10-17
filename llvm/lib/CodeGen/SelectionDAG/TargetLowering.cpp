@@ -3383,6 +3383,8 @@ bool TargetLowering::SimplifyDemandedVectorElts(
     break;
   }
   case ISD::MUL:
+  case ISD::MULHU:
+  case ISD::MULHS:
   case ISD::AND: {
     SDValue Op0 = Op.getOperand(0);
     SDValue Op1 = Op.getOperand(1);
@@ -5252,6 +5254,12 @@ void TargetLowering::LowerAsmOperandForConstraint(SDValue Op,
     break;
   }
   }
+}
+
+void TargetLowering::CollectTargetIntrinsicOperands(const CallInst &I,
+                                           SmallVectorImpl<SDValue> &Ops,
+                                           SelectionDAG &DAG) const {
+  return;
 }
 
 std::pair<unsigned, const TargetRegisterClass *>
@@ -8176,15 +8184,15 @@ SDValue TargetLowering::CTTZTableLookup(SDNode *Node, SelectionDAG &DAG,
   SDValue ExtLoad = DAG.getExtLoad(ISD::ZEXTLOAD, DL, VT, DAG.getEntryNode(),
                                    DAG.getMemBasePlusOffset(CPIdx, Lookup, DL),
                                    PtrInfo, MVT::i8);
-  if (Node->getOpcode() != ISD::CTLZ_ZERO_UNDEF) {
-    EVT SetCCVT =
-        getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), VT);
-    SDValue Zero = DAG.getConstant(0, DL, VT);
-    SDValue SrcIsZero = DAG.getSetCC(DL, SetCCVT, Op, Zero, ISD::SETEQ);
-    ExtLoad = DAG.getSelect(DL, VT, SrcIsZero,
-                            DAG.getConstant(BitWidth, DL, VT), ExtLoad);
-  }
-  return ExtLoad;
+  if (Node->getOpcode() == ISD::CTTZ_ZERO_UNDEF)
+    return ExtLoad;
+
+  EVT SetCCVT =
+      getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), VT);
+  SDValue Zero = DAG.getConstant(0, DL, VT);
+  SDValue SrcIsZero = DAG.getSetCC(DL, SetCCVT, Op, Zero, ISD::SETEQ);
+  return DAG.getSelect(DL, VT, SrcIsZero,
+                       DAG.getConstant(BitWidth, DL, VT), ExtLoad);
 }
 
 SDValue TargetLowering::expandCTTZ(SDNode *Node, SelectionDAG &DAG) const {

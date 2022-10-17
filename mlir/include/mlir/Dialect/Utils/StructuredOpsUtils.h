@@ -23,6 +23,9 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/StringRef.h"
 
+// Pull in all enum type definitions and utility function declarations.
+#include "mlir/Dialect/Utils/DialectUtilsEnums.h.inc"
+
 namespace mlir {
 
 class OpBuilder;
@@ -94,20 +97,29 @@ inline ArrayRef<StringRef> getAllIteratorTypeNames() {
 }
 
 /// Returns the iterator of a certain type.
-inline unsigned getNumIterators(StringRef name, ArrayAttr iteratorTypes) {
+inline unsigned getNumIterators(StringRef name,
+                                ArrayRef<StringRef> iteratorTypes) {
   auto names = getAllIteratorTypeNames();
   (void)names;
   assert(llvm::is_contained(names, name));
-  return llvm::count_if(iteratorTypes, [name](Attribute a) {
-    return a.cast<StringAttr>().getValue() == name;
-  });
+  return llvm::count(iteratorTypes, name);
 }
 
-inline unsigned getNumIterators(ArrayAttr iteratorTypes) {
+inline unsigned getNumIterators(ArrayRef<StringRef> iteratorTypes) {
   unsigned res = 0;
   for (auto n : getAllIteratorTypeNames())
     res += getNumIterators(n, iteratorTypes);
   return res;
+}
+
+/// Return positions in `iteratorTypes` that match `iteratorTypeName`.
+inline void findPositionsOfType(ArrayRef<StringRef> iteratorTypes,
+                                StringRef iteratorTypeName,
+                                SmallVectorImpl<unsigned> &res) {
+  for (const auto &en : llvm::enumerate(iteratorTypes)) {
+    if (en.value() == iteratorTypeName)
+      res.push_back(en.index());
+  }
 }
 
 /// Helper StructuredGenerator class to manipulate and rewrite ops with

@@ -107,8 +107,6 @@ template <typename ItrType,
 class FilterIterator {
   using inner_traits = std::iterator_traits<ItrType>;
   using Iterator = FilterIterator;
-  using T = typename std::iterator_traits<ItrType>::reference;
-  using PointerT = typename std::iterator_traits<ItrType>::pointer;
 
   PredType Pred;
   ItrType Itr, End;
@@ -139,8 +137,8 @@ public:
   Iterator operator--(int) { auto Tmp(Itr); prev(); return Tmp; }
   bool operator==(const Iterator &Other) const { return Itr == Other.Itr; }
   bool operator!=(const Iterator &Other) const { return !operator==(Other); }
-  T operator*() { return *Itr; }
-  PointerT operator->() { return &operator*(); }
+  reference operator*() { return *Itr; }
+  pointer operator->() { return &operator*(); }
   FilterIterator(PredType Pred, ItrType Itr, ItrType End)
       : Pred(Pred), Itr(Itr), End(End) {
     nextMatching();
@@ -180,6 +178,10 @@ class BinaryContext {
   /// have multiple sections with the same name.
   using NameToSectionMapType = std::multimap<std::string, BinarySection *>;
   NameToSectionMapType NameToSection;
+
+  /// Map section references to BinarySection for matching sections in the
+  /// input file to internal section representation.
+  DenseMap<SectionRef, BinarySection *> SectionRefToBinarySection;
 
   /// Low level section registration.
   BinarySection &registerSection(BinarySection *Section);
@@ -225,6 +227,9 @@ class BinaryContext {
 
   /// DWARF line info for CUs.
   std::map<unsigned, DwarfLineTable> DwarfLineTablesCUMap;
+
+  /// Internal helper for removing section name from a lookup table.
+  void deregisterSectionName(const BinarySection &Section);
 
 public:
   static Expected<std::unique_ptr<BinaryContext>>
@@ -617,6 +622,9 @@ public:
   /// Number of functions with profile information
   uint64_t NumProfiledFuncs{0};
 
+  /// Number of functions with stale profile information
+  uint64_t NumStaleProfileFuncs{0};
+
   /// Number of objects in profile whose profile was ignored.
   uint64_t NumUnusedProfiledObjects{0};
 
@@ -950,13 +958,13 @@ public:
   BinarySection &registerSection(SectionRef Section);
 
   /// Register a copy of /p OriginalSection under a different name.
-  BinarySection &registerSection(StringRef SectionName,
+  BinarySection &registerSection(const Twine &SectionName,
                                  const BinarySection &OriginalSection);
 
   /// Register or update the information for the section with the given
   /// /p Name.  If the section already exists, the information in the
   /// section will be updated with the new data.
-  BinarySection &registerOrUpdateSection(StringRef Name, unsigned ELFType,
+  BinarySection &registerOrUpdateSection(const Twine &Name, unsigned ELFType,
                                          unsigned ELFFlags,
                                          uint8_t *Data = nullptr,
                                          uint64_t Size = 0,
@@ -966,7 +974,7 @@ public:
   /// with the given /p Name.  If the section already exists, the
   /// information in the section will be updated with the new data.
   BinarySection &
-  registerOrUpdateNoteSection(StringRef Name, uint8_t *Data = nullptr,
+  registerOrUpdateNoteSection(const Twine &Name, uint8_t *Data = nullptr,
                               uint64_t Size = 0, unsigned Alignment = 1,
                               bool IsReadOnly = true,
                               unsigned ELFType = ELF::SHT_PROGBITS) {
@@ -975,9 +983,15 @@ public:
                                    Size, Alignment);
   }
 
+  /// Remove sections that were preregistered but never used.
+  void deregisterUnusedSections();
+
   /// Remove the given /p Section from the set of all sections.  Return
   /// true if the section was removed (and deleted), otherwise false.
   bool deregisterSection(BinarySection &Section);
+
+  /// Re-register \p Section under the \p NewName.
+  void renameSection(BinarySection &Section, const Twine &NewName);
 
   /// Iterate over all registered sections.
   iterator_range<FilteredSectionIterator> sections() {
@@ -1072,20 +1086,26 @@ public:
     return const_cast<BinaryContext *>(this)->getSectionForAddress(Address);
   }
 
+  /// Return internal section representation for a section in a file.
+  BinarySection *getSectionForSectionRef(SectionRef Section) const {
+    return SectionRefToBinarySection.lookup(Section);
+  }
+
   /// Return section(s) associated with given \p Name.
   iterator_range<NameToSectionMapType::iterator>
-  getSectionByName(StringRef Name) {
-    return make_range(NameToSection.equal_range(std::string(Name)));
+  getSectionByName(const Twine &Name) {
+    return make_range(NameToSection.equal_range(Name.str()));
   }
   iterator_range<NameToSectionMapType::const_iterator>
-  getSectionByName(StringRef Name) const {
-    return make_range(NameToSection.equal_range(std::string(Name)));
+  getSectionByName(const Twine &Name) const {
+    return make_range(NameToSection.equal_range(Name.str()));
   }
 
   /// Return the unique section associated with given \p Name.
   /// If there is more than one section with the same name, return an error
   /// object.
-  ErrorOr<BinarySection &> getUniqueSectionByName(StringRef SectionName) const {
+  ErrorOr<BinarySection &>
+  getUniqueSectionByName(const Twine &SectionName) const {
     auto Sections = getSectionByName(SectionName);
     if (Sections.begin() != Sections.end() &&
         std::next(Sections.begin()) == Sections.end())

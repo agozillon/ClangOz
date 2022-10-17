@@ -24,6 +24,10 @@
   pointerBitWidth = 32
 }>
 
+#UCSR = #sparse_tensor.encoding<{
+  dimLevelType = [ "dense", "compressed-no" ]
+}>
+
 #CSC = #sparse_tensor.encoding<{
   dimLevelType = [ "dense", "compressed" ],
   dimOrdering = affine_map<(i, j) -> (j, i)>
@@ -309,7 +313,7 @@ func.func @sparse_alloc_3d() -> tensor<10x20x30xf64, #Dense3D> {
 func.func @sparse_expansion1() -> memref<?xindex> {
   %0 = bufferization.alloc_tensor() : tensor<4x8xf64, #CSR>
   %values, %filled, %added, %count = sparse_tensor.expand %0
-    : tensor<4x8xf64, #CSR> to memref<?xf64>, memref<?xi1>, memref<?xindex>, index
+    : tensor<4x8xf64, #CSR> to memref<?xf64>, memref<?xi1>, memref<?xindex>
   return %added : memref<?xindex>
 }
 
@@ -324,7 +328,7 @@ func.func @sparse_expansion1() -> memref<?xindex> {
 func.func @sparse_expansion2() -> memref<?xindex> {
   %0 = bufferization.alloc_tensor() : tensor<4x8xf64, #CSC>
   %values, %filled, %added, %count = sparse_tensor.expand %0
-    : tensor<4x8xf64, #CSC> to memref<?xf64>, memref<?xi1>, memref<?xindex>, index
+    : tensor<4x8xf64, #CSC> to memref<?xf64>, memref<?xi1>, memref<?xindex>
   return %added : memref<?xindex>
 }
 
@@ -344,6 +348,80 @@ func.func @sparse_expansion2() -> memref<?xindex> {
 func.func @sparse_expansion3(%arg0: index, %arg1: index) -> memref<?xindex> {
   %0 = bufferization.alloc_tensor(%arg0, %arg1) : tensor<?x?xf64, #CSC>
   %values, %filled, %added, %count = sparse_tensor.expand %0
-    : tensor<?x?xf64, #CSC> to memref<?xf64>, memref<?xi1>, memref<?xindex>, index
+    : tensor<?x?xf64, #CSC> to memref<?xf64>, memref<?xi1>, memref<?xindex>
   return %added : memref<?xindex>
+}
+
+// CHECK-LABEL: func @sparse_compression(
+//  CHECK-SAME: %[[A0:.*0]]: memref<2xindex>,
+//  CHECK-SAME: %[[A1:.*1]]: memref<3xindex>,
+//  CHECK-SAME: %[[A2:.*2]]: memref<?xi32>,
+//  CHECK-SAME: %[[A3:.*3]]: memref<?xi64>,
+//  CHECK-SAME: %[[A4:.*4]]: memref<?xf64>,
+//  CHECK-SAME: %[[A5:.*5]]: memref<?xf64>,
+//  CHECK-SAME: %[[A6:.*6]]: memref<?xi1>,
+//  CHECK-SAME: %[[A7:.*7]]: memref<?xindex>,
+//  CHECK-SAME: %[[A8:.*8]]: index,
+//  CHECK-SAME: %[[A9:.*9]]: index)
+//   CHECK-DAG: %[[B0:.*]] = arith.constant false
+//   CHECK-DAG: %[[F0:.*]] = arith.constant 0.000000e+00 : f64
+//   CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
+//   CHECK-DAG: %[[C1:.*]] = arith.constant 1 : index
+//       CHECK: sparse_tensor.sort %[[A8]], %[[A7]] : memref<?xindex>
+//  CHECK-NEXT: scf.for %[[I:.*]] = %[[C0]] to %[[A8]] step %[[C1]] {
+//  CHECK-NEXT:   %[[INDEX:.*]] = memref.load %[[A7]][%[[I]]] : memref<?xindex>
+//        TODO:   insert
+//   CHECK-DAG:   memref.store %[[F0]], %[[A5]][%[[INDEX]]] : memref<?xf64>
+//   CHECK-DAG:   memref.store %[[B0]], %[[A6]][%[[INDEX]]] : memref<?xi1>
+//  CHECK-NEXT: }
+//   CHECK-DAG: memref.dealloc %[[A5]] : memref<?xf64>
+//   CHECK-DAG: memref.dealloc %[[A6]] : memref<?xi1>
+//   CHECK-DAG: memref.dealloc %[[A7]] : memref<?xindex>
+//       CHECK: return
+func.func @sparse_compression(%tensor: tensor<8x8xf64, #CSR>,
+                              %values: memref<?xf64>,
+                              %filled: memref<?xi1>,
+                              %added: memref<?xindex>,
+                              %count: index,
+                              %i: index) {
+  sparse_tensor.compress %values, %filled, %added, %count into %tensor[%i]
+    : memref<?xf64>, memref<?xi1>, memref<?xindex>, tensor<8x8xf64, #CSR>
+  return
+}
+
+// CHECK-LABEL: func @sparse_compression_unordered(
+//  CHECK-SAME: %[[A0:.*0]]: memref<2xindex>,
+//  CHECK-SAME: %[[A1:.*1]]: memref<3xindex>,
+//  CHECK-SAME: %[[A2:.*2]]: memref<?xindex>,
+//  CHECK-SAME: %[[A3:.*3]]: memref<?xindex>,
+//  CHECK-SAME: %[[A4:.*4]]: memref<?xf64>,
+//  CHECK-SAME: %[[A5:.*5]]: memref<?xf64>,
+//  CHECK-SAME: %[[A6:.*6]]: memref<?xi1>,
+//  CHECK-SAME: %[[A7:.*7]]: memref<?xindex>,
+//  CHECK-SAME: %[[A8:.*8]]: index,
+//  CHECK-SAME: %[[A9:.*9]]: index)
+//   CHECK-DAG: %[[B0:.*]] = arith.constant false
+//   CHECK-DAG: %[[F0:.*]] = arith.constant 0.000000e+00 : f64
+//   CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
+//   CHECK-DAG: %[[C1:.*]] = arith.constant 1 : index
+//   CHECK-NOT: sparse_tensor.sort
+//  CHECK-NEXT: scf.for %[[I:.*]] = %[[C0]] to %[[A8]] step %[[C1]] {
+//  CHECK-NEXT:   %[[INDEX:.*]] = memref.load %[[A7]][%[[I]]] : memref<?xindex>
+//        TODO:   insert
+//   CHECK-DAG:   memref.store %[[F0]], %[[A5]][%[[INDEX]]] : memref<?xf64>
+//   CHECK-DAG:   memref.store %[[B0]], %[[A6]][%[[INDEX]]] : memref<?xi1>
+//  CHECK-NEXT: }
+//   CHECK-DAG: memref.dealloc %[[A5]] : memref<?xf64>
+//   CHECK-DAG: memref.dealloc %[[A6]] : memref<?xi1>
+//   CHECK-DAG: memref.dealloc %[[A7]] : memref<?xindex>
+//       CHECK: return
+func.func @sparse_compression_unordered(%tensor: tensor<8x8xf64, #UCSR>,
+                                        %values: memref<?xf64>,
+                                        %filled: memref<?xi1>,
+                                        %added: memref<?xindex>,
+                                        %count: index,
+                                        %i: index) {
+  sparse_tensor.compress %values, %filled, %added, %count into %tensor[%i]
+    : memref<?xf64>, memref<?xi1>, memref<?xindex>, tensor<8x8xf64, #UCSR>
+  return
 }

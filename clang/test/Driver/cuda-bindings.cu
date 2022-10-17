@@ -224,3 +224,21 @@
 // SYNTAX-ONLY: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}}"-fsyntax-only"
 // SYNTAX-ONLY: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}}"-fsyntax-only"
 // SYNTAX-ONLY: "-cc1" "-triple" "powerpc64le-ibm-linux-gnu"{{.*}}"-fsyntax-only"
+
+//
+// Check to ensure that we can use '-save-temps' when operating in RDC-mode.
+//
+// RUN: %clang -### -target powerpc64le-ibm-linux-gnu -save-temps --offload-new-driver \
+// RUN:        -fgpu-rdc --offload-arch=sm_70 --offload-arch=sm_52 -c %s 2>&1 \
+// RUN: | FileCheck -check-prefix=SAVE-TEMPS %s
+// SAVE-TEMPS: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}}"-target-cpu" "sm_52"
+// SAVE-TEMPS: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}}"-target-cpu" "sm_70"
+// SAVE-TEMPS: "-cc1" "-triple" "powerpc64le-ibm-linux-gnu"
+
+//
+// Check to ensure that we cannot use '-foffload' when not operating in RDC-mode.
+//
+// RUN: %clang -### -target powerpc64le-ibm-linux-gnu -fno-gpu-rdc --offload-new-driver \
+// RUN:        -foffload-lto --offload-arch=sm_70 --offload-arch=sm_52 -c %s 2>&1 \
+// RUN: | FileCheck -check-prefix=LTO-NO-RDC %s
+// LTO-NO-RDC: error: unsupported option '-foffload-lto' for language mode '-fno-gpu-rdc'

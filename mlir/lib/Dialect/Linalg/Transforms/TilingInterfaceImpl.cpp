@@ -9,8 +9,8 @@
 #include "mlir/Dialect/Linalg/Transforms/TilingInterfaceImpl.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
-#include "mlir/Dialect/Arithmetic/Utils/Utils.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -62,7 +62,7 @@ static LogicalResult inlinePayload(OpBuilder &b, LinalgOp linalgOp,
     Value toStore = map.lookupOrDefault(operand.value());
     OpOperand *storeInto = linalgOp.getOutputOperand(operand.index());
     auto indices = getIndicesForAccess(
-        b, loc, linalgOp.getTiedIndexingMap(storeInto), ivs);
+        b, loc, linalgOp.getMatchingIndexingMap(storeInto), ivs);
     b.create<memref::StoreOp>(loc, toStore,
                               linalgOp.getOutputOperand(operand.index())->get(),
                               indices);
@@ -90,11 +90,11 @@ struct LinalgOpTilingInterface
   }
 
   /// Return the loop iterator type.
-  SmallVector<StringRef> getLoopIteratorTypes(Operation *op) const {
+  SmallVector<utils::IteratorType> getLoopIteratorTypes(Operation *op) const {
     LinalgOpTy concreteOp = cast<LinalgOpTy>(op);
-    return llvm::to_vector(
-        llvm::map_range(concreteOp.iterator_types(), [](Attribute strAttr) {
-          return strAttr.cast<StringAttr>().getValue();
+    return llvm::to_vector(llvm::map_range(
+        concreteOp.getIteratorTypesArray(), [](StringRef iteratorType) {
+          return utils::symbolizeIteratorType(iteratorType).value();
         }));
   }
 
@@ -125,14 +125,12 @@ struct LinalgOpTilingInterface
     // specified could lead to out of bounds accesses.
     Location loc = op->getLoc();
     LinalgOp linalgOp = cast<LinalgOp>(op);
-    SmallVector<Value> valuesToTile = linalgOp.getInputAndOutputOperands();
+    SmallVector<Value> valuesToTile = linalgOp->getOperands();
     SmallVector<Value, 4> tiledOperands = makeTiledShapes(
         b, loc, linalgOp, valuesToTile, offsets, sizes, {}, true);
 
-    SmallVector<Type> resultTensorTypes = llvm::to_vector(llvm::map_range(
-        linalgOp.getOutputTensorOperands(), [&](OpOperand *opOperand) {
-          return tiledOperands[opOperand->getOperandNumber()].getType();
-        }));
+    SmallVector<Type> resultTensorTypes =
+        getTensorOutputTypes(linalgOp, tiledOperands);
 
     Operation *tiledOp =
         linalgOp.clone(b, loc, resultTensorTypes, tiledOperands);
@@ -160,10 +158,10 @@ struct LinalgOpTilingInterface
         }));
 
     OpOperand *outOperand = linalgOp.getOutputOperand(resultNumber);
-    SliceParameters sliceParams =
-        computeSliceParameters(b, loc, outOperand->get(), sizes,
-                               linalgOp.getTiedIndexingMap(outOperand), offsets,
-                               /*ubs*/ {}, subShapeSizes, true);
+    SliceParameters sliceParams = computeSliceParameters(
+        b, loc, outOperand->get(), sizes,
+        linalgOp.getMatchingIndexingMap(outOperand), offsets,
+        /*ubs*/ {}, subShapeSizes, true);
     resultOffsets = sliceParams.offsets;
     resultSizes = sliceParams.sizes;
     return success();
@@ -180,7 +178,7 @@ struct LinalgOpTilingInterface
     // map the offsets and sizes from the result to iteration space tiles
     // (filling in full extent for dimensions not used to access the result).
     AffineMap indexingMap =
-        linalgOp.getTiedIndexingMapForResult(op->getResult(resultNumber));
+        linalgOp.getIndexingMapMatchingResult(op->getResult(resultNumber));
     if (!indexingMap.isProjectedPermutation()) {
       return op->emitOpError(
           "unhandled tiled implementation generation when result is not "
@@ -222,23 +220,23 @@ struct LinalgOpTilingInterface
       return op->emitOpError("expected operation to have buffer semantics");
 
     SmallVector<Value> indexedValues;
-    indexedValues.reserve(linalgOp.getNumInputsAndOutputs());
+    indexedValues.reserve(linalgOp->getNumOperands());
     Location linalgOpLoc = op->getLoc();
     /// Load the data corresponding to the block arguments that
     /// represent input operands.
-    for (OpOperand *operand : linalgOp.getInputAndOutputOperands()) {
-      if (!linalgOp.payloadUsesValueFromOperand(operand)) {
+    for (OpOperand &operand : linalgOp->getOpOperands()) {
+      if (!linalgOp.payloadUsesValueFromOperand(&operand)) {
         indexedValues.push_back(nullptr);
         continue;
       }
-      if (linalgOp.isScalar(operand)) {
-        indexedValues.push_back(operand->get());
+      if (linalgOp.isScalar(&operand)) {
+        indexedValues.push_back(operand.get());
         continue;
       }
       SmallVector<Value> indices = getIndicesForAccess(
-          builder, linalgOpLoc, linalgOp.getTiedIndexingMap(operand), ivs);
+          builder, linalgOpLoc, linalgOp.getMatchingIndexingMap(&operand), ivs);
       Value load =
-          builder.create<memref::LoadOp>(linalgOpLoc, operand->get(), indices);
+          builder.create<memref::LoadOp>(linalgOpLoc, operand.get(), indices);
       indexedValues.push_back(load);
     }
 

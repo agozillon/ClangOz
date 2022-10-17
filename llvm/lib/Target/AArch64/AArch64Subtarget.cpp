@@ -65,6 +65,10 @@ ReservedRegsForRA("reserve-regs-for-regalloc", cl::desc("Reserve physical "
                   "Should only be used for testing register allocator."),
                   cl::CommaSeparated, cl::Hidden);
 
+static cl::opt<bool>
+    ForceStreamingCompatibleSVE("force-streaming-compatible-sve",
+                                cl::init(false), cl::Hidden);
+
 unsigned AArch64Subtarget::getVectorInsertExtractBaseCost() const {
   if (OverrideVectorInsertExtractBaseCost.getNumOccurrences() > 0)
     return OverrideVectorInsertExtractBaseCost;
@@ -160,6 +164,8 @@ void AArch64Subtarget::initializeProperties() {
   case AppleA12:
   case AppleA13:
   case AppleA14:
+  case AppleA15:
+  case AppleA16:
     CacheLineSize = 64;
     PrefetchDistance = 280;
     MinPrefetchStride = 2048;
@@ -199,6 +205,7 @@ void AArch64Subtarget::initializeProperties() {
     MaxBytesForLoopAlignment = 16;
     break;
   case NeoverseN2:
+  case NeoverseV2:
     PrefFunctionLogAlignment = 4;
     PrefLoopLogAlignment = 5;
     MaxBytesForLoopAlignment = 16;
@@ -428,3 +435,11 @@ void AArch64Subtarget::mirFileLoaded(MachineFunction &MF) const {
 }
 
 bool AArch64Subtarget::useAA() const { return UseAA; }
+
+bool AArch64Subtarget::forceStreamingCompatibleSVE() const {
+  if (ForceStreamingCompatibleSVE) {
+    assert((hasSVE() || hasSME()) && "Expected SVE to be available");
+    return hasSVE() || hasSME();
+  }
+  return false;
+}

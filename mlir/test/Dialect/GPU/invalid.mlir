@@ -245,6 +245,14 @@ func.func @reduce_invalid_op_type(%arg0 : f32) {
 
 // -----
 
+func.func @subgroup_reduce_invalid_op_type(%arg0 : f32) {
+  // expected-error@+1 {{`and` accumulator is only compatible with Integer type}}
+  %res = gpu.subgroup_reduce and %arg0 : (f32) -> (f32)
+  return
+}
+
+// -----
+
 func.func @reduce_incorrect_region_arguments(%arg0 : f32) {
   // expected-error@+1 {{expected two region arguments}}
   %res = gpu.all_reduce %arg0 {
@@ -302,7 +310,7 @@ func.func @reduce_incorrect_yield(%arg0 : f32) {
 // -----
 
 func.func @shuffle_mismatching_type(%arg0 : f32, %arg1 : i32, %arg2 : i32) {
-  // expected-error@+1 {{op failed to verify that all of {value, result} have same type}}
+  // expected-error@+1 {{op failed to verify that all of {value, shuffleResult} have same type}}
   %shfl, %pred = "gpu.shuffle"(%arg0, %arg1, %arg2) { mode = #gpu<shuffle_mode xor> } : (f32, i32, i32) -> (i32, i1)
   return
 }

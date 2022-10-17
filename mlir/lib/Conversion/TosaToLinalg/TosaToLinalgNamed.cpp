@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "mlir/Conversion/TosaToLinalg/TosaToLinalg.h"
-#include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -73,13 +73,12 @@ static mlir::Value reifyConstantDim(Attribute attr,
 // Calculating the output width/height using the formula:
 // H = ((IH+pad_top+pad_bottom-(dilation_y*(KH-1)+1))/stride_y)+1
 // W = ((IW+pad_left+pad_right-(dilation_x*(KW-1)+1))/stride_x)+1
-static mlir::Value getConvOrPoolOutputDim(Location loc, Value inputDim,
-                                          Attribute padBeforeAttr,
-                                          Attribute padAfterAttr,
-                                          Value kernelDim, Attribute strideAttr,
-                                          Attribute dilationAttr, Type inputETy,
-                                          ImplicitLocOpBuilder &builder) {
-  auto one = builder.create<arith::ConstantOp>(
+static mlir::Value
+getConvOutputDim(Location loc, Value inputDim, Attribute padBeforeAttr,
+                 Attribute padAfterAttr, Value kernelDim, Attribute strideAttr,
+                 Attribute dilationAttr, Type inputETy, OpBuilder &rewriter) {
+  ImplicitLocOpBuilder builder(loc, rewriter);
+  auto one = rewriter.create<arith::ConstantOp>(
       loc, IntegerAttr::get(inputDim.getType(), 1));
   Value padBefore = reifyConstantDim(padBeforeAttr, builder);
   Value paddedBefore = builder.create<arith::AddIOp>(inputDim, padBefore);
@@ -97,27 +96,11 @@ static mlir::Value getConvOrPoolOutputDim(Location loc, Value inputDim,
   return builder.create<arith::AddIOp>(divide, one);
 }
 
-// For convolution, the kernel is a value.
-Value getKernelDim(Location loc, Value kernel, uint64_t dim,
-                   ImplicitLocOpBuilder &builder) {
-  return builder.create<tensor::DimOp>(loc, kernel, dim).getResult();
-}
-
-// For pooling, the kernel is an attribute.
-Value getKernelDim(Location loc, ArrayAttr kernel, uint64_t dim,
-                   ImplicitLocOpBuilder &builder) {
-  auto kernelArr = kernel.getValue();
-  if (dim >= kernelArr.size()) return nullptr;
-  Attribute kernelDimAttr = kernelArr[dim];
-  return reifyConstantDim(kernelDimAttr, builder);
-}
-
-// Creates a vector of the dynamic output dims convolution and pooling ops.
-template <typename T>
-static SmallVector<Value> inferDynamicDimsForConvOrPool(
-    Location loc, Value input, T weight, ShapedType resultTy, ArrayAttr padAttr,
-    ArrayAttr strideAttr, ArrayAttr dilationAttr, int64_t weightHDim,
-    int64_t weightWDim, OpBuilder &rewriter) {
+// Creates a vector of the dynamic output dims for Conv2D and Depthwise_Conv2D
+static SmallVector<Value> inferDynamicDimsForConv(
+    Location loc, Value input, Value weight, ShapedType resultTy,
+    ArrayAttr padAttr, ArrayAttr strideAttr, ArrayAttr dilationAttr,
+    int64_t weightHDim, int64_t weightWDim, OpBuilder &rewriter) {
   ShapedType inputTy = input.getType().cast<ShapedType>();
   Type inputETy = inputTy.getElementType();
   int64_t inputRank = inputTy.getRank();
@@ -131,29 +114,30 @@ static SmallVector<Value> inferDynamicDimsForConvOrPool(
       dynDims[i] = rewriter.create<tensor::DimOp>(loc, input, i);
   }
 
-  ImplicitLocOpBuilder builder(loc, rewriter);
   // Dynamic input height
   if (inputTy.isDynamicDim(heightDim)) {
-    Value inputHDim =
-        builder.create<tensor::DimOp>(loc, input, heightDim).getResult();
-    Value kernelHDim = getKernelDim(loc, weight, weightHDim, builder);
+    Value initHDim =
+        rewriter.create<tensor::DimOp>(loc, input, heightDim).getResult();
+    Value kernelHDim =
+        rewriter.create<tensor::DimOp>(loc, weight, weightHDim).getResult();
     // H = F(IH, pad_top, pad_bottom, dilation_y, KH, stride_y)
-    dynDims[heightDim] = getConvOrPoolOutputDim(
-        loc, inputHDim, padAttr.getValue()[0], padAttr.getValue()[1],
-        kernelHDim, strideAttr.getValue()[0], dilationAttr.getValue()[0],
-        inputETy, builder);
+    dynDims[heightDim] = getConvOutputDim(
+        loc, initHDim, padAttr.getValue()[0], padAttr.getValue()[1], kernelHDim,
+        strideAttr.getValue()[0], dilationAttr.getValue()[0], inputETy,
+        rewriter);
   }
 
   // Dynamic input weight
   if (inputTy.isDynamicDim(weightDim)) {
-    Value inputWDim =
-        builder.create<tensor::DimOp>(loc, input, weightDim).getResult();
-    Value kernelWDim = getKernelDim(loc, weight, weightWDim, builder);
+    Value initWDim =
+        rewriter.create<tensor::DimOp>(loc, input, weightDim).getResult();
+    Value kernelWDim =
+        rewriter.create<tensor::DimOp>(loc, weight, weightWDim).getResult();
     // W = F(IW, pad_left, pad_right, dilation_x, KW, stride_x)
-    dynDims[weightDim] = getConvOrPoolOutputDim(
-        loc, inputWDim, padAttr.getValue()[2], padAttr.getValue()[3],
-        kernelWDim, strideAttr.getValue()[1], dilationAttr.getValue()[1],
-        inputETy, builder);
+    dynDims[weightDim] = getConvOutputDim(
+        loc, initWDim, padAttr.getValue()[2], padAttr.getValue()[3], kernelWDim,
+        strideAttr.getValue()[1], dilationAttr.getValue()[1], inputETy,
+        rewriter);
   }
 
   SmallVector<Value> filteredDims = condenseValues(dynDims);
@@ -207,7 +191,7 @@ public:
       return rewriter.notifyMatchFailure(
           op, "tosa.conv ops does not support unsigned integer input");
 
-    SmallVector<Value> filteredDims = inferDynamicDimsForConvOrPool(
+    SmallVector<Value> filteredDims = inferDynamicDimsForConv(
         loc, input, weight, resultTy, padAttr, strideTosaAttr, dilationTosaAttr,
         /*weightHDim=*/1, /*weightWDim=*/2, rewriter);
 
@@ -257,12 +241,12 @@ public:
                                                 weightPermValue);
 
     Attribute resultZeroAttr = rewriter.getZeroAttr(resultETy);
-    Value initTensor = rewriter.create<linalg::InitTensorOp>(
-        loc, filteredDims, resultTy.getShape(), resultETy);
+    Value emptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, resultTy.getShape(), resultETy, filteredDims);
     Value zero = rewriter.create<arith::ConstantOp>(loc, resultZeroAttr);
     Value zeroTensor = rewriter
                            .create<linalg::FillOp>(loc, ValueRange{zero},
-                                                   ValueRange{initTensor})
+                                                   ValueRange{emptyTensor})
                            .result();
 
     // Extract the attributes for convolution.
@@ -284,8 +268,8 @@ public:
     indexingMaps.push_back(rewriter.getMultiDimIdentityMap(resultTy.getRank()));
     indexingMaps.push_back(rewriter.getMultiDimIdentityMap(resultTy.getRank()));
 
-    Value biasInitTensor = rewriter.create<linalg::InitTensorOp>(
-        loc, filteredDims, resultTy.getShape(), resultETy);
+    Value biasEmptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, resultTy.getShape(), resultETy, filteredDims);
 
     if (isQuantized) {
       auto quantizationInfo =
@@ -305,7 +289,7 @@ public:
       Value result =
           rewriter
               .create<linalg::GenericOp>(
-                  loc, resultTy, ValueRange({bias, conv}), biasInitTensor,
+                  loc, resultTy, ValueRange({bias, conv}), biasEmptyTensor,
                   indexingMaps, getNParallelLoopsAttrs(resultTy.getRank()),
                   [&](OpBuilder &nestedBuilder, Location nestedLoc,
                       ValueRange args) {
@@ -327,7 +311,7 @@ public:
     Value result =
         rewriter
             .create<linalg::GenericOp>(
-                loc, resultTy, ValueRange({bias, conv}), biasInitTensor,
+                loc, resultTy, ValueRange({bias, conv}), biasEmptyTensor,
                 indexingMaps, getNParallelLoopsAttrs(resultTy.getRank()),
                 [&](OpBuilder &nestedBuilder, Location nestedLoc,
                     ValueRange args) {
@@ -372,7 +356,7 @@ public:
           op, "tosa.depthwise_conv ops require static shapes");
 
     // Compute output dynamic dims
-    SmallVector<Value> filteredDims = inferDynamicDimsForConvOrPool(
+    SmallVector<Value> filteredDims = inferDynamicDimsForConv(
         loc, input, weight, resultTy, padAttr, strideTosaAttr, dilationTosaAttr,
         0, 1, rewriter);
 
@@ -442,16 +426,16 @@ public:
     indexingMaps.push_back(rewriter.getMultiDimIdentityMap(resultRank));
 
     Attribute resultZeroAttr = rewriter.getZeroAttr(resultETy);
-    Value initTensor = rewriter.create<linalg::InitTensorOp>(
-        loc, filteredDims, linalgConvTy.getShape(), resultETy);
+    Value emptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, linalgConvTy.getShape(), resultETy, filteredDims);
     Value zero = rewriter.create<arith::ConstantOp>(loc, resultZeroAttr);
     Value zeroTensor = rewriter
                            .create<linalg::FillOp>(loc, ValueRange{zero},
-                                                   ValueRange{initTensor})
+                                                   ValueRange{emptyTensor})
                            .result();
 
-    Value biasInitTensor = rewriter.create<linalg::InitTensorOp>(
-        loc, filteredDims, resultTy.getShape(), resultETy);
+    Value biasEmptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, resultTy.getShape(), resultETy, filteredDims);
     if (!isQuantized) {
       Value conv = rewriter
                        .create<linalg::DepthwiseConv2DNhwcHwcmOp>(
@@ -468,7 +452,7 @@ public:
           rewriter
               .create<linalg::GenericOp>(
                   loc, resultTy, ValueRange({bias, convReshape}),
-                  biasInitTensor, indexingMaps,
+                  biasEmptyTensor, indexingMaps,
                   getNParallelLoopsAttrs(resultRank),
                   [&](OpBuilder &nestedBuilder, Location nestedLoc,
                       ValueRange args) {
@@ -495,7 +479,7 @@ public:
           rewriter
               .create<linalg::GenericOp>(
                   loc, resultTy, ValueRange({bias, convReshape}),
-                  biasInitTensor, indexingMaps,
+                  biasEmptyTensor, indexingMaps,
                   getNParallelLoopsAttrs(resultRank),
                   [&](OpBuilder &nestedBuilder, Location nestedLoc,
                       ValueRange args) {
@@ -543,11 +527,11 @@ public:
 
     auto zeroAttr = rewriter.getZeroAttr(outputElementTy);
     Value zero = rewriter.create<arith::ConstantOp>(loc, zeroAttr);
-    auto initTensor = rewriter.create<linalg::InitTensorOp>(
-        loc, filteredDims, outputTy.getShape(), outputTy.getElementType());
+    auto emptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, outputTy.getShape(), outputTy.getElementType(), filteredDims);
     Value zeroTensor = rewriter
                            .create<linalg::FillOp>(loc, ValueRange{zero},
-                                                   ValueRange{initTensor})
+                                                   ValueRange{emptyTensor})
                            .result();
     if (!op.getQuantizationInfo()) {
       rewriter.replaceOpWithNewOp<linalg::BatchMatmulOp>(
@@ -613,15 +597,15 @@ public:
     indexingMaps.push_back(rewriter.getMultiDimIdentityMap(outputTy.getRank()));
     indexingMaps.push_back(rewriter.getMultiDimIdentityMap(outputTy.getRank()));
 
-    auto initTensor = rewriter.create<linalg::InitTensorOp>(
-        loc, filteredDims, outputTy.getShape(), outputTy.getElementType());
+    auto emptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, outputTy.getShape(), outputTy.getElementType(), filteredDims);
 
     // When quantized, the input elemeny type is not the same as the output
     Attribute resultZeroAttr = rewriter.getZeroAttr(outputETy);
     Value zero = rewriter.create<arith::ConstantOp>(loc, resultZeroAttr);
     Value zeroTensor = rewriter
                            .create<linalg::FillOp>(loc, ValueRange{zero},
-                                                   ValueRange{initTensor})
+                                                   ValueRange{emptyTensor})
                            .result();
 
     SmallVector<int64_t> permutation{1, 0};
@@ -637,10 +621,10 @@ public:
     Value transposedWeight = rewriter.create<tosa::TransposeOp>(
         loc, newWeightTy, weight, permutationValue);
 
-    auto biasInitTensor =
+    auto biasEmptyTensor =
         rewriter
-            .create<linalg::InitTensorOp>(loc, filteredDims,
-                                          outputTy.getShape(), outputETy)
+            .create<tensor::EmptyOp>(loc, outputTy.getShape(), outputETy,
+                                     filteredDims)
             ->getResults();
 
     if (!op.getQuantizationInfo()) {
@@ -653,7 +637,7 @@ public:
       Value result =
           rewriter
               .create<linalg::GenericOp>(
-                  loc, outputTy, ValueRange({bias, matmul}), biasInitTensor,
+                  loc, outputTy, ValueRange({bias, matmul}), biasEmptyTensor,
                   indexingMaps, getNParallelLoopsAttrs(outputTy.getRank()),
                   [&](OpBuilder &nestedBuilder, Location nestedLoc,
                       ValueRange args) {
@@ -681,7 +665,7 @@ public:
     Value result =
         rewriter
             .create<linalg::GenericOp>(
-                loc, outputTy, ValueRange({bias, matmul}), biasInitTensor,
+                loc, outputTy, ValueRange({bias, matmul}), biasEmptyTensor,
                 indexingMaps, getNParallelLoopsAttrs(outputTy.getRank()),
                 [&](OpBuilder &nestedBuilder, Location nestedLoc,
                     ValueRange args) {
@@ -708,15 +692,11 @@ public:
     ShapedType resultTy = op.getType().template cast<ShapedType>();
     Type resultETy = inputTy.getElementType();
 
-    auto kernelAttr = op.getKernel().cast<ArrayAttr>();
-    auto padAttr = op.getPad().cast<ArrayAttr>();
-    auto strideTosaAttr = op.getStride().cast<ArrayAttr>();
-    ArrayAttr dilationTosaAttr = rewriter.getI64ArrayAttr({1, 1});
-
-    SmallVector<Value> filteredDims = inferDynamicDimsForConvOrPool(
-        loc, input, kernelAttr, resultTy, padAttr, strideTosaAttr,
-        dilationTosaAttr,
-        /*weightHDim=*/0, /*weightWDim=*/1, rewriter);
+    auto dynamicDimsOr =
+        checkHasDynamicBatchDims(rewriter, op, {input, op.getOutput()});
+    if (!dynamicDimsOr.has_value())
+      return failure();
+    SmallVector<Value> dynamicDims = dynamicDimsOr.value();
 
     // Determine what the initial value needs to be for the max pool op.
     Attribute initialAttr;
@@ -752,21 +732,21 @@ public:
     Attribute dilationAttr = rewriter.getI64VectorAttr({1, 1});
 
     // Create the linalg op that performs pooling.
-    Value initTensor = rewriter.create<linalg::InitTensorOp>(
-        loc, filteredDims, resultTy.getShape(), resultTy.getElementType());
+    Value emptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, resultTy.getShape(), resultTy.getElementType(), dynamicDims);
 
-    Value filledInitTensor =
+    Value filledEmptyTensor =
         rewriter
             .create<linalg::FillOp>(loc, ValueRange{initialValue},
-                                    ValueRange{initTensor})
+                                    ValueRange{emptyTensor})
             .result();
 
     Value fakeWindowDims =
-        rewriter.create<linalg::InitTensorOp>(loc, kernel, resultETy);
+        rewriter.create<tensor::EmptyOp>(loc, kernel, resultETy);
 
     rewriter.replaceOpWithNewOp<linalg::PoolingNhwcMaxOp>(
         op, ArrayRef<Type>{resultTy}, ValueRange{paddedInput, fakeWindowDims},
-        filledInitTensor, strideAttr, dilationAttr);
+        filledEmptyTensor, strideAttr, dilationAttr);
     return success();
   }
 };
@@ -789,15 +769,11 @@ public:
         inElementTy.isa<IntegerType>() ? rewriter.getI32Type() : inElementTy;
     ShapedType accTy = resultTy.clone(accETy);
 
-    auto kernelAttr = op.getKernel().cast<ArrayAttr>();
-    auto padArrayAttr = op.getPad().cast<ArrayAttr>();
-    auto strideTosaAttr = op.getStride().cast<ArrayAttr>();
-    ArrayAttr dilationTosaAttr = rewriter.getI64ArrayAttr({1, 1});
-
-    SmallVector<Value> filteredDims = inferDynamicDimsForConvOrPool(
-        loc, input, kernelAttr, resultTy, padArrayAttr, strideTosaAttr,
-        dilationTosaAttr,
-        /*weightHDim=*/0, /*weightWDim=*/1, rewriter);
+    auto dynamicDimsOr =
+        checkHasDynamicBatchDims(rewriter, op, {input, op.getOutput()});
+    if (!dynamicDimsOr.has_value())
+      return failure();
+    SmallVector<Value> dynamicDims = dynamicDimsOr.value();
 
     // Apply padding as necessary.
     llvm::SmallVector<int64_t> pad;
@@ -818,24 +794,24 @@ public:
     Attribute dilationAttr = rewriter.getI64VectorAttr({1, 1});
 
     // Create the linalg op that performs pooling.
-    Value poolInitTensor = rewriter.create<linalg::InitTensorOp>(
-        loc, filteredDims, accTy.getShape(), accETy);
+    Value poolEmptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, accTy.getShape(), accETy, dynamicDims);
 
-    Value filledInitTensor =
+    Value filledEmptyTensor =
         rewriter
             .create<linalg::FillOp>(loc, ValueRange{initialValue},
-                                    ValueRange{poolInitTensor})
+                                    ValueRange{poolEmptyTensor})
             .result();
 
     Value fakeWindowDims =
-        rewriter.create<linalg::InitTensorOp>(loc, kernel, accETy);
+        rewriter.create<tensor::EmptyOp>(loc, kernel, accETy);
 
     // Sum across the pooled region.
     Value poolingOp = rewriter
                           .create<linalg::PoolingNhwcSumOp>(
                               loc, ArrayRef<Type>{accTy},
                               ValueRange{paddedInput, fakeWindowDims},
-                              filledInitTensor, strideAttr, dilationAttr)
+                              filledEmptyTensor, strideAttr, dilationAttr)
                           .getResult(0);
 
     // Normalize the summed value by the number of elements grouped in each
@@ -843,12 +819,12 @@ public:
     auto poolingOpTy = poolingOp.getType().cast<ShapedType>();
     auto affineMap = rewriter.getMultiDimIdentityMap(resultTy.getRank());
 
-    Value genericInitTensor = rewriter.create<linalg::InitTensorOp>(
-        loc, filteredDims, resultTy.getShape(), resultETy);
+    Value genericEmptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, resultTy.getShape(), resultETy, dynamicDims);
 
     auto genericOp = rewriter.create<linalg::GenericOp>(
         loc, ArrayRef<Type>({resultTy}), ValueRange{poolingOp},
-        ValueRange{genericInitTensor},
+        ValueRange{genericEmptyTensor},
         ArrayRef<AffineMap>({affineMap, affineMap}),
         getNParallelLoopsAttrs(resultTy.getRank()),
         [&](OpBuilder &b, Location loc, ValueRange args) {

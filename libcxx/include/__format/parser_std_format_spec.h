@@ -54,8 +54,7 @@ __parse_arg_id(const _CharT* __begin, const _CharT* __end, auto& __parse_ctx) {
   if (__begin == __end)
     __throw_format_error("End of input while parsing format-spec arg-id");
 
-  __format::__parse_number_result __r =
-      __format::__parse_arg_id(__begin, __end, __parse_ctx);
+  __format::__parse_number_result __r = __format::__parse_arg_id(__begin, __end, __parse_ctx);
 
   if (__r.__ptr == __end || *__r.__ptr != _CharT('}'))
     __throw_format_error("Invalid arg-id");
@@ -701,6 +700,9 @@ struct __column_width_result {
   /// This limits the original output to fit in the wanted number of columns.
   const _CharT* __last_;
 };
+
+template <class _CharT>
+__column_width_result(size_t, const _CharT*) -> __column_width_result<_CharT>;
 
 /// Since a column width can be two it's possible that the requested column
 /// width can't be achieved. Depending on the intended usage the policy can be

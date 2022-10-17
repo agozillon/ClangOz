@@ -168,6 +168,12 @@ static inline bool usesMaskPolicy(uint64_t TSFlags) {
   return TSFlags & UsesMaskPolicyMask;
 }
 
+static inline unsigned getMergeOpNum(const MCInstrDesc &Desc) {
+  assert(hasMergeOp(Desc.TSFlags));
+  assert(!Desc.isVariadic());
+  return Desc.getNumDefs();
+}
+
 static inline unsigned getVLOpNum(const MCInstrDesc &Desc) {
   const uint64_t TSFlags = Desc.TSFlags;
   // This method is only called if we expect to have a VL operand, and all
@@ -448,6 +454,8 @@ inline static bool isTailAgnostic(unsigned VType) { return VType & 0x40; }
 inline static bool isMaskAgnostic(unsigned VType) { return VType & 0x80; }
 
 void printVType(unsigned VType, raw_ostream &OS);
+
+unsigned getSEWLMULRatio(unsigned SEW, RISCVII::VLMUL VLMul);
 
 } // namespace RISCVVType
 

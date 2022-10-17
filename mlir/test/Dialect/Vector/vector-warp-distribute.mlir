@@ -73,7 +73,7 @@ func.func @rewrite_warp_op_to_scf_if(%laneid: index,
 //     CHECK-D:   vector.yield %{{.*}}, %{{.*}} : vector<64xf32>, vector<32xf32>
 // CHECK-D-DAG: vector.transfer_write %[[R]]#1, %{{.*}}[%{{.*}}] {in_bounds = [true]} : vector<1xf32>, memref<128xf32
 // CHECK-D-DAG: %[[ID1:.*]] = affine.apply #[[MAP1]]()[%{{.*}}]
-// CHECK-D-DAG: vector.transfer_write %[[R]]#0, %2[%[[ID1]]] {in_bounds = [true]} : vector<2xf32>, memref<128xf32
+// CHECK-D-DAG: vector.transfer_write %[[R]]#0, %{{.*}}[%[[ID1]]] {in_bounds = [true]} : vector<2xf32>, memref<128xf32
 
 // CHECK-DIST-AND-PROP-NOT: vector.warp_execute_on_lane_0
 // CHECK-DIST-AND-PROP: vector.transfer_read {{.*}} vector<1xf32>
@@ -85,24 +85,23 @@ func.func @rewrite_warp_op_to_scf_if(%laneid: index,
 // CHECK-DIST-AND-PROP: vector.transfer_write {{.*}} : vector<1xf32>
 // CHECK-DIST-AND-PROP: vector.transfer_write {{.*}} : vector<2xf32>
 
-#map0 =  affine_map<(d0)[s0] -> (d0 + s0)>
 func.func @warp(%laneid: index, %arg1: memref<1024xf32>, %arg2: memref<1024xf32>,
            %arg3: memref<1024xf32>, %gid : index) {
   vector.warp_execute_on_lane_0(%laneid)[32] {
-    %sa = memref.subview %arg1[%gid] [128] [1] : memref<1024xf32> to memref<128xf32, #map0>
-    %sb = memref.subview %arg2[%gid] [128] [1] : memref<1024xf32> to memref<128xf32, #map0>
-    %sc = memref.subview %arg3[%gid] [128] [1] : memref<1024xf32> to memref<128xf32, #map0>
+    %sa = memref.subview %arg1[%gid] [128] [1] : memref<1024xf32> to memref<128xf32, strided<[1], offset: ?>>
+    %sb = memref.subview %arg2[%gid] [128] [1] : memref<1024xf32> to memref<128xf32, strided<[1], offset: ?>>
+    %sc = memref.subview %arg3[%gid] [128] [1] : memref<1024xf32> to memref<128xf32, strided<[1], offset: ?>>
     %c0 = arith.constant 0 : index
     %c32 = arith.constant 32 : index
     %cst = arith.constant 0.000000e+00 : f32
-    %2 = vector.transfer_read %sa[%c0], %cst : memref<128xf32, #map0>, vector<32xf32>
-    %3 = vector.transfer_read %sa[%c32], %cst : memref<128xf32, #map0>, vector<32xf32>
-    %4 = vector.transfer_read %sb[%c0], %cst : memref<128xf32, #map0>, vector<64xf32>
-    %5 = vector.transfer_read %sb[%c32], %cst : memref<128xf32, #map0>, vector<64xf32>
+    %2 = vector.transfer_read %sa[%c0], %cst : memref<128xf32, strided<[1], offset: ?>>, vector<32xf32>
+    %3 = vector.transfer_read %sa[%c32], %cst : memref<128xf32, strided<[1], offset: ?>>, vector<32xf32>
+    %4 = vector.transfer_read %sb[%c0], %cst : memref<128xf32, strided<[1], offset: ?>>, vector<64xf32>
+    %5 = vector.transfer_read %sb[%c32], %cst : memref<128xf32, strided<[1], offset: ?>>, vector<64xf32>
     %6 = arith.addf %2, %3 : vector<32xf32>
     %7 = arith.addf %4, %5 : vector<64xf32>
-    vector.transfer_write %6, %sc[%c0] : vector<32xf32>, memref<128xf32, #map0>
-    vector.transfer_write %7, %sc[%c32] : vector<64xf32>, memref<128xf32, #map0>
+    vector.transfer_write %6, %sc[%c0] : vector<32xf32>, memref<128xf32, strided<[1], offset: ?>>
+    vector.transfer_write %7, %sc[%c32] : vector<64xf32>, memref<128xf32, strided<[1], offset: ?>>
   }
   return
 }
@@ -633,12 +632,30 @@ func.func @vector_extract_simple(%laneid: index) -> (f32) {
 
 // -----
 
+// CHECK-PROP-LABEL: func.func @vector_extractelement_simple(
+//       CHECK-PROP:   %[[R:.*]] = vector.warp_execute_on_lane_0(%{{.*}})[32] -> (vector<f32>) {
+//       CHECK-PROP:     %[[V:.*]] = "some_def"() : () -> vector<f32>
+//       CHECK-PROP:     vector.yield %[[V]] : vector<f32>
+//       CHECK-PROP:   }
+//       CHECK-PROP:   %[[E:.*]] = vector.extractelement %[[R]][] : vector<f32>
+//       CHECK-PROP:   return %[[E]] : f32
+func.func @vector_extractelement_simple(%laneid: index) -> (f32) {
+  %r = vector.warp_execute_on_lane_0(%laneid)[32] -> (f32) {
+    %0 = "some_def"() : () -> (vector<f32>)
+    %1 = vector.extractelement %0[] : vector<f32>
+    vector.yield %1 : f32
+  }
+  return %r : f32
+}
+
+// -----
+
 // CHECK-PROP:   func @lane_dependent_warp_propagate_read
 //  CHECK-PROP-SAME:   %[[ID:.*]]: index
 func.func @lane_dependent_warp_propagate_read(
     %laneid: index, %src: memref<1x1024xf32>, %dest: memref<1x1024xf32>) {
   // CHECK-PROP-DAG: %[[C0:.*]] = arith.constant 0 : index
-  // CHECK-PROP-NOT: lane_dependent_warp_propagate_read
+  // CHECK-PROP-NOT: vector.warp_execute_on_lane_0
   // CHECK-PROP-DAG: %[[R0:.*]] = vector.transfer_read %arg1[%[[C0]], %[[ID]]], %{{.*}} : memref<1x1024xf32>, vector<1x1xf32>
   // CHECK-PROP: vector.transfer_write %[[R0]], {{.*}} : vector<1x1xf32>, memref<1x1024xf32>
   %c0 = arith.constant 0 : index

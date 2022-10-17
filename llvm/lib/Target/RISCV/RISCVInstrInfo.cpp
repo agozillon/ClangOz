@@ -1216,6 +1216,32 @@ bool RISCVInstrInfo::verifyInstruction(const MachineInstr &MI,
   }
 
   const uint64_t TSFlags = Desc.TSFlags;
+  if (RISCVII::hasMergeOp(TSFlags)) {
+    unsigned OpIdx = RISCVII::getMergeOpNum(Desc);
+    if (MI.findTiedOperandIdx(0) != OpIdx) {
+      ErrInfo = "Merge op improperly tied";
+      return false;
+    }
+  }
+  if (RISCVII::hasVLOp(TSFlags)) {
+    const MachineOperand &Op = MI.getOperand(RISCVII::getVLOpNum(Desc));
+    if (!Op.isImm() && !Op.isReg())  {
+      ErrInfo = "Invalid operand type for VL operand";
+      return false;
+    }
+    if (Op.isReg() && Op.getReg() != RISCV::NoRegister) {
+      const MachineRegisterInfo &MRI = MI.getParent()->getParent()->getRegInfo();
+      auto *RC = MRI.getRegClass(Op.getReg());
+      if (!RISCV::GPRRegClass.hasSubClassEq(RC)) {
+        ErrInfo = "Invalid register class for VL operand";
+        return false;
+      }
+    }
+    if (!RISCVII::hasSEWOp(TSFlags)) {
+      ErrInfo = "VL operand w/o SEW operand?";
+      return false;
+    }
+  }
   if (RISCVII::hasSEWOp(TSFlags)) {
     unsigned OpIdx = RISCVII::getSEWOpNum(Desc);
     uint64_t Log2SEW = MI.getOperand(OpIdx).getImm();
@@ -1234,6 +1260,19 @@ bool RISCVInstrInfo::verifyInstruction(const MachineInstr &MI,
     uint64_t Policy = MI.getOperand(OpIdx).getImm();
     if (Policy > (RISCVII::TAIL_AGNOSTIC | RISCVII::MASK_AGNOSTIC)) {
       ErrInfo = "Invalid Policy Value";
+      return false;
+    }
+    if (!RISCVII::hasVLOp(TSFlags)) {
+      ErrInfo = "policy operand w/o VL operand?";
+      return false;
+    }
+
+    // VecPolicy operands can only exist on instructions with passthru/merge
+    // arguments. Note that not all arguments with passthru have vec policy
+    // operands- some instructions have implicit policies.
+    unsigned UseOpIdx;
+    if (!MI.isRegTiedToUseOperand(0, &UseOpIdx)) {
+      ErrInfo = "policy operand w/o tied operand?";
       return false;
     }
   }
@@ -1923,12 +1962,12 @@ MachineInstr *RISCVInstrInfo::convertToThreeAddress(MachineInstr &MI,
 #undef CASE_WIDEOP_OPCODE_LMULS
 #undef CASE_WIDEOP_OPCODE_COMMON
 
-Register RISCVInstrInfo::getVLENFactoredAmount(MachineFunction &MF,
-                                               MachineBasicBlock &MBB,
-                                               MachineBasicBlock::iterator II,
-                                               const DebugLoc &DL,
-                                               int64_t Amount,
-                                               MachineInstr::MIFlag Flag) const {
+void RISCVInstrInfo::getVLENFactoredAmount(MachineFunction &MF,
+                                           MachineBasicBlock &MBB,
+                                           MachineBasicBlock::iterator II,
+                                           const DebugLoc &DL, Register DestReg,
+                                           int64_t Amount,
+                                           MachineInstr::MIFlag Flag) const {
   assert(Amount > 0 && "There is no need to get VLEN scaled value.");
   assert(Amount % 8 == 0 &&
          "Reserve the stack by the multiple of one vector size.");
@@ -1936,17 +1975,15 @@ Register RISCVInstrInfo::getVLENFactoredAmount(MachineFunction &MF,
   MachineRegisterInfo &MRI = MF.getRegInfo();
   int64_t NumOfVReg = Amount / 8;
 
-  Register VL = MRI.createVirtualRegister(&RISCV::GPRRegClass);
-  BuildMI(MBB, II, DL, get(RISCV::PseudoReadVLENB), VL)
-    .setMIFlag(Flag);
+  BuildMI(MBB, II, DL, get(RISCV::PseudoReadVLENB), DestReg).setMIFlag(Flag);
   assert(isInt<32>(NumOfVReg) &&
          "Expect the number of vector registers within 32-bits.");
   if (isPowerOf2_32(NumOfVReg)) {
     uint32_t ShiftAmount = Log2_32(NumOfVReg);
     if (ShiftAmount == 0)
-      return VL;
-    BuildMI(MBB, II, DL, get(RISCV::SLLI), VL)
-        .addReg(VL, RegState::Kill)
+      return;
+    BuildMI(MBB, II, DL, get(RISCV::SLLI), DestReg)
+        .addReg(DestReg, RegState::Kill)
         .addImm(ShiftAmount)
         .setMIFlag(Flag);
   } else if (STI.hasStdExtZba() &&
@@ -1969,35 +2006,35 @@ Register RISCVInstrInfo::getVLENFactoredAmount(MachineFunction &MF,
       llvm_unreachable("Unexpected number of vregs");
     }
     if (ShiftAmount)
-      BuildMI(MBB, II, DL, get(RISCV::SLLI), VL)
-          .addReg(VL, RegState::Kill)
+      BuildMI(MBB, II, DL, get(RISCV::SLLI), DestReg)
+          .addReg(DestReg, RegState::Kill)
           .addImm(ShiftAmount)
           .setMIFlag(Flag);
-    BuildMI(MBB, II, DL, get(Opc), VL)
-        .addReg(VL, RegState::Kill)
-        .addReg(VL)
+    BuildMI(MBB, II, DL, get(Opc), DestReg)
+        .addReg(DestReg, RegState::Kill)
+        .addReg(DestReg)
         .setMIFlag(Flag);
   } else if (isPowerOf2_32(NumOfVReg - 1)) {
     Register ScaledRegister = MRI.createVirtualRegister(&RISCV::GPRRegClass);
     uint32_t ShiftAmount = Log2_32(NumOfVReg - 1);
     BuildMI(MBB, II, DL, get(RISCV::SLLI), ScaledRegister)
-        .addReg(VL)
+        .addReg(DestReg)
         .addImm(ShiftAmount)
         .setMIFlag(Flag);
-    BuildMI(MBB, II, DL, get(RISCV::ADD), VL)
+    BuildMI(MBB, II, DL, get(RISCV::ADD), DestReg)
         .addReg(ScaledRegister, RegState::Kill)
-        .addReg(VL, RegState::Kill)
+        .addReg(DestReg, RegState::Kill)
         .setMIFlag(Flag);
   } else if (isPowerOf2_32(NumOfVReg + 1)) {
     Register ScaledRegister = MRI.createVirtualRegister(&RISCV::GPRRegClass);
     uint32_t ShiftAmount = Log2_32(NumOfVReg + 1);
     BuildMI(MBB, II, DL, get(RISCV::SLLI), ScaledRegister)
-        .addReg(VL)
+        .addReg(DestReg)
         .addImm(ShiftAmount)
         .setMIFlag(Flag);
-    BuildMI(MBB, II, DL, get(RISCV::SUB), VL)
+    BuildMI(MBB, II, DL, get(RISCV::SUB), DestReg)
         .addReg(ScaledRegister, RegState::Kill)
-        .addReg(VL, RegState::Kill)
+        .addReg(DestReg, RegState::Kill)
         .setMIFlag(Flag);
   } else {
     Register N = MRI.createVirtualRegister(&RISCV::GPRRegClass);
@@ -2007,13 +2044,11 @@ Register RISCVInstrInfo::getVLENFactoredAmount(MachineFunction &MF,
           MF.getFunction(),
           "M- or Zmmul-extension must be enabled to calculate the vscaled size/"
           "offset."});
-    BuildMI(MBB, II, DL, get(RISCV::MUL), VL)
-        .addReg(VL, RegState::Kill)
+    BuildMI(MBB, II, DL, get(RISCV::MUL), DestReg)
+        .addReg(DestReg, RegState::Kill)
         .addReg(N, RegState::Kill)
         .setMIFlag(Flag);
   }
-
-  return VL;
 }
 
 // Returns true if this is the sext.w pattern, addiw rd, rs1, 0.

@@ -13,8 +13,8 @@
 
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 
-#include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
-#include "mlir/Dialect/Arithmetic/Utils/Utils.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/IndexingUtils.h"
@@ -94,6 +94,12 @@ static MaskFormat getMaskFormat(Value mask) {
       return MaskFormat::AllFalse;
   }
   return MaskFormat::Unknown;
+}
+
+/// Default callback to build a region with a 'vector.yield' terminator with no
+/// arguments.
+void mlir::vector::buildTerminatedBody(OpBuilder &builder, Location loc) {
+  builder.create<vector::YieldOp>(loc);
 }
 
 // Helper for verifying combining kinds in contractions and reductions.
@@ -307,6 +313,50 @@ LogicalResult MultiDimReductionOp::verify() {
                          << getSourceVectorType();
 
   return success();
+}
+
+namespace {
+// Only unit dimensions that are being reduced are folded. If the dimension is
+// unit, but not reduced, it is not folded, thereby keeping the output type the
+// same. If not all dimensions which are reduced are of unit dimension, this
+// transformation does nothing. This is just a generalization of
+// ElideSingleElementReduction for ReduceOp.
+struct ElideUnitDimsInMultiDimReduction
+    : public OpRewritePattern<MultiDimReductionOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MultiDimReductionOp reductionOp,
+                                PatternRewriter &rewriter) const override {
+    ArrayRef<int64_t> shape = reductionOp.getSourceVectorType().getShape();
+    for (const auto &dim : enumerate(shape)) {
+      if (reductionOp.isReducedDim(dim.index()) && dim.value() != 1)
+        return failure();
+    }
+    Location loc = reductionOp.getLoc();
+    Value acc = reductionOp.getAcc();
+    Value cast;
+    if (reductionOp.getDestType().isa<VectorType>()) {
+      cast = rewriter.create<vector::ShapeCastOp>(
+          loc, reductionOp.getDestType(), reductionOp.getSource());
+    } else {
+      // This means we are reducing all the dimensions, and all reduction
+      // dimensions are of size 1. So a simple extraction would do.
+      cast = rewriter.create<vector::ExtractOp>(
+          loc, reductionOp.getDestType(), reductionOp.getSource(),
+          rewriter.getI64ArrayAttr(SmallVector<int64_t>(shape.size(), 0)));
+    }
+
+    Value result = vector::makeArithReduction(rewriter, loc,
+                                              reductionOp.getKind(), acc, cast);
+    rewriter.replaceOp(reductionOp, result);
+    return success();
+  }
+};
+} // namespace
+
+void MultiDimReductionOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<ElideUnitDimsInMultiDimReduction>(context);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1631,81 +1681,6 @@ static void populateFromInt64AttrArray(ArrayAttr arrayAttr,
 }
 
 //===----------------------------------------------------------------------===//
-// ExtractMapOp
-//===----------------------------------------------------------------------===//
-
-void ExtractMapOp::build(OpBuilder &builder, OperationState &result,
-                         Value vector, ValueRange ids,
-                         ArrayRef<int64_t> multiplicity,
-                         AffineMap permutationMap) {
-  assert(ids.size() == multiplicity.size() &&
-         ids.size() == permutationMap.getNumResults());
-  assert(permutationMap.isProjectedPermutation());
-  VectorType type = vector.getType().cast<VectorType>();
-  SmallVector<int64_t, 4> newShape(type.getShape().begin(),
-                                   type.getShape().end());
-  for (unsigned i = 0, e = permutationMap.getNumResults(); i < e; i++) {
-    AffineExpr expr = permutationMap.getResult(i);
-    auto dim = expr.cast<AffineDimExpr>();
-    newShape[dim.getPosition()] = newShape[dim.getPosition()] / multiplicity[i];
-  }
-  VectorType resultType = VectorType::get(newShape, type.getElementType());
-  ExtractMapOp::build(builder, result, resultType, vector, ids);
-}
-
-LogicalResult ExtractMapOp::verify() {
-  if (getSourceVectorType().getRank() != getResultType().getRank())
-    return emitOpError("expected source and destination vectors of same rank");
-  unsigned numId = 0;
-  for (unsigned i = 0, e = getSourceVectorType().getRank(); i < e; ++i) {
-    if (getSourceVectorType().getDimSize(i) % getResultType().getDimSize(i) !=
-        0)
-      return emitOpError("source vector dimensions must be a multiple of "
-                         "destination vector dimensions");
-    if (getSourceVectorType().getDimSize(i) != getResultType().getDimSize(i))
-      numId++;
-  }
-  if (numId != getIds().size())
-    return emitOpError("expected number of ids must match the number of "
-                       "dimensions distributed");
-  return success();
-}
-
-OpFoldResult ExtractMapOp::fold(ArrayRef<Attribute> operands) {
-  auto insert = getVector().getDefiningOp<vector::InsertMapOp>();
-  if (insert == nullptr || getType() != insert.getVector().getType() ||
-      getIds() != insert.getIds())
-    return {};
-  return insert.getVector();
-}
-
-void ExtractMapOp::getMultiplicity(SmallVectorImpl<int64_t> &multiplicity) {
-  assert(multiplicity.empty());
-  for (unsigned i = 0, e = getSourceVectorType().getRank(); i < e; i++) {
-    if (getSourceVectorType().getDimSize(i) != getResultType().getDimSize(i))
-      multiplicity.push_back(getSourceVectorType().getDimSize(i) /
-                             getResultType().getDimSize(i));
-  }
-}
-
-template <typename MapOp>
-AffineMap calculateImplicitMap(MapOp op) {
-  SmallVector<AffineExpr, 4> perm;
-  // Check which dimension have a multiplicity greater than 1 and associated
-  // them to the IDs in order.
-  for (unsigned i = 0, e = op.getSourceVectorType().getRank(); i < e; i++) {
-    if (op.getSourceVectorType().getDimSize(i) !=
-        op.getResultType().getDimSize(i))
-      perm.push_back(getAffineDimExpr(i, op.getContext()));
-  }
-  auto map = AffineMap::get(op.getSourceVectorType().getRank(), 0, perm,
-                            op.getContext());
-  return map;
-}
-
-AffineMap ExtractMapOp::map() { return calculateImplicitMap(*this); }
-
-//===----------------------------------------------------------------------===//
 // FmaOp
 //===----------------------------------------------------------------------===//
 
@@ -2132,30 +2107,6 @@ OpFoldResult vector::InsertOp::fold(ArrayRef<Attribute> operands) {
     return getSource();
   return {};
 }
-
-//===----------------------------------------------------------------------===//
-// InsertMapOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult InsertMapOp::verify() {
-  if (getSourceVectorType().getRank() != getResultType().getRank())
-    return emitOpError("expected source and destination vectors of same rank");
-  unsigned numId = 0;
-  for (unsigned i = 0, e = getResultType().getRank(); i < e; i++) {
-    if (getResultType().getDimSize(i) % getSourceVectorType().getDimSize(i) !=
-        0)
-      return emitOpError(
-          "destination vector size must be a multiple of source vector size");
-    if (getResultType().getDimSize(i) != getSourceVectorType().getDimSize(i))
-      numId++;
-  }
-  if (numId != getIds().size())
-    return emitOpError("expected number of ids must match the number of "
-                       "dimensions distributed");
-  return success();
-}
-
-AffineMap InsertMapOp::map() { return calculateImplicitMap(*this); }
 
 //===----------------------------------------------------------------------===//
 // InsertStridedSliceOp
@@ -3266,6 +3217,21 @@ void TransferReadOp::getEffects(
                          SideEffects::DefaultResource::get());
 }
 
+/// Returns true if all rank reduced in the given `extractOp` happen in leading
+/// dimensions earlier than last `trailingRank` dimensions.
+static bool areAllRankReducedLeadingDim(tensor::ExtractSliceOp extractOp,
+                                        unsigned trailingRank) {
+  // If no ranks are reduced at all, it's a degenerated case; always true.
+  if (extractOp.getSourceType().getRank() == extractOp.getType().getRank())
+    return true;
+
+  RankedTensorType inferredType = extractOp.inferResultType(
+      extractOp.getSourceType(), extractOp.getMixedOffsets(),
+      extractOp.getMixedSizes(), extractOp.getMixedStrides());
+  return extractOp.getType().getShape().take_back(trailingRank) ==
+         inferredType.getShape().take_back(trailingRank);
+}
+
 namespace {
 /// Fold transfer_reads of a tensor.extract_slice op. E.g.:
 ///
@@ -3320,18 +3286,11 @@ public:
     // ```
     // For this, check the trailing `vectorRank` dims of the extract_slice
     // result tensor match the trailing dims of the inferred result tensor.
+    if (!areAllRankReducedLeadingDim(extractOp, extractOp.getType().getRank()))
+      return failure();
+
     int64_t rankReduced =
         extractOp.getSourceType().getRank() - extractOp.getType().getRank();
-    int64_t vectorRank = xferOp.getVectorType().getRank();
-    RankedTensorType inferredDestTensorType =
-        tensor::ExtractSliceOp::inferResultType(
-            extractOp.getSourceType(), extractOp.getMixedOffsets(),
-            extractOp.getMixedSizes(), extractOp.getMixedStrides());
-    auto actualDestTensorShape = extractOp.getType().getShape();
-    if (rankReduced > 0 &&
-        actualDestTensorShape.take_back(vectorRank) !=
-            inferredDestTensorType.getShape().take_back(vectorRank))
-      return failure();
 
     SmallVector<Value> newIndices;
     // In case this is a rank-reducing ExtractSliceOp, copy rank-reduced
@@ -4905,6 +4864,172 @@ public:
 void CreateMaskOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                MLIRContext *context) {
   results.add<CreateMaskFolder>(context);
+}
+
+//===----------------------------------------------------------------------===//
+// MaskOp
+//===----------------------------------------------------------------------===//
+
+void MaskOp::build(
+    OpBuilder &builder, OperationState &result, Value mask,
+    function_ref<void(OpBuilder &, Location)> maskRegionBuilder) {
+  assert(maskRegionBuilder &&
+         "builder callback for 'maskRegion' must be present");
+
+  result.addOperands(mask);
+  OpBuilder::InsertionGuard guard(builder);
+  Region *maskRegion = result.addRegion();
+  builder.createBlock(maskRegion);
+  maskRegionBuilder(builder, result.location);
+}
+
+void MaskOp::build(
+    OpBuilder &builder, OperationState &result, Type resultType, Value mask,
+    function_ref<void(OpBuilder &, Location)> maskRegionBuilder) {
+  build(builder, result, resultType, mask, /*passthru=*/Value(),
+        maskRegionBuilder);
+}
+
+void MaskOp::build(
+    OpBuilder &builder, OperationState &result, Type resultType, Value mask,
+    Value passthru,
+    function_ref<void(OpBuilder &, Location)> maskRegionBuilder) {
+  build(builder, result, mask, maskRegionBuilder);
+  if (passthru)
+    result.addOperands(passthru);
+  result.addTypes(resultType);
+}
+
+ParseResult MaskOp::parse(OpAsmParser &parser, OperationState &result) {
+  // Create the op region.
+  result.regions.reserve(1);
+  Region &maskRegion = *result.addRegion();
+
+  auto &builder = parser.getBuilder();
+
+  // Parse all the operands.
+  OpAsmParser::UnresolvedOperand mask;
+  if (parser.parseOperand(mask))
+    return failure();
+
+  // Optional passthru operand.
+  OpAsmParser::UnresolvedOperand passthru;
+  ParseResult parsePassthru = parser.parseOptionalComma();
+  if (parsePassthru.succeeded() && parser.parseOperand(passthru))
+    return failure();
+
+  // Parse op region.
+  if (parser.parseRegion(maskRegion, /*arguments=*/{}, /*argTypes=*/{}))
+    return failure();
+
+  MaskOp::ensureTerminator(maskRegion, builder, result.location);
+
+  // Parse the optional attribute list.
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  // Parse all the types.
+  Type maskType;
+  if (parser.parseColonType(maskType))
+    return failure();
+
+  SmallVector<Type> resultTypes;
+  if (parser.parseOptionalArrowTypeList(resultTypes))
+    return failure();
+  result.types.append(resultTypes);
+
+  // Resolve operands.
+  if (parser.resolveOperand(mask, maskType, result.operands))
+    return failure();
+
+  if (parsePassthru.succeeded())
+    if (parser.resolveOperand(passthru, resultTypes[0], result.operands))
+      return failure();
+
+  return success();
+}
+
+void mlir::vector::MaskOp::print(OpAsmPrinter &p) {
+  p << " " << getMask();
+  if (getPassthru())
+    p << ", " << getPassthru();
+
+  // Print single masked operation and skip terminator.
+  p << " { ";
+  Block *singleBlock = &getMaskRegion().getBlocks().front();
+  if (singleBlock && singleBlock->getOperations().size() > 1)
+    p.printCustomOrGenericOp(&singleBlock->front());
+  p << " }";
+
+  p.printOptionalAttrDict(getOperation()->getAttrs());
+
+  p << " : " << getMask().getType();
+  if (getNumResults() > 0)
+    p << " -> " << getResultTypes();
+}
+
+void MaskOp::ensureTerminator(Region &region, Builder &builder, Location loc) {
+  OpTrait::SingleBlockImplicitTerminator<vector::YieldOp>::Impl<
+      MaskOp>::ensureTerminator(region, builder, loc);
+  // Keep the default yield terminator if the number of masked operations is not
+  // the expected. This case will trigger a verification failure.
+  if (region.front().getOperations().size() != 2)
+    return;
+
+  // Replace default yield terminator with a new one that returns the results
+  // from the masked operation.
+  OpBuilder opBuilder(builder.getContext());
+  Operation *maskedOp = &region.front().front();
+  Operation *oldYieldOp = &region.front().back();
+  assert(isa<vector::YieldOp>(oldYieldOp) && "Expected vector::YieldOp");
+
+  opBuilder.setInsertionPoint(oldYieldOp);
+  opBuilder.create<vector::YieldOp>(maskedOp->getLoc(), maskedOp->getResults());
+  oldYieldOp->dropAllReferences();
+  oldYieldOp->erase();
+}
+
+LogicalResult MaskOp::verify() {
+  // Structural checks.
+  Block &block = getMaskRegion().getBlocks().front();
+  if (block.getOperations().size() < 2)
+    return emitOpError("expects an operation to mask");
+  if (block.getOperations().size() > 2)
+    return emitOpError("expects only one operation to mask");
+
+  auto maskableOp = dyn_cast<MaskableOpInterface>(block.front());
+  if (!maskableOp)
+    return emitOpError("expects a maskable operation");
+
+  // Result checks.
+  if (maskableOp->getNumResults() != getNumResults())
+    return emitOpError("expects number of results to match maskable operation "
+                       "number of results");
+
+  if (!llvm::equal(maskableOp->getResultTypes(), getResultTypes()))
+    return emitOpError(
+        "expects result type to match maskable operation result type");
+
+  // Mask checks.
+  if (getMask().getType() != maskableOp.getExpectedMaskType())
+    return emitOpError("expects a ") << maskableOp.getExpectedMaskType()
+                                     << " mask for the maskable operation";
+
+  // Passthru checks.
+  Value passthru = getPassthru();
+  if (passthru) {
+    if (!maskableOp.supportsPassthru())
+      return emitOpError(
+          "doesn't expect a passthru argument for this maskable operation");
+
+    if (maskableOp->getNumResults() != 1)
+      return emitOpError("expects result when passthru argument is provided");
+
+    if (passthru.getType() != maskableOp->getResultTypes()[0])
+      return emitOpError("expects passthru type to match result type");
+  }
+
+  return success();
 }
 
 //===----------------------------------------------------------------------===//

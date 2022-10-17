@@ -891,7 +891,7 @@ struct WhileOpInterface
     assert(value.getType().isa<TensorType>() && "expected tensor type");
 
     // Case 1: Block argument of the "before" region.
-    if (auto bbArg = value.cast<BlockArgument>()) {
+    if (auto bbArg = value.dyn_cast<BlockArgument>()) {
       if (bbArg.getOwner()->getParent() == &whileOp.getBefore()) {
         Value initArg = whileOp.getInits()[bbArg.getArgNumber()];
         auto yieldOp = whileOp.getYieldOp();
@@ -1148,11 +1148,9 @@ struct ForeachThreadOpInterface
   bool isRepetitiveRegion(Operation *op, unsigned index) const {
     auto foreachThreadOp = cast<ForeachThreadOp>(op);
     // This op is not repetitive if it has just a single thread.
-    if (llvm::all_of(foreachThreadOp.getNumThreads(), [](Value v) {
-          return getConstantIntValue(v) == static_cast<int64_t>(1);
-        }))
-      return false;
-    return true;
+    return !llvm::all_of(foreachThreadOp.getNumThreads(), [](Value v) {
+      return getConstantIntValue(v) == static_cast<int64_t>(1);
+    });
   }
 };
 

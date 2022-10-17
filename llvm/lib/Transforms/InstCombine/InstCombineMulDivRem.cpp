@@ -158,7 +158,8 @@ Instruction *InstCombinerImpl::visitMul(BinaryOperator &I) {
     return replaceInstUsesWith(I, V);
 
   Value *Op0 = I.getOperand(0), *Op1 = I.getOperand(1);
-  unsigned BitWidth = I.getType()->getScalarSizeInBits();
+  Type *Ty = I.getType();
+  unsigned BitWidth = Ty->getScalarSizeInBits();
 
   // X * -1 == 0 - X
   if (match(Op1, m_AllOnes())) {
@@ -212,6 +213,25 @@ Instruction *InstCombinerImpl::visitMul(BinaryOperator &I) {
     if (Value *NegOp0 = Negator::Negate(/*IsNegation*/ true, Op0, *this))
       return BinaryOperator::CreateMul(
           NegOp0, ConstantExpr::getNeg(cast<Constant>(Op1)), I.getName());
+
+    // Try to convert multiply of extended operand to narrow negate and shift
+    // for better analysis.
+    // This is valid if the shift amount (trailing zeros in the multiplier
+    // constant) clears more high bits than the bitwidth difference between
+    // source and destination types:
+    // ({z/s}ext X) * (-1<<C) --> (zext (-X)) << C
+    const APInt *NegPow2C;
+    Value *X;
+    if (match(Op0, m_ZExtOrSExt(m_Value(X))) &&
+        match(Op1, m_APIntAllowUndef(NegPow2C))) {
+      unsigned SrcWidth = X->getType()->getScalarSizeInBits();
+      unsigned ShiftAmt = NegPow2C->countTrailingZeros();
+      if (ShiftAmt >= BitWidth - SrcWidth) {
+        Value *N = Builder.CreateNeg(X, X->getName() + ".neg");
+        Value *Z = Builder.CreateZExt(N, Ty, N->getName() + ".z");
+        return BinaryOperator::CreateShl(Z, ConstantInt::get(Ty, ShiftAmt));
+      }
+    }
   }
 
   if (Instruction *FoldedMul = foldBinOpIntoSelectOrPhi(I))
@@ -320,7 +340,6 @@ Instruction *InstCombinerImpl::visitMul(BinaryOperator &I) {
   //   2) X * Y --> X & Y, iff X, Y can be only {0,1}.
   // Note: We could use known bits to generalize this and related patterns with
   // shifts/truncs
-  Type *Ty = I.getType();
   if (Ty->isIntOrIntVectorTy(1) ||
       (match(Op0, m_And(m_Value(), m_One())) &&
        match(Op1, m_And(m_Value(), m_One()))))
@@ -797,6 +816,66 @@ static bool isMultiple(const APInt &C1, const APInt &C2, APInt &Quotient,
   return Remainder.isMinValue();
 }
 
+static Instruction *foldIDivShl(BinaryOperator &I,
+                                InstCombiner::BuilderTy &Builder) {
+  assert((I.getOpcode() == Instruction::SDiv ||
+          I.getOpcode() == Instruction::UDiv) &&
+         "Expected integer divide");
+
+  bool IsSigned = I.getOpcode() == Instruction::SDiv;
+  Value *Op0 = I.getOperand(0), *Op1 = I.getOperand(1);
+  Type *Ty = I.getType();
+
+  Instruction *Ret = nullptr;
+  Value *X, *Y, *Z;
+
+  // With appropriate no-wrap constraints, remove a common factor in the
+  // dividend and divisor that is disguised as a left-shifted value.
+  if (match(Op1, m_Shl(m_Value(X), m_Value(Z))) &&
+      match(Op0, m_c_Mul(m_Specific(X), m_Value(Y)))) {
+    // Both operands must have the matching no-wrap for this kind of division.
+    auto *Mul = cast<OverflowingBinaryOperator>(Op0);
+    auto *Shl = cast<OverflowingBinaryOperator>(Op1);
+    bool HasNUW = Mul->hasNoUnsignedWrap() && Shl->hasNoUnsignedWrap();
+    bool HasNSW = Mul->hasNoSignedWrap() && Shl->hasNoSignedWrap();
+
+    // (X * Y) u/ (X << Z) --> Y u>> Z
+    if (!IsSigned && HasNUW)
+      Ret = BinaryOperator::CreateLShr(Y, Z);
+
+    // (X * Y) s/ (X << Z) --> Y s/ (1 << Z)
+    if (IsSigned && HasNSW && (Op0->hasOneUse() || Op1->hasOneUse())) {
+      Value *Shl = Builder.CreateShl(ConstantInt::get(Ty, 1), Z);
+      Ret = BinaryOperator::CreateSDiv(Y, Shl);
+    }
+  }
+
+  // With appropriate no-wrap constraints, remove a common factor in the
+  // dividend and divisor that is disguised as a left-shift amount.
+  if (match(Op0, m_Shl(m_Value(X), m_Value(Z))) &&
+      match(Op1, m_Shl(m_Value(Y), m_Specific(Z)))) {
+    auto *Shl0 = cast<OverflowingBinaryOperator>(Op0);
+    auto *Shl1 = cast<OverflowingBinaryOperator>(Op1);
+
+    // For unsigned div, we need 'nuw' on both shifts.
+    // (X << Z) / (Y << Z) --> X / Y
+    if (!IsSigned && Shl0->hasNoUnsignedWrap() && Shl1->hasNoUnsignedWrap())
+      Ret = BinaryOperator::CreateUDiv(X, Y);
+
+    // For signed div, we need 'nsw' on both shifts + 'nuw' on the divisor.
+    // (X << Z) / (Y << Z) --> X / Y
+    if (IsSigned && Shl0->hasNoSignedWrap() && Shl1->hasNoSignedWrap() &&
+        Shl1->hasNoUnsignedWrap())
+      Ret = BinaryOperator::CreateSDiv(X, Y);
+  }
+
+  if (!Ret)
+    return nullptr;
+
+  Ret->setIsExact(I.isExact());
+  return Ret;
+}
+
 /// This function implements the transforms common to both integer division
 /// instructions (udiv and sdiv). It is called by the visitors to those integer
 /// division instructions.
@@ -940,6 +1019,29 @@ Instruction *InstCombinerImpl::commonIDivTransforms(BinaryOperator &I) {
       replaceOperand(I, 0, ConstantInt::get(Ty, 1));
       replaceOperand(I, 1, Y);
       return &I;
+    }
+  }
+
+  if (Instruction *R = foldIDivShl(I, Builder))
+    return R;
+
+  // With the appropriate no-wrap constraint, remove a multiply by the divisor
+  // after peeking through another divide:
+  // ((Op1 * X) / Y) / Op1 --> X / Y
+  if (match(Op0, m_BinOp(I.getOpcode(), m_c_Mul(m_Specific(Op1), m_Value(X)),
+                         m_Value(Y)))) {
+    auto *InnerDiv = cast<PossiblyExactOperator>(Op0);
+    auto *Mul = cast<OverflowingBinaryOperator>(InnerDiv->getOperand(0));
+    Instruction *NewDiv = nullptr;
+    if (!IsSigned && Mul->hasNoUnsignedWrap())
+      NewDiv = BinaryOperator::CreateUDiv(X, Y);
+    else if (IsSigned && Mul->hasNoSignedWrap())
+      NewDiv = BinaryOperator::CreateSDiv(X, Y);
+
+    // Exact propagates only if both of the original divides are exact.
+    if (NewDiv) {
+      NewDiv->setIsExact(I.isExact() && InnerDiv->isExact());
+      return NewDiv;
     }
   }
 
@@ -1117,6 +1219,16 @@ Instruction *InstCombinerImpl::visitUDiv(BinaryOperator &I) {
       return BinaryOperator::CreateUDiv(A, X);
   }
 
+  // Look through a right-shift to find the common factor:
+  // ((Op1 *nuw A) >> B) / Op1 --> A >> B
+  if (match(Op0, m_LShr(m_NUWMul(m_Specific(Op1), m_Value(A)), m_Value(B))) ||
+      match(Op0, m_LShr(m_NUWMul(m_Value(A), m_Specific(Op1)), m_Value(B)))) {
+    Instruction *Lshr = BinaryOperator::CreateLShr(A, B);
+    if (I.isExact() && cast<PossiblyExactOperator>(Op0)->isExact())
+      Lshr->setIsExact();
+    return Lshr;
+  }
+
   // Op1 udiv Op2 -> Op1 lshr log2(Op2), if log2() folds away.
   if (takeLog2(Builder, Op1, /*Depth*/0, /*DoFold*/false)) {
     Value *Res = takeLog2(Builder, Op1, /*Depth*/0, /*DoFold*/true);
@@ -1152,20 +1264,25 @@ Instruction *InstCombinerImpl::visitSDiv(BinaryOperator &I) {
   if (match(Op1, m_SignMask()))
     return new ZExtInst(Builder.CreateICmpEQ(Op0, Op1), Ty);
 
-  // sdiv exact X,  1<<C  -->    ashr exact X, C   iff  1<<C  is non-negative
-  // sdiv exact X, -1<<C  -->  -(ashr exact X, C)
-  if (I.isExact() && ((match(Op1, m_Power2()) && match(Op1, m_NonNegative())) ||
-                      match(Op1, m_NegatedPower2()))) {
-    bool DivisorWasNegative = match(Op1, m_NegatedPower2());
-    if (DivisorWasNegative)
-      Op1 = ConstantExpr::getNeg(cast<Constant>(Op1));
-    auto *AShr = BinaryOperator::CreateExactAShr(
-        Op0, ConstantExpr::getExactLogBase2(cast<Constant>(Op1)), I.getName());
-    if (!DivisorWasNegative)
-      return AShr;
-    Builder.Insert(AShr);
-    AShr->setName(I.getName() + ".neg");
-    return BinaryOperator::CreateNeg(AShr, I.getName());
+  if (I.isExact()) {
+    // sdiv exact X, 1<<C --> ashr exact X, C   iff  1<<C  is non-negative
+    if (match(Op1, m_Power2()) && match(Op1, m_NonNegative())) {
+      Constant *C = ConstantExpr::getExactLogBase2(cast<Constant>(Op1));
+      return BinaryOperator::CreateExactAShr(Op0, C);
+    }
+
+    // sdiv exact X, (1<<ShAmt) --> ashr exact X, ShAmt (if shl is non-negative)
+    Value *ShAmt;
+    if (match(Op1, m_NSWShl(m_One(), m_Value(ShAmt))))
+      return BinaryOperator::CreateExactAShr(Op0, ShAmt);
+
+    // sdiv exact X, -1<<C --> -(ashr exact X, C)
+    if (match(Op1, m_NegatedPower2())) {
+      Constant *NegPow2C = ConstantExpr::getNeg(cast<Constant>(Op1));
+      Constant *C = ConstantExpr::getExactLogBase2(NegPow2C);
+      Value *Ashr = Builder.CreateAShr(Op0, C, I.getName() + ".neg", true);
+      return BinaryOperator::CreateNeg(Ashr);
+    }
   }
 
   const APInt *Op1C;
@@ -1215,12 +1332,17 @@ Instruction *InstCombinerImpl::visitSDiv(BinaryOperator &I) {
                               ConstantInt::getAllOnesValue(Ty));
   }
 
-  // If the sign bits of both operands are zero (i.e. we can prove they are
-  // unsigned inputs), turn this into a udiv.
-  APInt Mask(APInt::getSignMask(Ty->getScalarSizeInBits()));
-  if (MaskedValueIsZero(Op0, Mask, 0, &I)) {
-    if (MaskedValueIsZero(Op1, Mask, 0, &I)) {
-      // X sdiv Y -> X udiv Y, iff X and Y don't have sign bit set
+  KnownBits KnownDividend = computeKnownBits(Op0, 0, &I);
+  if (!I.isExact() &&
+      (match(Op1, m_Power2(Op1C)) || match(Op1, m_NegatedPower2(Op1C))) &&
+      KnownDividend.countMinTrailingZeros() >= Op1C->countTrailingZeros()) {
+    I.setIsExact();
+    return &I;
+  }
+
+  if (KnownDividend.isNonNegative()) {
+    // If both operands are unsigned, turn this into a udiv.
+    if (isKnownNonNegative(Op1, DL, 0, &AC, &I, &DT)) {
       auto *BO = BinaryOperator::CreateUDiv(Op0, Op1, I.getName());
       BO->setIsExact(I.isExact());
       return BO;

@@ -75,7 +75,6 @@ static_assert(testGetValue() == 30, "");
 constexpr const int &MCE = 1; // expected-error{{must be initialized by a constant expression}}
 
 
-#if 0
 struct S {
   int i, j;
 };
@@ -84,10 +83,8 @@ constexpr int RefToMemberExpr() {
   S s{1, 2};
 
   int &j = s.i;
-  j += 10;
+  j = j + 10;
 
   return j;
 }
-// FIXME: Should be accepted.
 static_assert(RefToMemberExpr() == 11, "");
-#endif

@@ -187,8 +187,9 @@ static bool usesTypeVisibility(const NamedDecl *D) {
 
 /// Does the given declaration have member specialization information,
 /// and if so, is it an explicit specialization?
-template <class T> static typename
-std::enable_if<!std::is_base_of<RedeclarableTemplateDecl, T>::value, bool>::type
+template <class T>
+static std::enable_if_t<!std::is_base_of<RedeclarableTemplateDecl, T>::value,
+                        bool>
 isExplicitMemberSpecialization(const T *D) {
   if (const MemberSpecializationInfo *member =
         D->getMemberSpecializationInfo()) {
@@ -1601,8 +1602,12 @@ Module *Decl::getOwningModuleForLinkage(bool IgnoreLinkage) const {
   llvm_unreachable("unknown module kind");
 }
 
-void NamedDecl::printName(raw_ostream &os) const {
-  os << Name;
+void NamedDecl::printName(raw_ostream &OS, const PrintingPolicy&) const {
+  OS << Name;
+}
+
+void NamedDecl::printName(raw_ostream &OS) const {
+  printName(OS, getASTContext().getPrintingPolicy());
 }
 
 std::string NamedDecl::getQualifiedNameAsString() const {
@@ -1620,7 +1625,7 @@ void NamedDecl::printQualifiedName(raw_ostream &OS,
                                    const PrintingPolicy &P) const {
   if (getDeclContext()->isFunctionOrMethod()) {
     // We do not print '(anonymous)' for function parameters without name.
-    printName(OS);
+    printName(OS, P);
     return;
   }
   printNestedNameSpecifier(OS, P);
@@ -1631,7 +1636,7 @@ void NamedDecl::printQualifiedName(raw_ostream &OS,
     // fall back to "(anonymous)".
     SmallString<64> NameBuffer;
     llvm::raw_svector_ostream NameOS(NameBuffer);
-    printName(NameOS);
+    printName(NameOS, P);
     if (NameBuffer.empty())
       OS << "(anonymous)";
     else
@@ -1754,7 +1759,7 @@ void NamedDecl::getNameForDiagnostic(raw_ostream &OS,
   if (Qualified)
     printQualifiedName(OS, Policy);
   else
-    printName(OS);
+    printName(OS, Policy);
 }
 
 template<typename T> static bool isRedeclarableImpl(Redeclarable<T> *) {
@@ -2580,7 +2585,7 @@ bool VarDecl::isNonEscapingByref() const {
 
 bool VarDecl::hasDependentAlignment() const {
   QualType T = getType();
-  return T->isDependentType() || T->isUndeducedAutoType() ||
+  return T->isDependentType() || T->isUndeducedType() ||
          llvm::any_of(specific_attrs<AlignedAttr>(), [](const AlignedAttr *AA) {
            return AA->isAlignmentDependent();
          });
@@ -2970,6 +2975,7 @@ FunctionDecl::FunctionDecl(Kind DK, ASTContext &C, DeclContext *DC,
   FunctionDeclBits.IsMultiVersion = false;
   FunctionDeclBits.IsCopyDeductionCandidate = false;
   FunctionDeclBits.HasODRHash = false;
+  FunctionDeclBits.FriendConstraintRefersToEnclosingTemplate = false;
   if (TrailingRequiresClause)
     setTrailingRequiresClause(TrailingRequiresClause);
 }
@@ -4468,6 +4474,23 @@ void TagDecl::setQualifierInfo(NestedNameSpecifierLoc QualifierLoc) {
   }
 }
 
+void TagDecl::printName(raw_ostream &OS, const PrintingPolicy &Policy) const {
+  DeclarationName Name = getDeclName();
+  // If the name is supposed to have an identifier but does not have one, then
+  // the tag is anonymous and we should print it differently.
+  if (Name.isIdentifier() && !Name.getAsIdentifierInfo()) {
+    // If the caller wanted to print a qualified name, they've already printed
+    // the scope. And if the caller doesn't want that, the scope information
+    // is already printed as part of the type.
+    PrintingPolicy Copy(Policy);
+    Copy.SuppressScope = true;
+    getASTContext().getTagDeclType(this).print(OS, Copy);
+    return;
+  }
+  // Otherwise, do the normal printing.
+  Name.print(OS, Policy);
+}
+
 void TagDecl::setTemplateParameterListsInfo(
     ASTContext &Context, ArrayRef<TemplateParameterList *> TPLists) {
   assert(!TPLists.empty());
@@ -5208,6 +5231,40 @@ EmptyDecl *EmptyDecl::Create(ASTContext &C, DeclContext *DC, SourceLocation L) {
 
 EmptyDecl *EmptyDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
   return new (C, ID) EmptyDecl(nullptr, SourceLocation());
+}
+
+HLSLBufferDecl::HLSLBufferDecl(DeclContext *DC, bool CBuffer,
+                               SourceLocation KwLoc, IdentifierInfo *ID,
+                               SourceLocation IDLoc, SourceLocation LBrace)
+    : NamedDecl(Decl::Kind::HLSLBuffer, DC, IDLoc, DeclarationName(ID)),
+      DeclContext(Decl::Kind::HLSLBuffer), LBraceLoc(LBrace), KwLoc(KwLoc),
+      IsCBuffer(CBuffer) {}
+
+HLSLBufferDecl *HLSLBufferDecl::Create(ASTContext &C,
+                                       DeclContext *LexicalParent, bool CBuffer,
+                                       SourceLocation KwLoc, IdentifierInfo *ID,
+                                       SourceLocation IDLoc,
+                                       SourceLocation LBrace) {
+  // For hlsl like this
+  // cbuffer A {
+  //     cbuffer B {
+  //     }
+  // }
+  // compiler should treat it as
+  // cbuffer A {
+  // }
+  // cbuffer B {
+  // }
+  // FIXME: support nested buffers if required for back-compat.
+  DeclContext *DC = LexicalParent;
+  HLSLBufferDecl *Result =
+      new (C, DC) HLSLBufferDecl(DC, CBuffer, KwLoc, ID, IDLoc, LBrace);
+  return Result;
+}
+
+HLSLBufferDecl *HLSLBufferDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
+  return new (C, ID) HLSLBufferDecl(nullptr, false, SourceLocation(), nullptr,
+                                    SourceLocation(), SourceLocation());
 }
 
 //===----------------------------------------------------------------------===//

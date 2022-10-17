@@ -41,15 +41,22 @@ Implemented Papers
 - P2417R2 - A more constexpr bitset
 - P2445R1 - ``std::forward_like``
 - P2273R3 - Making ``std::unique_ptr`` constexpr
+- P0591R4 - Utility functions to implement uses-allocator construction
+- P2291R3 - Add Constexpr Modifiers to Functions ``to_chars`` and
+  ``from_chars`` for Integral Types in ``<charconv>`` Header
 
 Improvements and New Features
 -----------------------------
 - Declarations of ``std::c8rtomb()`` and ``std::mbrtoc8()`` from P0482R6 are
   now provided when implementations in the global namespace are provided by
   the C library.
+- Implemented ``<memory_resource>`` header from C++17
 
 Deprecations and Removals
 -------------------------
+- ``unary_function`` and ``binary_function`` are no longer provided in C++17 and newer Standard modes.
+  They can be re-enabled with ``_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION``.
+
 - Several incidental transitive includes have been removed from libc++. Those
   includes are removed based on the language version used. Incidental transitive
   inclusions of the following headers have been removed:
@@ -69,6 +76,16 @@ Deprecations and Removals
   incidental transitive includes more aggressively, in particular regardless
   of the language version in use.
 
+- The legacy testing system for libc++, libc++abi and libunwind has been removed.
+  All known clients have been migrated to the new configuration system, but please
+  reach out to the libc++ developers if you find something missing in the new
+  configuration system.
+
+- The functions ``to_chars`` and ``from_chars`` for integral types are
+  available starting with C++17. Libc++ offered these functions in C++11 and
+  C++14 as an undocumented extension. This extension makes it hard to implement
+  the C++23 paper that makes these functions ``constexpr``, therefore the
+  extension has been removed.
 
 Upcoming Deprecations and Removals
 ----------------------------------
@@ -83,8 +100,24 @@ API Changes
   Any standards-required ``[[nodiscard]]`` applications in C++20 are now always enabled. Any extended applications
   are now enabled by default and can be disabled by defining ``_LIBCPP_DISABLE_NODISCARD_EXT``.
 
+- ``_LIBCPP_VERSION`` was previously defined to e.g. ``15001`` to represent LLVM 15.0.01, but this value had been
+  left undocumented. Starting with LLVM 16, ``_LIBCPP_VERSION`` will contain the version of LLVM represented as
+  ``XXYYZZ``. In other words, ``_LIBCPP_VERSION`` is gaining a digit. This should not be an issue for existing
+  code, since using e.g. ``_LIBCPP_VERSION > 15000`` will still give the right answer now that ``_LIBCPP_VERSION``
+  is defined as e.g. ``160000`` (with one more digit).
+
 ABI Affecting Changes
 ---------------------
+- In freestanding mode, ``atomic<small enum class>`` does not contain a lock byte anymore if the platform
+  can implement lockfree atomics for that size. More specifically, in LLVM <= 11.0.1, an ``atomic<small enum class>``
+  would not contain a lock byte. This was broken in LLVM >= 12.0.0, where it started including a lock byte despite
+  the platform supporting lockfree atomics for that size. Starting in LLVM 15.0.1, the ABI for these types has been
+  restored to what it used to be (no lock byte), which is the most efficient implementation.
+
+  This ABI break only affects users that compile with ``-ffreestanding``, and only for ``atomic<T>`` where ``T``
+  is a non-builtin type that could be lockfree on the platform. See https://llvm.org/D133377 for more details.
 
 Build System Changes
 --------------------
+- Support for ``libcxx``, ``libcxxabi`` and ``libunwind`` in ``LLVM_ENABLE_PROJECTS`` has officially
+  been removed. Instead, please build according to :ref:`these instructions <build instructions>`.

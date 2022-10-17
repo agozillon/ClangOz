@@ -474,6 +474,11 @@ Instruction *InstCombinerImpl::visitExtractElementInst(ExtractElementInst &EI) {
 
   if (auto *I = dyn_cast<Instruction>(SrcVec)) {
     if (auto *IE = dyn_cast<InsertElementInst>(I)) {
+      // If the possibly-variable indices are trivially known to be equal
+      // (because they are the same operand) then use the value that was
+      // inserted directly.
+      if (IE->getOperand(2) == Index)
+        return replaceInstUsesWith(EI, IE->getOperand(1));
       // instsimplify already handled the case where the indices are constants
       // and equal by value, if both are constants, they must not be the same
       // value, extract from the pre-inserted value instead.
@@ -1961,6 +1966,53 @@ static BinopElts getAlternateBinop(BinaryOperator *BO, const DataLayout &DL) {
   return {};
 }
 
+/// A select shuffle of a select shuffle with a shared operand can be reduced
+/// to a single select shuffle. This is an obvious improvement in IR, and the
+/// backend is expected to lower select shuffles efficiently.
+static Instruction *foldSelectShuffleOfSelectShuffle(ShuffleVectorInst &Shuf) {
+  assert(Shuf.isSelect() && "Must have select-equivalent shuffle");
+
+  Value *Op0 = Shuf.getOperand(0), *Op1 = Shuf.getOperand(1);
+  SmallVector<int, 16> Mask;
+  Shuf.getShuffleMask(Mask);
+  unsigned NumElts = Mask.size();
+
+  // Canonicalize a select shuffle with common operand as Op1.
+  auto *ShufOp = dyn_cast<ShuffleVectorInst>(Op0);
+  if (ShufOp && ShufOp->isSelect() &&
+      (ShufOp->getOperand(0) == Op1 || ShufOp->getOperand(1) == Op1)) {
+    std::swap(Op0, Op1);
+    ShuffleVectorInst::commuteShuffleMask(Mask, NumElts);
+  }
+
+  ShufOp = dyn_cast<ShuffleVectorInst>(Op1);
+  if (!ShufOp || !ShufOp->isSelect() ||
+      (ShufOp->getOperand(0) != Op0 && ShufOp->getOperand(1) != Op0))
+    return nullptr;
+
+  Value *X = ShufOp->getOperand(0), *Y = ShufOp->getOperand(1);
+  SmallVector<int, 16> Mask1;
+  ShufOp->getShuffleMask(Mask1);
+  assert(Mask1.size() == NumElts && "Vector size changed with select shuffle");
+
+  // Canonicalize common operand (Op0) as X (first operand of first shuffle).
+  if (Y == Op0) {
+    std::swap(X, Y);
+    ShuffleVectorInst::commuteShuffleMask(Mask1, NumElts);
+  }
+
+  // If the mask chooses from X (operand 0), it stays the same.
+  // If the mask chooses from the earlier shuffle, the other mask value is
+  // transferred to the combined select shuffle:
+  // shuf X, (shuf X, Y, M1), M --> shuf X, Y, M'
+  SmallVector<int, 16> NewMask(NumElts);
+  for (unsigned i = 0; i != NumElts; ++i)
+    NewMask[i] = Mask[i] < (signed)NumElts ? Mask[i] : Mask1[i];
+
+  assert(ShuffleVectorInst::isSelectMask(NewMask) && "Unexpected shuffle mask");
+  return new ShuffleVectorInst(X, Y, NewMask);
+}
+
 static Instruction *foldSelectShuffleWith1Binop(ShuffleVectorInst &Shuf) {
   assert(Shuf.isSelect() && "Must have select-equivalent shuffle");
 
@@ -2064,6 +2116,9 @@ Instruction *InstCombinerImpl::foldSelectShuffle(ShuffleVectorInst &Shuf) {
     Shuf.commute();
     return &Shuf;
   }
+
+  if (Instruction *I = foldSelectShuffleOfSelectShuffle(Shuf))
+    return I;
 
   if (Instruction *I = foldSelectShuffleWith1Binop(Shuf))
     return I;

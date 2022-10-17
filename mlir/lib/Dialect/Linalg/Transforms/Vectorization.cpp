@@ -13,7 +13,7 @@
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Affine/Analysis/LoopAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/Analysis/DependenceAnalysis.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -190,14 +190,8 @@ static Operation *buildMultiDimReduce(OpBuilder &b, Operation *reduceOp,
 }
 
 static SmallVector<bool> getReductionMask(LinalgOp linalgOp) {
-  unsigned idx = 0;
-  SmallVector<bool> reductionMask(linalgOp.iterator_types().size(), false);
-  for (auto attr : linalgOp.iterator_types()) {
-    if (isReductionIterator(attr))
-      reductionMask[idx] = true;
-    ++idx;
-  }
-  return reductionMask;
+  return llvm::to_vector(
+      llvm::map_range(linalgOp.getIteratorTypesArray(), isReductionIterator));
 }
 
 /// Build a vector.transfer_write of `value` into `outputOperand` at indices set
@@ -215,7 +209,7 @@ static Value buildVectorWrite(OpBuilder &b, Value value,
   if (vectorType.getRank() > 0) {
     // 0-d case is still special: do not invert the reindexing map.
     AffineMap map =
-        reindexIndexingMap(linalgOp.getTiedIndexingMap(outputOperand));
+        reindexIndexingMap(linalgOp.getMatchingIndexingMap(outputOperand));
     SmallVector<int64_t> transposeShape =
         applyPermutationMap(inversePermutation(map), vectorType.getShape());
     assert(!transposeShape.empty() && "unexpected empty transpose shape");
@@ -465,35 +459,35 @@ vectorizeAsLinalgGeneric(OpBuilder &b, LinalgOp linalgOp,
   // 3. Turn all BBArgs into vector.transfer_read / load.
   Location loc = linalgOp.getLoc();
   Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
-  for (OpOperand *opOperand : linalgOp.getInputAndOutputOperands()) {
-    BlockArgument bbarg = block->getArgument(opOperand->getOperandNumber());
-    if (linalgOp.isScalar(opOperand)) {
-      bvm.map(bbarg, opOperand->get());
+  for (OpOperand &opOperand : linalgOp->getOpOperands()) {
+    BlockArgument bbarg = block->getArgument(opOperand.getOperandNumber());
+    if (linalgOp.isScalar(&opOperand)) {
+      bvm.map(bbarg, opOperand.get());
       continue;
     }
     VectorType readType;
     AffineMap map;
     // TODO: can we keep this simplification?
-    // if (linalgOp.getShape(opOperand).empty()) {
+    // if (linalgOp.getShape(&opOperand).empty()) {
     //   readType = VectorType::get({}, bbarg.getType());
     // } else {
-    if (opOperand->getOperandNumber() < linalgOp.getNumInputs()) {
+    if (opOperand.getOperandNumber() < linalgOp.getNumInputs()) {
       map = inverseAndBroadcastProjectedPermutation(
-          linalgOp.getTiedIndexingMap(opOperand));
+          linalgOp.getMatchingIndexingMap(&opOperand));
       readType = VectorType::get(commonVectorShape,
-                                 getElementTypeOrSelf(opOperand->get()));
+                                 getElementTypeOrSelf(opOperand.get()));
     } else {
       map = inversePermutation(
-          reindexIndexingMap(linalgOp.getTiedIndexingMap(opOperand)));
-      readType = VectorType::get(map.compose(linalgOp.getShape(opOperand)),
-                                 getElementTypeOrSelf(opOperand->get()));
+          reindexIndexingMap(linalgOp.getMatchingIndexingMap(&opOperand)));
+      readType = VectorType::get(map.compose(linalgOp.getShape(&opOperand)),
+                                 getElementTypeOrSelf(opOperand.get()));
     }
     // }
 
-    auto shape = linalgOp.getShape(opOperand);
+    auto shape = linalgOp.getShape(&opOperand);
     SmallVector<Value> indices(shape.size(), zero);
     Value readValue = b.create<vector::TransferReadOp>(
-        loc, readType, opOperand->get(), indices, map);
+        loc, readType, opOperand.get(), indices, map);
     // Not all ops support 0-d vectors, extract the scalar for now.
     // TODO: remove this.
     if (readValue.getType().cast<VectorType>().getRank() == 0)
@@ -501,7 +495,7 @@ vectorizeAsLinalgGeneric(OpBuilder &b, LinalgOp linalgOp,
 
     LDBG("new vectorized bbarg(" << bbarg.getArgNumber() << "): " << readValue);
     bvm.map(bbarg, readValue);
-    bvm.map(opOperand->get(), readValue);
+    bvm.map(opOperand.get(), readValue);
   }
 
   SmallVector<CustomVectorizationHook> hooks;
@@ -540,12 +534,12 @@ vectorizeAsLinalgGeneric(OpBuilder &b, LinalgOp linalgOp,
 // TODO: probably need some extra checks for reduction followed by consumer
 // ops that may not commute (e.g. linear reduction + non-linear instructions).
 static LogicalResult reductionPreconditions(LinalgOp op) {
-  if (llvm::none_of(op.iterator_types(), isReductionIterator)) {
+  if (llvm::none_of(op.getIteratorTypesArray(), isReductionIterator)) {
     LDBG("reduction precondition failed: no reduction iterator");
     return failure();
   }
   for (OpOperand *opOperand : op.getOutputOperands()) {
-    AffineMap indexingMap = op.getTiedIndexingMap(opOperand);
+    AffineMap indexingMap = op.getMatchingIndexingMap(opOperand);
     if (indexingMap.isPermutation())
       continue;
 
@@ -572,8 +566,16 @@ static LogicalResult vectorizeStaticLinalgOpPrecondition(linalg::LinalgOp op) {
       return failure();
     }
   }
-  if (isElementwise(op))
+  if (isElementwise(op)) {
+    // Some operations in the body cannot be vectorized.
+    for (Operation &payloadOp : *op.getBlock()) {
+      if (isa<tensor::ExtractOp>(payloadOp)) {
+        LDBG("precondition failed: `tensor.extract` not vectorizable");
+        return failure();
+      }
+    }
     return success();
+  }
   // TODO: isaConvolutionOpInterface that can also infer from generic features.
   // But we will still need stride/dilation attributes that will be annoying to
   // reverse-engineer...
@@ -593,7 +595,7 @@ static LogicalResult vectorizeStaticLinalgOpPrecondition(linalg::LinalgOp op) {
   return success();
 }
 
-static LogicalResult vectorizeLinalgOpPrecondition(LinalgOp linalgOp) {
+LogicalResult mlir::linalg::vectorizeLinalgOpPrecondition(LinalgOp linalgOp) {
   // All types must be static shape to go to vector.
   if (linalgOp.hasDynamicShape()) {
     LDBG("precondition failed: dynamic shape");
@@ -686,7 +688,7 @@ static SmallVector<Value> ofrToIndexValues(OpBuilder &builder, Location loc,
   return result;
 }
 
-/// Rewrite a tensor::PadOp into a sequence of InitTensorOp, FillOp and
+/// Rewrite a tensor::PadOp into a sequence of EmptyOp, FillOp and
 /// InsertSliceOp. For now, only constant padding values are supported.
 /// If there is enough static type information, TransferReadOps and
 /// TransferWriteOps may be generated instead of InsertSliceOps.
@@ -1340,9 +1342,9 @@ struct Conv1DGenerator : public StructuredGenerator<LinalgOp> {
     // Determine whether `linalgOp` can be generated with this generator
     if (linalgOp.getNumInputs() != 2 || linalgOp.getNumOutputs() != 1)
       return;
-    lhsShaped = linalgOp.inputs()[0];
-    rhsShaped = linalgOp.inputs()[1];
-    resShaped = linalgOp.outputs()[0];
+    lhsShaped = linalgOp.getInputOperand(0)->get();
+    rhsShaped = linalgOp.getInputOperand(1)->get();
+    resShaped = linalgOp.getOutputOperand(0)->get();
     lhsShapedType = lhsShaped.getType().dyn_cast<ShapedType>();
     rhsShapedType = rhsShaped.getType().dyn_cast<ShapedType>();
     resShapedType = resShaped.getType().dyn_cast<ShapedType>();

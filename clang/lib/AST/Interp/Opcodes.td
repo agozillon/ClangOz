@@ -43,17 +43,7 @@ def ArgUint64 : ArgType { let Name = "uint64_t"; }
 def ArgBool : ArgType { let Name = "bool"; }
 
 def ArgFunction : ArgType { let Name = "const Function *"; }
-def ArgRecord : ArgType { let Name = "Record *"; }
-
-def ArgSema : ArgType { let Name = "const fltSemantics *"; }
-
-def ArgExpr : ArgType { let Name = "const Expr *"; }
-def ArgFloatingLiteral : ArgType { let Name = "const FloatingLiteral *"; }
-def ArgCXXMethodDecl : ArgType { let Name = "const CXXMethodDecl *"; }
-def ArgFunctionDecl : ArgType { let Name = "const FunctionDecl *"; }
 def ArgRecordDecl : ArgType { let Name = "const RecordDecl *"; }
-def ArgCXXRecordDecl : ArgType { let Name = "const CXXRecordDecl *"; }
-def ArgValueDecl : ArgType { let Name = "const ValueDecl *"; }
 def ArgRecordField : ArgType { let Name = "const Record::Field *"; }
 
 //===----------------------------------------------------------------------===//
@@ -64,9 +54,18 @@ class TypeClass {
   list<Type> Types;
 }
 
-def AluTypeClass : TypeClass {
+def NumberTypeClass : TypeClass {
   let Types = [Sint8, Uint8, Sint16, Uint16, Sint32,
-               Uint32, Sint64, Uint64, Bool];
+               Uint32, Sint64, Uint64];
+}
+
+def IntegerTypeClass : TypeClass {
+  let Types = [Sint8, Uint8, Sint16, Uint16, Sint32,
+               Uint32, Sint64, Uint64];
+}
+
+def AluTypeClass : TypeClass {
+  let Types = !listconcat(NumberTypeClass.Types, [Bool]);
 }
 
 def PtrTypeClass : TypeClass {
@@ -106,6 +105,11 @@ class Opcode {
 
 class AluOpcode : Opcode {
   let Types = [AluTypeClass];
+  let HasGroup = 1;
+}
+
+class IntegerOpcode : Opcode {
+  let Types = [IntegerTypeClass];
   let HasGroup = 1;
 }
 
@@ -403,7 +407,16 @@ def SubOffset : AluOpcode;
 def Sub : AluOpcode;
 def Add : AluOpcode;
 def Mul : AluOpcode;
-
+def Rem : Opcode {
+  let Types = [NumberTypeClass];
+  let HasGroup = 1;
+}
+def BitAnd : IntegerOpcode;
+def BitOr : IntegerOpcode;
+def Div : Opcode {
+  let Types = [NumberTypeClass];
+  let HasGroup = 1;
+}
 
 //===----------------------------------------------------------------------===//
 // Unary operators.
@@ -421,17 +434,23 @@ def Neg: Opcode {
   let HasGroup = 1;
 }
 
+// [Real] -> [Real]
+def Comp: Opcode {
+  let Types = [NumberTypeClass];
+  let HasGroup = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // Cast.
 //===----------------------------------------------------------------------===//
 // TODO: Expand this to handle casts between more types.
 
 def FromCastTypeClass : TypeClass {
-  let Types = [Uint32, Sint32, Bool];
+  let Types = [Uint8, Sint8, Uint16, Sint16, Uint32, Sint32, Uint64, Sint64, Bool];
 }
 
 def ToCastTypeClass : TypeClass {
-  let Types = [Uint32, Sint32, Bool];
+  let Types = [Uint8, Sint8, Uint16, Sint16, Uint32, Sint32, Uint64, Sint64, Bool];
 }
 
 def Cast: Opcode {

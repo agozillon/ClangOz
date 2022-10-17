@@ -521,6 +521,10 @@ bool isScalableVectorType(Type vectorType);
 Type getVectorType(Type elementType, unsigned numElements,
                    bool isScalable = false);
 
+/// Creates an LLVM dialect-compatible vector type with the given element type
+/// and length.
+Type getVectorType(Type elementType, const llvm::ElementCount &numElements);
+
 /// Creates an LLVM dialect-compatible type with the given element type and
 /// length.
 Type getFixedVectorType(Type elementType, unsigned numElements);
@@ -535,6 +539,15 @@ Type getScalableVectorType(Type elementType, unsigned numElements);
 /// (aggregates such as struct) or types that don't have a size (such as void).
 llvm::TypeSize getPrimitiveTypeSizeInBits(Type type);
 
+/// The positions of different values in the data layout entry for pointers.
+enum class PtrDLEntryPos { Size = 0, Abi = 1, Preferred = 2, Index = 3 };
+
+/// Returns the value that corresponds to named position `pos` from the
+/// data layout entry `attr` assuming it's a dense integer elements attribute.
+/// Returns `None` if `pos` is not present in the entry.
+/// Currently only `PtrDLEntryPos::Index` is optional, and all other positions
+/// may be assumed to be present.
+Optional<unsigned> extractPointerSpecValue(Attribute attr, PtrDLEntryPos pos);
 } // namespace LLVM
 } // namespace mlir
 

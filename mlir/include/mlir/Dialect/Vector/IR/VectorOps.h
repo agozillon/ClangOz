@@ -13,6 +13,7 @@
 #ifndef MLIR_DIALECT_VECTOR_IR_VECTOROPS_H
 #define MLIR_DIALECT_VECTOR_IR_VECTOROPS_H
 
+#include "mlir/Dialect/Vector/Interfaces/MaskingInterfaces.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -48,6 +49,10 @@ class VectorDialect;
 namespace detail {
 struct BitmaskEnumStorage;
 } // namespace detail
+
+/// Default callback to build a region with a 'vector.yield' terminator with no
+/// arguments.
+void buildTerminatedBody(OpBuilder &builder, Location loc);
 
 /// Return whether `srcType` can be broadcast to `dstVectorType` under the
 /// semantics of the `vector.broadcast` op.
@@ -118,11 +123,6 @@ void populateVectorTransferLoweringPatterns(
 void populateVectorMaskMaterializationPatterns(RewritePatternSet &patterns,
                                                bool force32BitVectorIndices,
                                                PatternBenefit benefit = 1);
-
-/// Collect a set of patterns to propagate insert_map/extract_map in the ssa
-/// chain.
-void populatePropagateVectorDistributionPatterns(RewritePatternSet &patterns,
-                                                 PatternBenefit benefit = 1);
 
 /// Collects patterns to progressively lower vector.broadcast ops on high-D
 /// vectors to low-D vector ops.

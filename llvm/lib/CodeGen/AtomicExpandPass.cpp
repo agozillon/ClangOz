@@ -691,19 +691,29 @@ static PartwordMaskValues createMaskInstrs(IRBuilder<> &Builder, Instruction *I,
     return PMV;
   }
 
-  assert(ValueSize < MinWordSize);
-
-  Type *WordPtrType =
-      PMV.WordType->getPointerTo(Addr->getType()->getPointerAddressSpace());
-
-  // TODO: we could skip some of this if AddrAlign >= MinWordSize.
-  Value *AddrInt = Builder.CreatePtrToInt(Addr, DL.getIntPtrType(Ctx));
-  PMV.AlignedAddr = Builder.CreateIntToPtr(
-      Builder.CreateAnd(AddrInt, ~(uint64_t)(MinWordSize - 1)), WordPtrType,
-      "AlignedAddr");
   PMV.AlignedAddrAlignment = Align(MinWordSize);
 
-  Value *PtrLSB = Builder.CreateAnd(AddrInt, MinWordSize - 1, "PtrLSB");
+  assert(ValueSize < MinWordSize);
+
+  PointerType *PtrTy = cast<PointerType>(Addr->getType());
+  Type *WordPtrType = PMV.WordType->getPointerTo(PtrTy->getAddressSpace());
+  IntegerType *IntTy = DL.getIntPtrType(Ctx, PtrTy->getAddressSpace());
+  Value *PtrLSB;
+
+  if (AddrAlign < MinWordSize) {
+    PMV.AlignedAddr = Builder.CreateIntrinsic(
+        Intrinsic::ptrmask, {PtrTy, IntTy},
+        {Addr, ConstantInt::get(IntTy, ~(uint64_t)(MinWordSize - 1))}, nullptr,
+        "AlignedAddr");
+
+    Value *AddrInt = Builder.CreatePtrToInt(Addr, IntTy);
+    PtrLSB = Builder.CreateAnd(AddrInt, MinWordSize - 1, "PtrLSB");
+  } else {
+    // If the alignment is high enough, the LSB are known 0.
+    PMV.AlignedAddr = Addr;
+    PtrLSB = ConstantInt::getNullValue(IntTy);
+  }
+
   if (DL.isLittleEndian()) {
     // turn bytes into bits
     PMV.ShiftAmt = Builder.CreateShl(PtrLSB, 3);
@@ -717,7 +727,13 @@ static PartwordMaskValues createMaskInstrs(IRBuilder<> &Builder, Instruction *I,
   PMV.Mask = Builder.CreateShl(
       ConstantInt::get(PMV.WordType, (1 << (ValueSize * 8)) - 1), PMV.ShiftAmt,
       "Mask");
+
   PMV.Inv_Mask = Builder.CreateNot(PMV.Mask, "Inv_Mask");
+
+  // Cast for typed pointers.
+  PMV.AlignedAddr =
+    Builder.CreateBitCast(PMV.AlignedAddr, WordPtrType, "AlignedAddr");
+
   return PMV;
 }
 

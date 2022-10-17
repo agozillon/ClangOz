@@ -253,6 +253,9 @@ def warn_drv_yc_multiple_inputs_clang_cl : Warning<
   "support for '/Yc' with more than one source file not implemented yet; flag ignored">,
   InGroup<ClangClPch>;
 
+def warn_drv_potentially_misspelled_joined_argument : Warning<
+  "joined argument treated as '%0'; did you mean '%1'?">, InGroup<UnknownArgument>;
+
 def err_drv_invalid_value : Error<"invalid value '%1' in '%0'">;
 def err_drv_invalid_int_value : Error<"invalid integral value '%1' in '%0'">;
 def err_drv_invalid_value_with_suggestion : Error<
@@ -260,6 +263,7 @@ def err_drv_invalid_value_with_suggestion : Error<
 def err_drv_alignment_not_power_of_two : Error<"alignment is not a power of 2 in '%0'">;
 def err_drv_invalid_remap_file : Error<
     "invalid option '%0' not of the form <from-file>;<to-file>">;
+def err_drv_invalid_gcc_install_dir : Error<"'%0' does not contain a GCC installation">;
 def err_drv_invalid_gcc_output_type : Error<
     "invalid output type '%0' for use with gcc tool">;
 def err_drv_cc_print_options_failure : Error<
@@ -587,11 +591,6 @@ def warn_drv_darwin_sdk_invalid_settings : Warning<
   "SDK settings were ignored as 'SDKSettings.json' could not be parsed">,
   InGroup<DiagGroup<"darwin-sdk-settings">>;
 
-def err_drv_trivial_auto_var_init_zero_disabled : Error<
-  "'-ftrivial-auto-var-init=zero' hasn't been enabled; enable it at your own "
-  "peril for benchmarking purpose only with "
-  "'-enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang'">;
-
 def err_drv_trivial_auto_var_init_stop_after_missing_dependency : Error<
   "'-ftrivial-auto-var-init-stop-after=*' is used without "
   "'-ftrivial-auto-var-init=zero' or '-ftrivial-auto-var-init=pattern'">;
@@ -657,6 +656,10 @@ def warn_drv_jmc_requires_debuginfo : Warning<
 
 def warn_drv_fjmc_for_elf_only : Warning<
   "-fjmc works only for ELF; option ignored">,
+  InGroup<OptionIgnored>;
+
+def warn_target_override_arm64ec : Warning<
+  "/arm64EC has been overridden by specified target: %0; option ignored">,
   InGroup<OptionIgnored>;
 
 def err_drv_target_variant_invalid : Error<

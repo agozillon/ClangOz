@@ -116,12 +116,14 @@ public:
     TokenSource = this;
     Line.Level = 0;
     Line.InPPDirective = true;
+    // InMacroBody gets set after the `#define x` part.
   }
 
   ~ScopedMacroState() override {
     TokenSource = PreviousTokenSource;
     ResetToken = Token;
     Line.InPPDirective = false;
+    Line.InMacroBody = false;
     Line.Level = PreviousLineLevel;
   }
 
@@ -196,6 +198,7 @@ public:
     Parser.Line = std::make_unique<UnwrappedLine>();
     Parser.Line->Level = PreBlockLine->Level;
     Parser.Line->InPPDirective = PreBlockLine->InPPDirective;
+    Parser.Line->InMacroBody = PreBlockLine->InMacroBody;
   }
 
   ~ScopedLineState() {
@@ -917,6 +920,9 @@ FormatToken *UnwrappedLineParser::parseBlock(
     return IfLBrace;
   }
 
+  const bool IsFunctionRBrace =
+      FormatTok->is(tok::r_brace) && Tok->is(TT_FunctionLBrace);
+
   auto RemoveBraces = [=]() mutable {
     if (!SimpleBlock)
       return false;
@@ -956,10 +962,23 @@ FormatToken *UnwrappedLineParser::parseBlock(
 
   // Munch the closing brace.
   nextToken(/*LevelDifference=*/-AddLevels);
+
+  // When this is a function block and there is an unnecessary semicolon
+  // afterwards then mark it as optional (so the RemoveSemi pass can get rid of
+  // it later).
+  if (Style.RemoveSemicolon && IsFunctionRBrace) {
+    while (FormatTok->is(tok::semi)) {
+      FormatTok->Optional = true;
+      nextToken();
+    }
+  }
+
   HandleVerilogBlockLabel();
 
   if (MacroBlock && FormatTok->is(tok::l_paren))
     parseParens();
+
+  Line->Level = InitialLevel;
 
   if (FormatTok->is(tok::kw_noexcept)) {
     // A noexcept in a requires expression.
@@ -975,8 +994,6 @@ FormatToken *UnwrappedLineParser::parseBlock(
 
   if (MunchSemi && FormatTok->is(tok::semi))
     nextToken();
-
-  Line->Level = InitialLevel;
 
   if (PPStartHash == PPEndHash) {
     Line->MatchingOpeningBlockLineIndex = OpeningLineIndex;
@@ -1124,7 +1141,9 @@ void UnwrappedLineParser::conditionalCompilationStart(bool Unreachable) {
   ++PPBranchLevel;
   assert(PPBranchLevel >= 0 && PPBranchLevel <= (int)PPLevelBranchIndex.size());
   if (PPBranchLevel == (int)PPLevelBranchIndex.size()) {
-    PPLevelBranchIndex.push_back(0);
+    // If the first branch is unreachable, set the BranchIndex to 1.  This way
+    // the next branch will be parsed if there is one.
+    PPLevelBranchIndex.push_back(Unreachable ? 1 : 0);
     PPLevelBranchCount.push_back(0);
   }
   PPChainBranchIndex.push(0);
@@ -1251,6 +1270,7 @@ void UnwrappedLineParser::parsePPDefine() {
     Line->Level += PPBranchLevel + 1;
   addUnwrappedLine();
   ++Line->Level;
+  Line->InMacroBody = true;
 
   // Errors during a preprocessor directive can only affect the layout of the
   // preprocessor directive, and thus we ignore them. An alternative approach
@@ -1628,10 +1648,18 @@ void UnwrappedLineParser::parseStructuralElement(
       parseJavaScriptEs6ImportExport();
       return;
     }
-    if (!Style.isCpp())
-      break;
-    // Handle C++ "(inline|export) namespace".
-    [[fallthrough]];
+    if (Style.isCpp()) {
+      nextToken();
+      if (FormatTok->is(Keywords.kw_import)) {
+        parseModuleImport();
+        return;
+      }
+      if (FormatTok->is(tok::kw_namespace)) {
+        parseNamespace();
+        return;
+      }
+    }
+    break;
   case tok::kw_inline:
     nextToken();
     if (FormatTok->is(tok::kw_namespace)) {
@@ -2224,6 +2252,7 @@ bool UnwrappedLineParser::tryToParseLambda() {
     case tok::star:
     case tok::kw_const:
     case tok::kw_constexpr:
+    case tok::kw_consteval:
     case tok::comma:
     case tok::greater:
     case tok::identifier:
@@ -2231,6 +2260,7 @@ bool UnwrappedLineParser::tryToParseLambda() {
     case tok::coloncolon:
     case tok::kw_mutable:
     case tok::kw_noexcept:
+    case tok::kw_static:
       nextToken();
       break;
     // Specialization of a template with an integer parameter can contain
@@ -2967,6 +2997,11 @@ void UnwrappedLineParser::parseNew() {
 
   if (Style.isCSharp()) {
     do {
+      // Handle constructor invocation, e.g. `new(field: value)`.
+      if (FormatTok->is(tok::l_paren))
+        parseParens();
+
+      // Handle array initialization syntax, e.g. `new[] {10, 20, 30}`.
       if (FormatTok->is(tok::l_brace))
         parseBracedList();
 
@@ -3522,9 +3557,9 @@ void UnwrappedLineParser::parseConstraintExpression() {
       // concept C = bool(...);
       // and bool is the only type, all other types as cast must be inside a
       // cast to bool an thus are handled by the other cases.
-      nextToken();
-      if (FormatTok->isNot(tok::l_paren))
+      if (Tokens->peekNextToken()->isNot(tok::l_paren))
         return;
+      nextToken();
       parseParens();
       break;
 
