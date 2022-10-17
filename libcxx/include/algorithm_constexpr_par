@@ -980,8 +980,7 @@ set_intersection(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
                  _InputIterator2 __last2, _OutputIterator __result, 
                  _Compare __comp)
 {
-    typedef typename __comp_ref_type<_Compare>::type _Comp_ref;
-    return __set_intersection<_Comp_ref>(__exec, __first1, __last1, __first2, 
+    return __set_intersection< __comp_ref_type<_Compare> >(__exec, __first1, __last1, __first2, 
                                          __last2, __result, __comp);
 }
 
@@ -1480,8 +1479,7 @@ lexicographical_compare(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
                         _InputIterator1 __last1, _InputIterator2 __first2, 
                         _InputIterator2 __last2, _Compare __comp)
 {
-    typedef typename __comp_ref_type<_Compare>::type _Comp_ref;
-    return __lexicographical_compare<_Comp_ref>(__exec, __first1, __last1, __first2, __last2, __comp);
+    return __lexicographical_compare< __comp_ref_type<_Compare> >(__exec, __first1, __last1, __first2, __last2, __comp);
 }
 
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2>
@@ -1535,9 +1533,7 @@ includes(_ExecutionPolicy&& __exec, _InputIterator1 __first1,
          _InputIterator1 __last1, _InputIterator2 __first2, 
          _InputIterator2 __last2, _Compare __comp)
 {
-    typedef typename __comp_ref_type<_Compare>::type _Comp_ref;
-    return __includes<_Comp_ref>(__exec, __first1, __last1, __first2, __last2, 
-                                 __comp);
+    return __includes< __comp_ref_type<_Compare> >(__exec, __first1, __last1, __first2, __last2, __comp);
 }
 
 template <class _ExecutionPolicy, class _InputIterator1, class _InputIterator2>

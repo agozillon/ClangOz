@@ -13622,15 +13622,15 @@ static const Expr *ignorePointerCastsAndParens(const Expr *E) {
 ///
 /// If this encounters an invalid RecordDecl or otherwise cannot determine the
 /// correct result, it will always return true.
-static bool isDesignatorAtObjectEnd(EvalInfo &Info, const LValue &LVal) {
+static bool isDesignatorAtObjectEnd(const ASTContext &Ctx, const LValue &LVal) {
   assert(!LVal.Designator.Invalid);
 
-  auto IsLastOrInvalidFieldDecl = [&Info](const FieldDecl *FD, bool &Invalid) {
+  auto IsLastOrInvalidFieldDecl = [&Ctx](const FieldDecl *FD, bool &Invalid) {
     const RecordDecl *Parent = FD->getParent();
     Invalid = Parent->isInvalidDecl();
     if (Invalid || Parent->isUnion())
       return true;
-    const ASTRecordLayout &Layout = Info.getASTRecordLayout(Parent);
+    const ASTRecordLayout &Layout = Ctx.getASTRecordLayout(Parent);
     return FD->getFieldIndex() + 1 == Layout.getFieldCount();
   };
 
@@ -13656,7 +13656,7 @@ static bool isDesignatorAtObjectEnd(EvalInfo &Info, const LValue &LVal) {
     // the final array element.
     ++I;
     if (BaseType->isIncompleteArrayType())
-      BaseType = Info.Ctx.getAsArrayType(BaseType)->getElementType();
+      BaseType = Ctx.getAsArrayType(BaseType)->getElementType();
     else
       BaseType = BaseType->castAs<PointerType>()->getPointeeType();
   }
@@ -13668,7 +13668,7 @@ static bool isDesignatorAtObjectEnd(EvalInfo &Info, const LValue &LVal) {
       // the index iff this is the last array in the Designator.
       if (I + 1 == E)
         return true;
-      const auto *CAT = cast<ConstantArrayType>(Info.Ctx.getAsArrayType(BaseType));
+      const auto *CAT = cast<ConstantArrayType>(Ctx.getAsArrayType(BaseType));
       uint64_t Index = Entry.getAsArrayIndex();
       if (Index + 1 != CAT->getSize())
         return false;
@@ -13691,6 +13691,7 @@ static bool isDesignatorAtObjectEnd(EvalInfo &Info, const LValue &LVal) {
   }
   return true;
 }
+
 
 /// Tests to see if the LValue has a user-specified designator (that isn't
 /// necessarily valid). Note that this always returns 'true' if the LValue has
@@ -13799,7 +13800,7 @@ static bool determineEndOffset(EvalInfo &Info, SourceLocation ExprLoc,
   // strcpy(&F->c[0], Bar);
   //
   // In order to not break too much legacy code, we need to support it.
-  if (isUserWritingOffTheEnd(Info, LVal)) {
+  if (isUserWritingOffTheEnd(Info.Ctx, LVal)) {
     // If we can resolve this to an alloc_size call, we can hand that back,
     // because we know for certain how many bytes there are to write to.
     llvm::APInt APEndOffset;
