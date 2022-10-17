@@ -1,0 +1,12 @@
+export CXX=~/Documents/Clang-LLVM/build/bin/clang++
+export CC=~/Documents/Clang-LLVM/build/bin/clang
+export CLANG_OZ=~/Documents/Clang-LLVM/build
+export CLANGOZ=~/Documents/Clang-LLVM/build
+export CEST_INCLUDE=~/Documents/cest/include
+export PATH=$PATH:/home/gozillon/Documents/cest:/home/gozillon/Documents/
+export PATH=$PATH:/home/gozillon/Documents/Clang-LLVM/libcxx/include
+export PATH=$PATH:/home/gozillon/Documents/Clang-LLVM/libcxx/lib
+export PATH=$PATH:/home/gozillon/Documents/Clang-LLVM/build/lib
+export PATH=$PATH:/home/gozillon/Documents/Clang-LLVM/build/include
+export MOTORSYCL_INCLUDE=~/Documents/cpp-std-parallel/sycl/include
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/gozillon/Documents/Clang-LLVM/libcxx/lib:/home/gozillon/Documents/Clang-LLVM/build/lib:/home/gozillon/Documents/Clang-LLVM/build/lib/x86_64-unknown-linux-gnu

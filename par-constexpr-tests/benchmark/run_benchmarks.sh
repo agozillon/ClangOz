@@ -199,7 +199,7 @@ function execute_sycl_edge_detection_lin {
   ./image_to_text_file image_data/$1.png
   popd
 
-  time $CLANGOZ/bin/clang++ -O3 -D_LIBCPP_HAS_PARALLEL_ALGORITHMS -DCONSTEXPR_SYCL -DCONSTEXPR_TRACK_$2 -fconstexpr-steps=4294967295 -w -I$PSTL_GEN -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -I$PSTL -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o lin_cexpr_sycl_edge_detection_hxw$1_results.o &> lin_cexpr_sycl_edge_detection_hxw$1_results_$2
+  time $CLANGOZ/bin/clang++ -O3 -D_LIBCPP_HAS_PARALLEL_ALGORITHMS -DCONSTEXPR_SYCL -DCONSTEXPR_TRACK_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o lin_cexpr_sycl_edge_detection_hxw$1_results.o &> lin_cexpr_sycl_edge_detection_hxw$1_results_$2
 
   filenames+=( "lin_cexpr_sycl_edge_detection_hxw$1_results_$2" )
   bins+=( "lin_cexpr_sycl_edge_detection_hxw$1_results.o" )
@@ -213,7 +213,7 @@ function execute_sycl_edge_detection_par {
   ./image_to_text_file image_data/$1.png
   popd
     
-  time $CLANGOZ/bin/clang++ -O3 -DCONSTEXPR_SYCL -DCONSTEXPR_PARALLEL -DCONSTEXPR_TRACK_$3 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$2 -fexperimental-constexpr-parallel -I$PSTL_GEN -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -I$PSTL -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o par_cexpr_sycl_edge_detection_hxw$1_cores$2.o &> par_cexpr_sycl_edge_detection_hxw$1_cores$2_results_$3
+  time $CLANGOZ/bin/clang++ -O3 -DCONSTEXPR_SYCL -DCONSTEXPR_PARALLEL -DCONSTEXPR_TRACK_$3 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$2 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o par_cexpr_sycl_edge_detection_hxw$1_cores$2.o &> par_cexpr_sycl_edge_detection_hxw$1_cores$2_results_$3
 
   filenames+=( "par_cexpr_sycl_edge_detection_hxw$1_cores$2_results_$3" )
   bins+=( "par_cexpr_sycl_edge_detection_hxw$1_cores$2.o" )
@@ -257,145 +257,145 @@ unset bins
 # data set to calculate the same result. Verification of the results is done 
 # inside the program. Runs of the max size can take up to 2-3 minutes.
 
-#mkdir blackscholes_results
-#pushd blackscholes_results
+mkdir blackscholes_results
+pushd blackscholes_results
 
-# # Used this for final data set
-#execute_blackscholes_lin 4 1 "TIME"
-#execute_blackscholes_lin 16 1 "TIME"
-#execute_blackscholes_lin 1K 1 "TIME"
-#execute_blackscholes_lin 4K 1 "TIME"
-#execute_blackscholes_lin 16K 1 "TIME"
-#execute_blackscholes_lin 64K 1 "TIME"
+ # Used this for final data set
+execute_blackscholes_lin 4 1 "TIME"
+execute_blackscholes_lin 16 1 "TIME"
+execute_blackscholes_lin 1K 1 "TIME"
+execute_blackscholes_lin 4K 1 "TIME"
+execute_blackscholes_lin 16K 1 "TIME"
+execute_blackscholes_lin 64K 1 "TIME"
 
-#print_binary_sets_size bins "blackscholes_1_run_lin_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "blackscholes_1_run_lin_timings"
-#unset filenames
+print_binary_sets_size bins "blackscholes_1_run_lin_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "blackscholes_1_run_lin_timings"
+unset filenames
 
-## Used this for final data set
-#execute_blackscholes_par 4 1 2 "TIME"
-#execute_blackscholes_par 16 1 2 "TIME"
-#execute_blackscholes_par 1K 1 2 "TIME"
-#execute_blackscholes_par 4K 1 2 "TIME"
-#execute_blackscholes_par 16K 1 2 "TIME"
-#execute_blackscholes_par 64K 1 2 "TIME"
+# Used this for final data set
+execute_blackscholes_par 4 1 2 "TIME"
+execute_blackscholes_par 16 1 2 "TIME"
+execute_blackscholes_par 1K 1 2 "TIME"
+execute_blackscholes_par 4K 1 2 "TIME"
+execute_blackscholes_par 16K 1 2 "TIME"
+execute_blackscholes_par 64K 1 2 "TIME"
 
-#print_binary_sets_size bins "blackscholes_1_run_2_core_par_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "blackscholes_1_run_2_core_par_timings"
-#unset filenames
+print_binary_sets_size bins "blackscholes_1_run_2_core_par_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "blackscholes_1_run_2_core_par_timings"
+unset filenames
 
-## Used this for final data set
-#execute_blackscholes_par 4 1 4 "TIME"
-#execute_blackscholes_par 16 1 4 "TIME"
-#execute_blackscholes_par 1K 1 4 "TIME"
-#execute_blackscholes_par 4K 1 4 "TIME"
-#execute_blackscholes_par 16K 1 4 "TIME"
-#execute_blackscholes_par 64K 1 4 "TIME"
+# Used this for final data set
+execute_blackscholes_par 4 1 4 "TIME"
+execute_blackscholes_par 16 1 4 "TIME"
+execute_blackscholes_par 1K 1 4 "TIME"
+execute_blackscholes_par 4K 1 4 "TIME"
+execute_blackscholes_par 16K 1 4 "TIME"
+execute_blackscholes_par 64K 1 4 "TIME"
 
-#print_binary_sets_size bins "blackscholes_1_run_4_core_par_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "blackscholes_1_run_4_core_par_timings"
-#unset filenames
+print_binary_sets_size bins "blackscholes_1_run_4_core_par_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "blackscholes_1_run_4_core_par_timings"
+unset filenames
 
-## Used this for final data set
-#execute_blackscholes_par 4 1 6 "TIME"
-#execute_blackscholes_par 16 1 6 "TIME"
-#execute_blackscholes_par 1K 1 6 "TIME"
-#execute_blackscholes_par 4K 1 6 "TIME"
-#execute_blackscholes_par 16K 1 6 "TIME"
-#execute_blackscholes_par 64K 1 6 "TIME"
+# Used this for final data set
+execute_blackscholes_par 4 1 6 "TIME"
+execute_blackscholes_par 16 1 6 "TIME"
+execute_blackscholes_par 1K 1 6 "TIME"
+execute_blackscholes_par 4K 1 6 "TIME"
+execute_blackscholes_par 16K 1 6 "TIME"
+execute_blackscholes_par 64K 1 6 "TIME"
 
-#print_binary_sets_size bins "blackscholes_1_run_6_core_par_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "blackscholes_1_run_6_core_par_timings"
-#unset filenames
+print_binary_sets_size bins "blackscholes_1_run_6_core_par_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "blackscholes_1_run_6_core_par_timings"
+unset filenames
 
 
-## Used this for final data set
-#execute_blackscholes_par 4 1 8 "TIME"
-#execute_blackscholes_par 16 1 8 "TIME"
-#execute_blackscholes_par 1K 1 8 "TIME"
-#execute_blackscholes_par 4K 1 8 "TIME"
-#execute_blackscholes_par 16K 1 8 "TIME"
-#execute_blackscholes_par 64K 1 8 "TIME"
+# Used this for final data set
+execute_blackscholes_par 4 1 8 "TIME"
+execute_blackscholes_par 16 1 8 "TIME"
+execute_blackscholes_par 1K 1 8 "TIME"
+execute_blackscholes_par 4K 1 8 "TIME"
+execute_blackscholes_par 16K 1 8 "TIME"
+execute_blackscholes_par 64K 1 8 "TIME"
 
-#print_binary_sets_size bins "blackscholes_1_run_8_core_par_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "blackscholes_1_run_8_core_par_timings"
-#unset filenames
+print_binary_sets_size bins "blackscholes_1_run_8_core_par_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "blackscholes_1_run_8_core_par_timings"
+unset filenames
 
-#popd
+popd
 
 ################################################################################
 #                                 Mandelbrot
 ################################################################################
 
-#mkdir mandelbrot_results
-#pushd mandelbrot_results
+mkdir mandelbrot_results
+pushd mandelbrot_results
 
-## Used this for final data set
-#execute_mandelbrot_lin 25 128 "TIME"
-#execute_mandelbrot_lin 50 128 "TIME" 
-#execute_mandelbrot_lin 75 128 "TIME"
-#execute_mandelbrot_lin 100 128 "TIME"
-#execute_mandelbrot_lin 125 128 "TIME"
+# Used this for final data set
+execute_mandelbrot_lin 25 128 "TIME"
+execute_mandelbrot_lin 50 128 "TIME" 
+execute_mandelbrot_lin 75 128 "TIME"
+execute_mandelbrot_lin 100 128 "TIME"
+execute_mandelbrot_lin 125 128 "TIME"
 
-#print_binary_sets_size bins "mandelbrot_128_iter_lin_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_lin_timings"
-#unset filenames
+print_binary_sets_size bins "mandelbrot_128_iter_lin_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_lin_timings"
+unset filenames
 
-## Used this for final data set
-#execute_mandelbrot_par 25 128 2 "TIME"
-#execute_mandelbrot_par 50 128 2 "TIME"
-#execute_mandelbrot_par 75 128 2 "TIME"
-#execute_mandelbrot_par 100 128 2 "TIME"
-#execute_mandelbrot_par 125 128 2 "TIME"
+# Used this for final data set
+execute_mandelbrot_par 25 128 2 "TIME"
+execute_mandelbrot_par 50 128 2 "TIME"
+execute_mandelbrot_par 75 128 2 "TIME"
+execute_mandelbrot_par 100 128 2 "TIME"
+execute_mandelbrot_par 125 128 2 "TIME"
 
-#print_binary_sets_size bins "mandelbrot_128_iter_par_2_core_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_2_core_timings"
-#unset filenames
+print_binary_sets_size bins "mandelbrot_128_iter_par_2_core_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_2_core_timings"
+unset filenames
 
-## Used this for final data set
-#execute_mandelbrot_par 25 128 4 "TIME"
-#execute_mandelbrot_par 50 128 4 "TIME"
-#execute_mandelbrot_par 75 128 4 "TIME"
-#execute_mandelbrot_par 100 128 4 "TIME"
-#execute_mandelbrot_par 125 128 4 "TIME"
+# Used this for final data set
+execute_mandelbrot_par 25 128 4 "TIME"
+execute_mandelbrot_par 50 128 4 "TIME"
+execute_mandelbrot_par 75 128 4 "TIME"
+execute_mandelbrot_par 100 128 4 "TIME"
+execute_mandelbrot_par 125 128 4 "TIME"
 
-#print_binary_sets_size bins "mandelbrot_128_iter_par_4_core_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_4_core_timings"
-#unset filenames
+print_binary_sets_size bins "mandelbrot_128_iter_par_4_core_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_4_core_timings"
+unset filenames
 
-## Used this for final data set
-#execute_mandelbrot_par 25 128 6 "TIME"
-#execute_mandelbrot_par 50 128 6 "TIME"
-#execute_mandelbrot_par 75 128 6 "TIME"
-#execute_mandelbrot_par 100 128 6 "TIME"
-#execute_mandelbrot_par 125 128 6 "TIME"
+# Used this for final data set
+execute_mandelbrot_par 25 128 6 "TIME"
+execute_mandelbrot_par 50 128 6 "TIME"
+execute_mandelbrot_par 75 128 6 "TIME"
+execute_mandelbrot_par 100 128 6 "TIME"
+execute_mandelbrot_par 125 128 6 "TIME"
 
-#print_binary_sets_size bins "mandelbrot_128_iter_par_6_core_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_6_core_timings"
-#unset filenames
+print_binary_sets_size bins "mandelbrot_128_iter_par_6_core_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_6_core_timings"
+unset filenames
 
-## Used this for final data set
-#execute_mandelbrot_par 25 128 8 "TIME"
-#execute_mandelbrot_par 50 128 8 "TIME"
-#execute_mandelbrot_par 75 128 8 "TIME"
-#execute_mandelbrot_par 100 128 8 "TIME"
-#execute_mandelbrot_par 125 128 8 "TIME"
+# Used this for final data set
+execute_mandelbrot_par 25 128 8 "TIME"
+execute_mandelbrot_par 50 128 8 "TIME"
+execute_mandelbrot_par 75 128 8 "TIME"
+execute_mandelbrot_par 100 128 8 "TIME"
+execute_mandelbrot_par 125 128 8 "TIME"
 
-#print_binary_sets_size bins "mandelbrot_128_iter_par_8_core_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_8_core_timings"
-#unset filenames
+print_binary_sets_size bins "mandelbrot_128_iter_par_8_core_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_8_core_timings"
+unset filenames
 
-#popd
+popd
 
 ################################################################################
 #                                 Swaptions
@@ -465,129 +465,129 @@ popd
 #                                 nbody
 ################################################################################
 
-#mkdir nbody_results
-#pushd nbody_results
+mkdir nbody_results
+pushd nbody_results
 
-#execute_nbody_lin 32 16 "TIME"
-#execute_nbody_lin 32 32 "TIME"
-#execute_nbody_lin 32 64 "TIME"
-#execute_nbody_lin 32 128 "TIME"
-#execute_nbody_lin 32 256 "TIME"
+execute_nbody_lin 32 16 "TIME"
+execute_nbody_lin 32 32 "TIME"
+execute_nbody_lin 32 64 "TIME"
+execute_nbody_lin 32 128 "TIME"
+execute_nbody_lin 32 256 "TIME"
 
-#print_binary_sets_size bins "nbody_15_body_lin_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "nbody_15_body_lin_timings"
-#unset filenames
+print_binary_sets_size bins "nbody_15_body_lin_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "nbody_15_body_lin_timings"
+unset filenames
 
-#execute_nbody_par 32 16 2 "TIME"
-#execute_nbody_par 32 32 2 "TIME"
-#execute_nbody_par 32 64 2 "TIME"
-#execute_nbody_par 32 128 2 "TIME"
-#execute_nbody_par 32 256 2 "TIME"
+execute_nbody_par 32 16 2 "TIME"
+execute_nbody_par 32 32 2 "TIME"
+execute_nbody_par 32 64 2 "TIME"
+execute_nbody_par 32 128 2 "TIME"
+execute_nbody_par 32 256 2 "TIME"
 
-#print_binary_sets_size bins "nbody_15_body_2_core_par_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "nbody_15_body_2_core_par_timings"
-#unset filenames
+print_binary_sets_size bins "nbody_15_body_2_core_par_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "nbody_15_body_2_core_par_timings"
+unset filenames
 
-#execute_nbody_par 32 16 4 "TIME"
-#execute_nbody_par 32 32 4 "TIME"
-#execute_nbody_par 32 64 4 "TIME"
-#execute_nbody_par 32 128 4 "TIME"
-#execute_nbody_par 32 256 4 "TIME"
+execute_nbody_par 32 16 4 "TIME"
+execute_nbody_par 32 32 4 "TIME"
+execute_nbody_par 32 64 4 "TIME"
+execute_nbody_par 32 128 4 "TIME"
+execute_nbody_par 32 256 4 "TIME"
 
-#print_binary_sets_size bins "nbody_15_body_4_core_par_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "nbody_15_body_4_core_par_timings"
-#unset filenames
+print_binary_sets_size bins "nbody_15_body_4_core_par_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "nbody_15_body_4_core_par_timings"
+unset filenames
 
-#execute_nbody_par 32 16 6 "TIME"
-#execute_nbody_par 32 32 6 "TIME"
-#execute_nbody_par 32 64 6 "TIME"
-#execute_nbody_par 32 128 6 "TIME"
-#execute_nbody_par 32 256 6 "TIME"
+execute_nbody_par 32 16 6 "TIME"
+execute_nbody_par 32 32 6 "TIME"
+execute_nbody_par 32 64 6 "TIME"
+execute_nbody_par 32 128 6 "TIME"
+execute_nbody_par 32 256 6 "TIME"
 
-#print_binary_sets_size bins "nbody_15_body_6_core_par_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "nbody_15_body_6_core_par_timings"
-#unset filenames
+print_binary_sets_size bins "nbody_15_body_6_core_par_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "nbody_15_body_6_core_par_timings"
+unset filenames
 
-#execute_nbody_par 32 16 8 "TIME"
-#execute_nbody_par 32 32 8 "TIME"
-#execute_nbody_par 32 64 8 "TIME"
-#execute_nbody_par 32 128 8 "TIME"
-#execute_nbody_par 32 256 8 "TIME"
+execute_nbody_par 32 16 8 "TIME"
+execute_nbody_par 32 32 8 "TIME"
+execute_nbody_par 32 64 8 "TIME"
+execute_nbody_par 32 128 8 "TIME"
+execute_nbody_par 32 256 8 "TIME"
 
-#print_binary_sets_size bins "nbody_15_body_8_core_par_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "nbody_15_body_8_core_par_timings"
-#unset filenames
+print_binary_sets_size bins "nbody_15_body_8_core_par_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "nbody_15_body_8_core_par_timings"
+unset filenames
 
-#popd
+popd
 
 ################################################################################
 #                           SYCL EDGE DETECTION
 ################################################################################
 
 
-#if [[ ! -z "$PSTL_GEN" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL" && ! -z "$CEST_INCLUDE" ]]; then
-#  mkdir sycl_edge_detection_results
-#  pushd sycl_edge_detection_results
+if [[ ! -z "$MOTORSYCL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
+  mkdir sycl_edge_detection_results
+  pushd sycl_edge_detection_results
 
-#  compile_image_to_text_file
+  compile_image_to_text_file
 
-#  execute_sycl_edge_detection_lin 64 "TIME"
-#  execute_sycl_edge_detection_lin 128 "TIME"
-#  execute_sycl_edge_detection_lin 256 "TIME"
-#  execute_sycl_edge_detection_lin 512 "TIME"
+  execute_sycl_edge_detection_lin 64 "TIME"
+  execute_sycl_edge_detection_lin 128 "TIME"
+  execute_sycl_edge_detection_lin 256 "TIME"
+  execute_sycl_edge_detection_lin 512 "TIME"
 
-#  print_binary_sets_size bins "sycl_edge_detection_lin_memory"
-#  unset bins
-#  convert_time_files_to_csv_file $filenames "sycl_edge_detection_lin_timings"
-#  unset filenames
+  print_binary_sets_size bins "sycl_edge_detection_lin_memory"
+  unset bins
+  convert_time_files_to_csv_file $filenames "sycl_edge_detection_lin_timings"
+  unset filenames
 
-#  execute_sycl_edge_detection_par 64 2 "TIME"
-#  execute_sycl_edge_detection_par 128 2 "TIME"
-#  execute_sycl_edge_detection_par 256 2 "TIME"
-#  execute_sycl_edge_detection_par 512 2 "TIME"
+  execute_sycl_edge_detection_par 64 2 "TIME"
+  execute_sycl_edge_detection_par 128 2 "TIME"
+  execute_sycl_edge_detection_par 256 2 "TIME"
+  execute_sycl_edge_detection_par 512 2 "TIME"
 
-#  print_binary_sets_size bins "sycl_edge_detection_2_core_par_memory"
-#  unset bins
-#  convert_time_files_to_csv_file $filenames "sycl_edge_detection_2_core_par_timings"
-#  unset filenames
+  print_binary_sets_size bins "sycl_edge_detection_2_core_par_memory"
+  unset bins
+  convert_time_files_to_csv_file $filenames "sycl_edge_detection_2_core_par_timings"
+  unset filenames
 
-#  execute_sycl_edge_detection_par 64 4 "TIME"
-#  execute_sycl_edge_detection_par 128 4 "TIME"
-#  execute_sycl_edge_detection_par 256 4 "TIME"
-#  execute_sycl_edge_detection_par 512 4 "TIME"
+  execute_sycl_edge_detection_par 64 4 "TIME"
+  execute_sycl_edge_detection_par 128 4 "TIME"
+  execute_sycl_edge_detection_par 256 4 "TIME"
+  execute_sycl_edge_detection_par 512 4 "TIME"
 
-#  print_binary_sets_size bins "sycl_edge_detection_4_core_par_memory"
-#  unset bins
-#  convert_time_files_to_csv_file $filenames "sycl_edge_detection_4_core_par_timings"
-#  unset filenames
-#  
-#  execute_sycl_edge_detection_par 64 6 "TIME"
-#  execute_sycl_edge_detection_par 128 6 "TIME"
-#  execute_sycl_edge_detection_par 256 6 "TIME"
-#  execute_sycl_edge_detection_par 512 6 "TIME"
+  print_binary_sets_size bins "sycl_edge_detection_4_core_par_memory"
+  unset bins
+  convert_time_files_to_csv_file $filenames "sycl_edge_detection_4_core_par_timings"
+  unset filenames
+  
+  execute_sycl_edge_detection_par 64 6 "TIME"
+  execute_sycl_edge_detection_par 128 6 "TIME"
+  execute_sycl_edge_detection_par 256 6 "TIME"
+  execute_sycl_edge_detection_par 512 6 "TIME"
 
-#  print_binary_sets_size bins "sycl_edge_detection_6_core_par_memory"
-#  unset bins
-#  convert_time_files_to_csv_file $filenames "sycl_edge_detection_6_core_par_timings"
-#  unset filenames
+  print_binary_sets_size bins "sycl_edge_detection_6_core_par_memory"
+  unset bins
+  convert_time_files_to_csv_file $filenames "sycl_edge_detection_6_core_par_timings"
+  unset filenames
 
-#  execute_sycl_edge_detection_par 64 8 "TIME"
-#  execute_sycl_edge_detection_par 128 8 "TIME"
-#  execute_sycl_edge_detection_par 256 8 "TIME"
-#  execute_sycl_edge_detection_par 512 8 "TIME"
+  execute_sycl_edge_detection_par 64 8 "TIME"
+  execute_sycl_edge_detection_par 128 8 "TIME"
+  execute_sycl_edge_detection_par 256 8 "TIME"
+  execute_sycl_edge_detection_par 512 8 "TIME"
 
-#  print_binary_sets_size bins "sycl_edge_detection_8_core_par_memory"
-#  unset bins
-#  convert_time_files_to_csv_file $filenames "sycl_edge_detection_8_core_par_timings"
-#  unset filenames
-#  
-#  popd
-#fi
+  print_binary_sets_size bins "sycl_edge_detection_8_core_par_memory"
+  unset bins
+  convert_time_files_to_csv_file $filenames "sycl_edge_detection_8_core_par_timings"
+  unset filenames
+  
+  popd
+fi
 
 popd
  

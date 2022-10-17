@@ -5555,6 +5555,17 @@ public:
       }
     }
 
+    // clone dynamically allocated data (relevant for vectors or anything with
+    // dynamically allocated constexpr data)
+    for (auto &HA : Original.HeapAllocs) {
+      Clone.NumHeapAllocs++;
+      auto Result = Clone.HeapAllocs.emplace(std::piecewise_construct,
+                                             std::forward_as_tuple(HA.first),
+                                             std::tuple<>());
+      Result.first->second.AllocExpr = HA.second.AllocExpr;
+      Result.first->second.Value = HA.second.Value;
+    }
+
     // if our current frame (the one the parallel loop resides in) has
     // temporaries we must make copies as well
 //    if (Original.CurrentCall->Temporaries.size() > 0) {
@@ -7276,7 +7287,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       for (size_t i = 0; i < tp.getThreadCount(); ++i) {
         lwg.RestrictedCloneEvalInfo(Info, EvalInfos[i]);
       }
-      
+
       lwg.SearchBody(Info.CurrentCall->Callee->getBody());
       lwg.HandleFoundWrappers();
 
@@ -7343,7 +7354,6 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
 
       tp.wait();
 
-
 //      for (size_t i = 0; i < tp.getThreadCount(); ++i) {
 //        lwg.DestroyCloneRecordLayouts(Info, EvalInfos[i]);
 //      }
@@ -7386,7 +7396,7 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
       // This idea of a reduce isn't superb it only really handles simple cases
       // what happens if its a complex user defined function?
       ParConstExprReduce(Info, EvalInfos, RedList, lwg);
-      
+
       auto StepCountForLoop = 0;
       for (int64_t i = 0; i < lwg.GetThreadUtilisation(); ++i) {
         StepCountForLoop += Info.getLangOpts().ConstexprStepLimit - EvalInfos[i].StepsLeft;
