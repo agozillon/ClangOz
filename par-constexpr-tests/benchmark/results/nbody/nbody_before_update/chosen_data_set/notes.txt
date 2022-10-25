@@ -1,4 +1,0 @@
-this data set/benchmark is interesting as it shows the impact of the start up 
-costs for launching the threads, as each iteration is actually forcing two new 
-start/launch processes
-

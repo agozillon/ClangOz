@@ -199,7 +199,7 @@ function execute_sycl_edge_detection_lin {
   ./image_to_text_file image_data/$1.png
   popd
 
-  time $CLANGOZ/bin/clang++ -O3 -D_LIBCPP_HAS_PARALLEL_ALGORITHMS -DCONSTEXPR_SYCL -DCONSTEXPR_TRACK_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o lin_cexpr_sycl_edge_detection_hxw$1_results.o &> lin_cexpr_sycl_edge_detection_hxw$1_results_$2
+  time $CLANGOZ/bin/clang++ -O3 -DCONSTEXPR_SYCL -DCONSTEXPR_TRACK_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o lin_cexpr_sycl_edge_detection_hxw$1_results.o &> lin_cexpr_sycl_edge_detection_hxw$1_results_$2
 
   filenames+=( "lin_cexpr_sycl_edge_detection_hxw$1_results_$2" )
   bins+=( "lin_cexpr_sycl_edge_detection_hxw$1_results.o" )
@@ -219,6 +219,9 @@ function execute_sycl_edge_detection_par {
   bins+=( "par_cexpr_sycl_edge_detection_hxw$1_cores$2.o" )
 }
 
+# TODO: currently a bit buggy for the serial binaries size comparison using stat, 
+# because the text modification is slightly wrong, but currently not using the 
+# size in any graphs.... so leaving it buggy for now.
 function print_binary_sets_size {
   local -n binary_arr=$1
   

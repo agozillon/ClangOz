@@ -20,32 +20,34 @@ library(scales)
 library(matrixStats)
 library(reshape2)
 
+c(16, 32, 64, 128, 256)
+
 XAxis = c(0, 2, 4, 6, 8)
 YAxis = c(0, 2, 4, 6, 8)
-Iterations_10000 = c(0, 1.17447098327, 1.12483199893, 0.38471324229, 0.38471324229)
-Iterations_20000 = c(0, 1.18706029091, 1.12677242954,  0.39562540557, 0.39562540557) 
-Iterations_30000 = c(0, 1.18098686791, 1.12919506537, 0.39734898467, 0.39734898467)
-Iterations_40000 = c(0, 1.17256830084, 1.12249896037, 0.3927638425, 0.3927638425)
-Iterations_50000 = c(0, 1.17600382336, 1.1209578253, 0.39672024396, 0.39672024396)
-  
+Bodies_16 = c(0, 1.69395102823, 2.43313753956, 1.66425516931, 2.50665869839)
+Bodies_32 = c(0, 1.78208095794, 3.0187682044, 2.57043132346, 3.04324700299)
+Bodies_64 = c(0, 1.81468446526, 3.31358115347, 2.86882085093, 3.26436284073)
+Bodies_128 = c(0, 1.84825676151, 3.42560470497, 3.23502365306, 3.42068381717)
+Bodies_256 = c(0, 1.88177780104, 3.46840194162, 3.27536049665, 3.51546899)
+
 # data is problem size ran on each core, so problem_1 is the smallest data set
 # ran on 0, 2, 4, 6 and 8 threads. problem_1 is the second data set and so on. 
 # It's the averaged values across each run 
 SpeedupData <- data.frame(
   XAxis,
-  Iterations_10000,
-  Iterations_20000,
-  Iterations_30000,
-  Iterations_40000,
-  Iterations_50000
+  Bodies_16,
+  Bodies_32,
+  Bodies_64,
+  Bodies_128,
+  Bodies_256
 )
 
 colnames(SpeedupData)[1] <- "Ideal Speedup"
-colnames(SpeedupData)[2] <- "10000 Iterations"
-colnames(SpeedupData)[3] <- "20000 Iterations"
-colnames(SpeedupData)[4] <- "30000 Iterations"
-colnames(SpeedupData)[5] <- "40000 Iterations"
-colnames(SpeedupData)[6] <- "50000 Iterations"
+colnames(SpeedupData)[2] <- "16 Bodies"
+colnames(SpeedupData)[3] <- "32 Bodies"
+colnames(SpeedupData)[4] <- "64 Bodies"
+colnames(SpeedupData)[5] <- "128 Bodies"
+colnames(SpeedupData)[6] <- "256 Bodies"
 
 SpeedupData <- melt(SpeedupData)
 SpeedupData$rowid <- 1:5
