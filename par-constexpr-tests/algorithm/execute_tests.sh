@@ -5,7 +5,7 @@ function constexpr_execute {
   echo " "
   echo " "
   echo " "
-  $CLANGOZ/bin/clang++ -fconstexpr-steps=4294967295 -std=c++2a -stdlib=libc++ \
+  $CLANGOZ_ROOT/bin/clang++ -fconstexpr-steps=4294967295 -std=c++2a -stdlib=libc++ \
     -fexperimental-constexpr-parallel -fconstexpr-parallel-partition-size="$2" $1 -o $1.out && ./$1.out
   echo " "
   echo " "
