@@ -868,7 +868,7 @@ popd
 
   # Not sure how good this test is for calculating number of steps as it 
   # encompases multiple launches of the parallel for_each for each kernel
-if [[ ! -z "$PSTL_GEN" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL" && ! -z "$CEST_INCLUDE" ]]; then
+if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
   mkdir sycl_edge_detection_results
   pushd sycl_edge_detection_results
 

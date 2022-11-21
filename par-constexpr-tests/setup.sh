@@ -8,4 +8,4 @@ export LD_LIBRARY_PATH=$CLANGOZ_ROOT/lib:$CLANGOZ_ROOT/lib/x86_64-unknown-linux-
 # they're required as compiling the parallel STL!
 
 #export PSTL_INCLUDE=$LLVM_CLANG_SRC_DIR/pstl/include
-#export PSTL_INTERINAL_INCLUDE=$LLVM_CLANG_SRC_DIR/pstl/include/pstl/internal
+#export PSTL_INTERNAL_INCLUDE=$LLVM_CLANG_SRC_DIR/pstl/include/pstl/internal
