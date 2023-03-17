@@ -20,7 +20,6 @@
 #include "clang/Frontend/Utils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -44,7 +43,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormattedStream.h"
-#include "llvm/Support/Host.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
@@ -53,7 +51,10 @@
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 #include <memory>
+#include <optional>
 #include <system_error>
 using namespace clang;
 using namespace clang::driver;
@@ -150,11 +151,14 @@ struct AssemblerInvocation {
 
   /// Darwin target variant triple, the variant of the deployment target
   /// for which the code is being compiled.
-  llvm::Optional<llvm::Triple> DarwinTargetVariantTriple;
+  std::optional<llvm::Triple> DarwinTargetVariantTriple;
 
   /// The version of the darwin target variant SDK which was used during the
   /// compilation
   llvm::VersionTuple DarwinTargetVariantSDKVersion;
+
+  /// The name of a file to use with \c .secure_log_unique directives.
+  std::string AsSecureLogFile;
   /// @}
 
 public:
@@ -256,7 +260,7 @@ bool AssemblerInvocation::CreateFromArgs(AssemblerInvocation &Opts,
             .Default(llvm::DebugCompressionType::None);
   }
 
-  Opts.RelaxELFRelocations = Args.hasArg(OPT_mrelax_relocations);
+  Opts.RelaxELFRelocations = !Args.hasArg(OPT_mrelax_relocations_no);
   if (auto *DwarfFormatArg = Args.getLastArg(OPT_gdwarf64, OPT_gdwarf32))
     Opts.Dwarf64 = DwarfFormatArg->getOption().matches(OPT_gdwarf64);
   Opts.DwarfVersion = getLastArgIntValue(Args, OPT_dwarf_version_EQ, 2, Diags);
@@ -345,6 +349,8 @@ bool AssemblerInvocation::CreateFromArgs(AssemblerInvocation &Opts,
             .Case("default", EmitDwarfUnwindType::Default);
   }
 
+  Opts.AsSecureLogFile = Args.getLastArgValue(OPT_as_secure_log_file);
+
   return Success;
 }
 
@@ -378,8 +384,8 @@ static bool ExecuteAssemblerImpl(AssemblerInvocation &Opts,
       MemoryBuffer::getFileOrSTDIN(Opts.InputFile, /*IsText=*/true);
 
   if (std::error_code EC = Buffer.getError()) {
-    Error = EC.message();
-    return Diags.Report(diag::err_fe_error_reading) << Opts.InputFile;
+    return Diags.Report(diag::err_fe_error_reading)
+           << Opts.InputFile << EC.message();
   }
 
   SourceMgr SrcMgr;
@@ -396,6 +402,7 @@ static bool ExecuteAssemblerImpl(AssemblerInvocation &Opts,
 
   MCTargetOptions MCOptions;
   MCOptions.EmitDwarfUnwind = Opts.EmitDwarfUnwind;
+  MCOptions.AsSecureLogFile = Opts.AsSecureLogFile;
 
   std::unique_ptr<MCAsmInfo> MAI(
       TheTarget->createMCAsmInfo(*MRI, Opts.Triple, MCOptions));

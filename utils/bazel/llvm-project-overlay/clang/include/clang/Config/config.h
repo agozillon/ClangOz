@@ -43,9 +43,6 @@
 /* Default OpenMP runtime used by -fopenmp. */
 #define CLANG_DEFAULT_OPENMP_RUNTIME "libomp"
 
-/* Default architecture for OpenMP offloading to Nvidia GPUs. */
-#define CLANG_OPENMP_NVPTX_DEFAULT_ARCH "sm_35"
-
 /* Default architecture for SystemZ. */
 #define CLANG_SYSTEMZ_DEFAULT_ARCH "z10"
 
@@ -73,9 +70,6 @@
 
 /* Define if we have sys/resource.h (rlimits) */
 /* CLANG_HAVE_RLIMITS defined conditionally below */
-
-/* The LLVM product name and version */
-#define BACKEND_PACKAGE_STRING "LLVM 16.0.0git"
 
 /* Linker version detected at compile time. */
 /* #undef HOST_LINK_VERSION */

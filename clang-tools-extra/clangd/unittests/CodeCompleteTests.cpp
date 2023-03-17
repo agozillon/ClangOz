@@ -11,6 +11,7 @@
 #include "ClangdServer.h"
 #include "CodeComplete.h"
 #include "Compiler.h"
+#include "Feature.h"
 #include "Matchers.h"
 #include "Protocol.h"
 #include "Quality.h"
@@ -21,14 +22,16 @@
 #include "TestTU.h"
 #include "index/Index.h"
 #include "index/MemIndex.h"
+#include "index/SymbolOrigin.h"
 #include "support/Threading.h"
 #include "clang/Sema/CodeCompleteConsumer.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Testing/Support/Annotations.h"
+#include "llvm/Testing/Annotations/Annotations.h"
 #include "llvm/Testing/Support/Error.h"
+#include "llvm/Testing/Support/SupportHelpers.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include <condition_variable>
@@ -77,12 +80,19 @@ MATCHER_P(insertInclude, IncludeHeader, "") {
   return !arg.Includes.empty() && arg.Includes[0].Header == IncludeHeader &&
          bool(arg.Includes[0].Insertion);
 }
+MATCHER_P(insertIncludeText, InsertedText, "") {
+  return !arg.Includes.empty() && arg.Includes[0].Insertion &&
+         arg.Includes[0].Insertion->newText == InsertedText;
+}
 MATCHER(insertInclude, "") {
   return !arg.Includes.empty() && bool(arg.Includes[0].Insertion);
 }
 MATCHER_P(snippetSuffix, Text, "") { return arg.SnippetSuffix == Text; }
 MATCHER_P(origin, OriginSet, "") { return arg.Origin == OriginSet; }
 MATCHER_P(signature, S, "") { return arg.Signature == S; }
+MATCHER_P(replacesRange, Range, "") {
+  return arg.CompletionTokenRange == Range;
+}
 
 // Shorthand for Contains(named(Name)).
 Matcher<const std::vector<CodeCompletion> &> has(std::string Name) {
@@ -165,6 +175,7 @@ Symbol withReferences(int N, Symbol S) {
   return S;
 }
 
+#if CLANGD_DECISION_FOREST
 TEST(DecisionForestRankingModel, NameMatchSanityTest) {
   clangd::CodeCompleteOptions Opts;
   Opts.RankingModel = CodeCompleteOptions::DecisionForest;
@@ -198,6 +209,7 @@ TEST(DecisionForestRankingModel, ReferencesAffectRanking) {
           .Completions,
       ElementsAre(named("clangA"), named("clangD")));
 }
+#endif // CLANGD_DECISION_FOREST
 
 TEST(DecisionForestRankingModel, DecisionForestScorerCallbackTest) {
   clangd::CodeCompleteOptions Opts;
@@ -453,6 +465,18 @@ TEST(CompletionTest, Qualifiers) {
               Not(Contains(AllOf(qualifier(""), named("foo")))));
 }
 
+// https://github.com/clangd/clangd/issues/1451
+TEST(CompletionTest, QualificationWithInlineNamespace) {
+  auto Results = completions(R"cpp(
+    namespace a { inline namespace b {} }
+    using namespace a::b;
+    void f() { Foo^ }
+  )cpp",
+                             {cls("a::Foo")});
+  EXPECT_THAT(Results.Completions,
+              UnorderedElementsAre(AllOf(qualifier("a::"), named("Foo"))));
+}
+
 TEST(CompletionTest, InjectedTypename) {
   // These are suppressed when accessed as a member...
   EXPECT_THAT(completions("struct X{}; void foo(){ X().^ }").Completions,
@@ -498,6 +522,63 @@ TEST(CompletionTest, Snippets) {
       Results.Completions,
       HasSubsequence(named("a"),
                      snippetSuffix("(${1:int i}, ${2:const float f})")));
+}
+
+TEST(CompletionTest, HeuristicsForMemberFunctionCompletion) {
+  clangd::CodeCompleteOptions Opts;
+  Opts.EnableSnippets = true;
+
+  Annotations Code(R"cpp(
+      struct Foo {
+        static int staticMethod();
+        int method() const;
+        Foo() {
+          this->$keepSnippet^
+          $keepSnippet^
+          Foo::$keepSnippet^
+        }
+      };
+
+      struct Derived : Foo {
+        Derived() {
+          Foo::$keepSnippet^
+        }
+      };
+
+      struct OtherClass {
+        OtherClass() {
+          Foo f;
+          f.$keepSnippet^
+          &Foo::$noSnippet^
+        }
+      };
+
+      int main() {
+        Foo f;
+        f.$keepSnippet^
+        &Foo::$noSnippet^
+      }
+      )cpp");
+  auto TU = TestTU::withCode(Code.code());
+
+  for (const auto &P : Code.points("noSnippet")) {
+    auto Results = completions(TU, P, /*IndexSymbols*/ {}, Opts);
+    EXPECT_THAT(Results.Completions,
+                Contains(AllOf(named("method"), snippetSuffix(""))));
+  }
+
+  for (const auto &P : Code.points("keepSnippet")) {
+    auto Results = completions(TU, P, /*IndexSymbols*/ {}, Opts);
+    EXPECT_THAT(Results.Completions,
+                Contains(AllOf(named("method"), snippetSuffix("()"))));
+  }
+
+  // static method will always keep the snippet
+  for (const auto &P : Code.points()) {
+    auto Results = completions(TU, P, /*IndexSymbols*/ {}, Opts);
+    EXPECT_THAT(Results.Completions,
+                Contains(AllOf(named("staticMethod"), snippetSuffix("()"))));
+  }
 }
 
 TEST(CompletionTest, NoSnippetsInUsings) {
@@ -558,7 +639,7 @@ TEST(CompletionTest, Kinds) {
                     has("variable", CompletionItemKind::Variable),
                     has("int", CompletionItemKind::Keyword),
                     has("Struct", CompletionItemKind::Struct),
-                    has("MACRO", CompletionItemKind::Text),
+                    has("MACRO", CompletionItemKind::Constant),
                     has("indexFunction", CompletionItemKind::Function),
                     has("indexVariable", CompletionItemKind::Variable),
                     has("indexClass", CompletionItemKind::Class)));
@@ -750,7 +831,7 @@ TEST(CompletionTest, IncludeInsertionPreprocessorIntegrationTests) {
 
   Symbol Sym = cls("ns::X");
   Sym.CanonicalDeclaration.FileURI = BarURI.c_str();
-  Sym.IncludeHeaders.emplace_back(BarURI, 1);
+  Sym.IncludeHeaders.emplace_back(BarURI, 1, Symbol::Include);
   // Shorten include path based on search directory and insert.
   Annotations Test("int main() { ns::^ }");
   TU.Code = Test.code().str();
@@ -781,8 +862,8 @@ TEST(CompletionTest, NoIncludeInsertionWhenDeclFoundInFile) {
   auto BarURI = URI::create(BarHeader).toString();
   SymX.CanonicalDeclaration.FileURI = BarURI.c_str();
   SymY.CanonicalDeclaration.FileURI = BarURI.c_str();
-  SymX.IncludeHeaders.emplace_back("<bar>", 1);
-  SymY.IncludeHeaders.emplace_back("<bar>", 1);
+  SymX.IncludeHeaders.emplace_back("<bar>", 1, Symbol::Include);
+  SymY.IncludeHeaders.emplace_back("<bar>", 1, Symbol::Include);
   // Shorten include path based on search directory and insert.
   auto Results = completions(R"cpp(
           namespace ns {
@@ -1029,6 +1110,21 @@ TEST(CompletionTests, EmptySnippetDoesNotCrash) {
           })(10);
         }
     )cpp");
+}
+
+TEST(CompletionTest, Issue1427Crash) {
+    // Need to provide main file signals to ensure that the branch in
+    // SymbolRelevanceSignals::computeASTSignals() that tries to
+    // compute a symbol ID is taken.
+    ASTSignals MainFileSignals;
+    CodeCompleteOptions Opts;
+    Opts.MainFileSignals = &MainFileSignals;
+    completions(R"cpp(
+      auto f = []() {
+        1.0_^
+      };
+    )cpp",
+                {}, Opts);
 }
 
 TEST(CompletionTest, BacktrackCrashes) {
@@ -1805,7 +1901,7 @@ TEST(CompletionTest, OverloadBundling) {
   // Differences in header-to-insert suppress bundling.
   std::string DeclFile = URI::create(testPath("foo")).toString();
   NoArgsGFunc.CanonicalDeclaration.FileURI = DeclFile.c_str();
-  NoArgsGFunc.IncludeHeaders.emplace_back("<foo>", 1);
+  NoArgsGFunc.IncludeHeaders.emplace_back("<foo>", 1, Symbol::Include);
   EXPECT_THAT(
       completions(Context + "int y = GFunc^", {NoArgsGFunc}, Opts).Completions,
       UnorderedElementsAre(AllOf(named("GFuncC"), insertInclude("<foo>")),
@@ -1839,8 +1935,8 @@ TEST(CompletionTest, OverloadBundlingSameFileDifferentURI) {
   SymX.CanonicalDeclaration.FileURI = BarURI.c_str();
   SymY.CanonicalDeclaration.FileURI = BarURI.c_str();
   // The include header is different, but really it's the same file.
-  SymX.IncludeHeaders.emplace_back("\"bar.h\"", 1);
-  SymY.IncludeHeaders.emplace_back(BarURI.c_str(), 1);
+  SymX.IncludeHeaders.emplace_back("\"bar.h\"", 1, Symbol::Include);
+  SymY.IncludeHeaders.emplace_back(BarURI.c_str(), 1, Symbol::Include);
 
   auto Results = completions("void f() { ::ns::^ }", {SymX, SymY}, Opts);
   // Expect both results are bundled, despite the different-but-same
@@ -2637,13 +2733,41 @@ TEST(CompletionTest, InsertTheMostPopularHeader) {
   std::string DeclFile = URI::create(testPath("foo")).toString();
   Symbol Sym = func("Func");
   Sym.CanonicalDeclaration.FileURI = DeclFile.c_str();
-  Sym.IncludeHeaders.emplace_back("\"foo.h\"", 2);
-  Sym.IncludeHeaders.emplace_back("\"bar.h\"", 1000);
+  Sym.IncludeHeaders.emplace_back("\"foo.h\"", 2, Symbol::Include);
+  Sym.IncludeHeaders.emplace_back("\"bar.h\"", 1000, Symbol::Include);
 
   auto Results = completions("Fun^", {Sym}).Completions;
   assert(!Results.empty());
   EXPECT_THAT(Results[0], AllOf(named("Func"), insertInclude("\"bar.h\"")));
   EXPECT_EQ(Results[0].Includes.size(), 2u);
+}
+
+TEST(CompletionTest, InsertIncludeOrImport) {
+  std::string DeclFile = URI::create(testPath("foo")).toString();
+  Symbol Sym = func("Func");
+  Sym.CanonicalDeclaration.FileURI = DeclFile.c_str();
+  Sym.IncludeHeaders.emplace_back("\"bar.h\"", 1000,
+                                  Symbol::Include | Symbol::Import);
+  CodeCompleteOptions Opts;
+  // Should only take effect in import contexts.
+  Opts.ImportInsertions = true;
+  auto Results = completions("Fun^", {Sym}, Opts).Completions;
+  assert(!Results.empty());
+  EXPECT_THAT(Results[0],
+              AllOf(named("Func"), insertIncludeText("#include \"bar.h\"\n")));
+
+  ASTSignals Signals;
+  Signals.InsertionDirective = Symbol::IncludeDirective::Import;
+  Opts.MainFileSignals = &Signals;
+  Results = completions("Fun^", {Sym}, Opts, "Foo.m").Completions;
+  assert(!Results.empty());
+  EXPECT_THAT(Results[0],
+              AllOf(named("Func"), insertIncludeText("#import \"bar.h\"\n")));
+
+  Sym.IncludeHeaders[0].SupportedDirectives = Symbol::Import;
+  Results = completions("Fun^", {Sym}).Completions;
+  assert(!Results.empty());
+  EXPECT_THAT(Results[0], AllOf(named("Func"), Not(insertInclude())));
 }
 
 TEST(CompletionTest, NoInsertIncludeIfOnePresent) {
@@ -2657,8 +2781,8 @@ TEST(CompletionTest, NoInsertIncludeIfOnePresent) {
   std::string DeclFile = URI::create(testPath("foo")).toString();
   Symbol Sym = func("Func");
   Sym.CanonicalDeclaration.FileURI = DeclFile.c_str();
-  Sym.IncludeHeaders.emplace_back("\"foo.h\"", 2);
-  Sym.IncludeHeaders.emplace_back("\"bar.h\"", 1000);
+  Sym.IncludeHeaders.emplace_back("\"foo.h\"", 2, Symbol::Include);
+  Sym.IncludeHeaders.emplace_back("\"bar.h\"", 1000, Symbol::Include);
 
   EXPECT_THAT(completions(TU, Test.point(), {Sym}).Completions,
               UnorderedElementsAre(AllOf(named("Func"), hasInclude("\"foo.h\""),
@@ -2962,14 +3086,20 @@ TEST(CompletionTest, AllScopesCompletion) {
     }
   )cpp",
       {cls("nx::Clangd1"), cls("ny::Clangd2"), cls("Clangd3"),
-       cls("na::nb::Clangd4")},
+       cls("na::nb::Clangd4"), enmConstant("na::C::Clangd5")},
       Opts);
   EXPECT_THAT(
       Results.Completions,
-      UnorderedElementsAre(AllOf(qualifier("nx::"), named("Clangd1")),
-                           AllOf(qualifier("ny::"), named("Clangd2")),
-                           AllOf(qualifier(""), scope(""), named("Clangd3")),
-                           AllOf(qualifier("nb::"), named("Clangd4"))));
+      UnorderedElementsAre(AllOf(qualifier("nx::"), named("Clangd1"),
+                                 kind(CompletionItemKind::Class)),
+                           AllOf(qualifier("ny::"), named("Clangd2"),
+                                 kind(CompletionItemKind::Class)),
+                           AllOf(qualifier(""), scope(""), named("Clangd3"),
+                                 kind(CompletionItemKind::Class)),
+                           AllOf(qualifier("nb::"), named("Clangd4"),
+                                 kind(CompletionItemKind::Class)),
+                           AllOf(qualifier("C::"), named("Clangd5"),
+                                 kind(CompletionItemKind::EnumMember))));
 }
 
 TEST(CompletionTest, NoQualifierIfShadowed) {
@@ -3320,6 +3450,22 @@ TEST(CompletionTest, CursorInSnippets) {
   EXPECT_THAT(Results.Completions,
               Contains(AllOf(named("while_foo"),
                              snippetSuffix("(${1:int a}, ${2:int b})"))));
+
+  Results = completions(R"cpp(
+    struct Base {
+      Base(int a, int b) {}
+    };
+
+    struct Derived : Base {
+      Derived() : Base^
+    };
+  )cpp",
+                        /*IndexSymbols=*/{}, Options);
+  // Constructors from base classes are a kind of pattern that shouldn't end
+  // with $0.
+  EXPECT_THAT(Results.Completions,
+              Contains(AllOf(named("Base"),
+                             snippetSuffix("(${1:int a}, ${2:int b})"))));
 }
 
 TEST(CompletionTest, WorksWithNullType) {
@@ -3351,6 +3497,33 @@ TEST(CompletionTest, UsingDecl) {
   EXPECT_THAT(R.Completions,
               ElementsAre(AllOf(scope("std::"), named("foo"),
                                 kind(CompletionItemKind::Reference))));
+}
+
+TEST(CompletionTest, Enums) {
+  const char *Header(R"cpp(
+    namespace ns {
+      enum Unscoped { Clangd1 };
+      class C {
+      enum Unscoped { Clangd2 };
+      };
+      enum class Scoped { Clangd3 };
+    })cpp");
+  const char *Source(R"cpp(
+    void bar() {
+      Clangd^
+    })cpp");
+  auto Index = TestTU::withHeaderCode(Header).index();
+  clangd::CodeCompleteOptions Opts;
+  Opts.Index = Index.get();
+  Opts.AllScopes = true;
+  auto R = completions(Source, {}, Opts);
+  EXPECT_THAT(R.Completions, UnorderedElementsAre(
+                                 AllOf(scope("ns::"), named("Clangd1"),
+                                       kind(CompletionItemKind::EnumMember)),
+                                 AllOf(scope("ns::C::"), named("Clangd2"),
+                                       kind(CompletionItemKind::EnumMember)),
+                                 AllOf(scope("ns::Scoped::"), named("Clangd3"),
+                                       kind(CompletionItemKind::EnumMember))));
 }
 
 TEST(CompletionTest, ScopeIsUnresolved) {
@@ -3460,7 +3633,7 @@ TEST(CompletionTest, CompletionRange) {
   // heuristics as normal and reports a range. It'd be nice to be consistent.
   const char *NoCompletion = "/* foo [[]]^ */";
   Completions = completions(NoCompletion);
-  EXPECT_EQ(Completions.CompletionRange, llvm::None);
+  EXPECT_EQ(Completions.CompletionRange, std::nullopt);
   Completions = completionsNoCompile(NoCompletion);
   EXPECT_EQ(Completions.CompletionRange, Annotations(NoCompletion).range());
 }
@@ -3644,7 +3817,7 @@ TEST(CompletionTest, FunctionArgsExist) {
                      kind(CompletionItemKind::Constructor))));
   EXPECT_THAT(completions(Context + "MAC^(2)", {}, Opts).Completions,
               Contains(AllOf(labeled("MACRO(x)"), snippetSuffix(""),
-                             kind(CompletionItemKind::Text))));
+                             kind(CompletionItemKind::Function))));
 }
 
 TEST(CompletionTest, NoCrashDueToMacroOrdering) {
@@ -3713,7 +3886,6 @@ TEST(CompletionTest, PreambleCodeComplete) {
 }
 
 TEST(CompletionTest, CommentParamName) {
-  clangd::CodeCompleteOptions Opts;
   const std::string Code = R"cpp(
     void fun(int foo, int bar);
     void overloaded(int param_int);
@@ -3722,23 +3894,46 @@ TEST(CompletionTest, CommentParamName) {
     int main() {
   )cpp";
 
-  EXPECT_THAT(completions(Code + "fun(/*^", {}, Opts).Completions,
-              UnorderedElementsAre(labeled("foo=")));
-  EXPECT_THAT(completions(Code + "fun(1, /*^", {}, Opts).Completions,
-              UnorderedElementsAre(labeled("bar=")));
-  EXPECT_THAT(completions(Code + "/*^", {}, Opts).Completions, IsEmpty());
+  EXPECT_THAT(completions(Code + "fun(/*^").Completions,
+              UnorderedElementsAre(labeled("foo=*/")));
+  EXPECT_THAT(completions(Code + "fun(1, /*^").Completions,
+              UnorderedElementsAre(labeled("bar=*/")));
+  EXPECT_THAT(completions(Code + "/*^").Completions, IsEmpty());
   // Test de-duplication.
   EXPECT_THAT(
-      completions(Code + "overloaded(/*^", {}, Opts).Completions,
-      UnorderedElementsAre(labeled("param_int="), labeled("param_char=")));
+      completions(Code + "overloaded(/*^").Completions,
+      UnorderedElementsAre(labeled("param_int=*/"), labeled("param_char=*/")));
   // Comment already has some text in it.
-  EXPECT_THAT(completions(Code + "fun(/*  ^", {}, Opts).Completions,
-              UnorderedElementsAre(labeled("foo=")));
-  EXPECT_THAT(completions(Code + "fun(/* f^", {}, Opts).Completions,
-              UnorderedElementsAre(labeled("foo=")));
-  EXPECT_THAT(completions(Code + "fun(/* x^", {}, Opts).Completions, IsEmpty());
-  EXPECT_THAT(completions(Code + "fun(/* f ^", {}, Opts).Completions,
-              IsEmpty());
+  EXPECT_THAT(completions(Code + "fun(/*  ^").Completions,
+              UnorderedElementsAre(labeled("foo=*/")));
+  EXPECT_THAT(completions(Code + "fun(/* f^").Completions,
+              UnorderedElementsAre(labeled("foo=*/")));
+  EXPECT_THAT(completions(Code + "fun(/* x^").Completions, IsEmpty());
+  EXPECT_THAT(completions(Code + "fun(/* f ^").Completions, IsEmpty());
+
+  // Test ranges
+  {
+    std::string CompletionRangeTest(Code + "fun(/*[[^]]");
+    auto Results = completions(CompletionRangeTest);
+    EXPECT_THAT(Results.CompletionRange,
+                llvm::ValueIs(Annotations(CompletionRangeTest).range()));
+    EXPECT_THAT(
+        Results.Completions,
+        testing::Each(
+            AllOf(replacesRange(Annotations(CompletionRangeTest).range()),
+                  origin(SymbolOrigin::AST), kind(CompletionItemKind::Text))));
+  }
+  {
+    std::string CompletionRangeTest(Code + "fun(/*[[fo^]]");
+    auto Results = completions(CompletionRangeTest);
+    EXPECT_THAT(Results.CompletionRange,
+                llvm::ValueIs(Annotations(CompletionRangeTest).range()));
+    EXPECT_THAT(
+        Results.Completions,
+        testing::Each(
+            AllOf(replacesRange(Annotations(CompletionRangeTest).range()),
+                  origin(SymbolOrigin::AST), kind(CompletionItemKind::Text))));
+  }
 }
 
 TEST(CompletionTest, Concepts) {

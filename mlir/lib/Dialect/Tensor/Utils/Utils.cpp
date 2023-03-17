@@ -14,27 +14,10 @@
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Utils/IndexingUtils.h"
 
 using namespace mlir;
 using namespace mlir::tensor;
-
-PadOp mlir::tensor::createPadScalarOp(Type type, Value source, Value pad,
-                                      ArrayRef<OpFoldResult> low,
-                                      ArrayRef<OpFoldResult> high, bool nofold,
-                                      Location loc, OpBuilder &builder) {
-  auto padTensorOp =
-      builder.create<PadOp>(loc, type, source, low, high, nofold);
-  int rank = padTensorOp.getResultType().getRank();
-  SmallVector<Type> blockArgTypes(rank, builder.getIndexType());
-  SmallVector<Location> blockArgLocs(rank, loc);
-  auto &region = padTensorOp.getRegion();
-  // `builder.createBlock` changes the insertion point within the block. Create
-  // a guard to reset the insertion point of the builder after it is destroyed.
-  OpBuilder::InsertionGuard guard(builder);
-  builder.createBlock(&region, region.end(), blockArgTypes, blockArgLocs);
-  builder.create<YieldOp>(loc, pad);
-  return padTensorOp;
-}
 
 PadOp mlir::tensor::createPadHighOp(RankedTensorType type, Value source,
                                     Value pad, bool nofold, Location loc,
@@ -53,7 +36,7 @@ PadOp mlir::tensor::createPadHighOp(RankedTensorType type, Value source,
     high[en.index()] =
         makeComposedAffineApply(b, loc, en.value() - d0, {dimOp}).getResult();
   }
-  return createPadScalarOp(type, source, pad, low, high, nofold, loc, b);
+  return b.create<PadOp>(loc, type, source, low, high, pad, nofold);
 }
 
 SmallVector<Value> mlir::tensor::createDynamicDimValues(OpBuilder &b,
@@ -62,20 +45,57 @@ SmallVector<Value> mlir::tensor::createDynamicDimValues(OpBuilder &b,
   auto tensorTy = rankedTensor.getType().cast<RankedTensorType>();
   SmallVector<Value> dynamicDims;
   for (const auto &en : llvm::enumerate(tensorTy.getShape())) {
-    if (en.value() == ShapedType::kDynamicSize)
+    if (en.value() == ShapedType::kDynamic)
       dynamicDims.push_back(
           b.create<tensor::DimOp>(loc, rankedTensor, en.index()));
   }
   return dynamicDims;
 }
 
-SmallVector<Value> mlir::tensor::createDimValues(OpBuilder &b, Location loc,
-                                                 Value rankedTensor) {
+FailureOr<OpFoldResult> mlir::tensor::createDimValue(OpBuilder &b, Location loc,
+                                                     Value rankedTensor,
+                                                     int64_t dim) {
+  auto tensorTy = rankedTensor.getType().dyn_cast<RankedTensorType>();
+  if (!tensorTy)
+    return failure();
+  auto shape = tensorTy.getShape();
+  if (dim >= static_cast<int64_t>(shape.size()))
+    return failure();
+  if (ShapedType::isDynamic(shape[dim]))
+    return OpFoldResult(b.createOrFold<tensor::DimOp>(loc, rankedTensor, dim));
+  return OpFoldResult(b.getIndexAttr(shape[dim]));
+}
+
+SmallVector<OpFoldResult>
+mlir::tensor::createDimValues(OpBuilder &b, Location loc, Value rankedTensor) {
   auto tensorTy = rankedTensor.getType().cast<RankedTensorType>();
-  SmallVector<Value> dims;
+  SmallVector<OpFoldResult> dims;
   for (const auto &en : llvm::enumerate(tensorTy.getShape())) {
-    dims.push_back(
-        b.createOrFold<tensor::DimOp>(loc, rankedTensor, en.index()));
+    if (ShapedType::isDynamic(en.value())) {
+      dims.push_back(
+          b.createOrFold<tensor::DimOp>(loc, rankedTensor, en.index()));
+    } else {
+      dims.push_back(b.getIndexAttr(en.value()));
+    }
   }
   return dims;
+}
+
+FailureOr<RankedTensorType>
+mlir::tensor::computeTransposedType(RankedTensorType rankedTensorType,
+                                    ArrayRef<int64_t> transposeVector) {
+  if (transposeVector.empty())
+    return rankedTensorType;
+  if (!isPermutationVector(transposeVector) ||
+      transposeVector.size() != static_cast<size_t>(rankedTensorType.getRank()))
+    return failure();
+
+  SmallVector<int64_t> transposedShape(rankedTensorType.getShape().begin(),
+                                       rankedTensorType.getShape().end());
+  applyPermutationToVector(transposedShape, transposeVector);
+
+  using RTTBuilder = RankedTensorType::Builder;
+  RankedTensorType transposedTensorType =
+      RTTBuilder(rankedTensorType).setShape(transposedShape);
+  return transposedTensorType;
 }

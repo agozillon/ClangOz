@@ -75,6 +75,9 @@ public:
   /// Clears the stack without calling any destructors.
   void clear();
 
+  // Returns whether the stack is empty.
+  bool empty() const { return StackSize == 0; }
+
 private:
   /// All stack slots are aligned to the native pointer alignment for storage.
   /// The size of an object is rounded up to a pointer alignment multiple.
@@ -157,6 +160,8 @@ private:
     else if constexpr (std::is_same_v<T, uint64_t> ||
                        std::is_same_v<T, Integral<64, false>>)
       return PT_Uint64;
+    else if constexpr (std::is_same_v<T, Floating>)
+      return PT_Float;
 
     llvm_unreachable("unknown type push()'ed into InterpStack");
   }

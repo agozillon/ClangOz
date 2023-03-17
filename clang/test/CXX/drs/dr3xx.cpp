@@ -161,6 +161,15 @@ namespace dr308 { // dr308: yes
   struct C : A {};
   struct D : B, C {};
   void f() {
+    // NB: the warning here is correct despite being the opposite of the
+    // comments in the catch handlers. The "unreachable" comment is correct
+    // because there is an ambiguous base path to A from the D that is thrown.
+    // The warnings generated are also correct because the handlers handle
+    // const B& and const A& and we don't check to see if other derived classes
+    // exist that would cause an ambiguous base path. We issue the diagnostic
+    // despite the potential for a false positive because users are not
+    // expected to have ambiguous base paths all that often, so the false
+    // positive rate should be acceptably low.
     try {
       throw D();
     } catch (const A&) { // expected-note {{for type 'const A &'}}
@@ -890,6 +899,33 @@ namespace dr359 { // dr359: yes
   };
 }
 
+namespace dr360 { // dr360: yes
+struct A {
+  int foo();
+  int bar();
+
+protected:
+  int baz();
+};
+
+struct B : A {
+private:
+  using A::foo; // #dr360-foo-using-decl
+protected:
+  using A::bar; // #dr360-bar-using-decl
+public:
+  using A::baz;
+};
+
+int main() {
+  int foo = B().foo(); // expected-error {{is a private member}}
+  // expected-note@#dr360-foo-using-decl {{declared private here}}
+  int bar = B().bar(); // expected-error {{is a protected member}}
+  // expected-note@#dr360-bar-using-decl {{declared protected here}}
+  int baz = B().baz();
+}
+} // namespace dr360
+
 // dr362: na
 // dr363: na
 
@@ -924,9 +960,9 @@ namespace dr367 { // dr367: yes
 namespace dr368 { // dr368: yes
   template<typename T, T> struct S {}; // expected-note {{here}}
   template<typename T> int f(S<T, T()> *); // expected-error {{function type}}
-  template<typename T> int g(S<T, (T())> *); // cxx98_17-note {{type 'dr368::X'}}
+  template<typename T> int g(S<T, (T())> *); // cxx98_17-note {{type 'X'}}
   // cxx20_2b-note@-1 {{candidate function [with T = dr368::X]}}
-  template<typename T> int g(S<T, true ? T() : T()> *); // cxx98_17-note {{type 'dr368::X'}}
+  template<typename T> int g(S<T, true ? T() : T()> *); // cxx98_17-note {{type 'X'}}
   // cxx20_2b-note@-1 {{candidate function [with T = dr368::X]}}
   struct X {};
   int n = g<X>(0); // cxx98_17-error {{no matching}}

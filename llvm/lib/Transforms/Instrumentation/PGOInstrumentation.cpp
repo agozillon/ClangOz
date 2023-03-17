@@ -56,14 +56,12 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Analysis/CFG.h"
-#include "llvm/Analysis/EHPersonalities.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/MemoryProfileInfo.h"
@@ -78,6 +76,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/EHPersonalities.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/GlobalValue.h"
@@ -110,7 +109,9 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/GraphWriter.h"
 #include "llvm/Support/HashBuilder.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/MisExpect.h"
@@ -121,6 +122,7 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -302,11 +304,16 @@ static cl::opt<std::string> PGOTraceFuncHash(
 
 static cl::opt<unsigned> PGOFunctionSizeThreshold(
     "pgo-function-size-threshold", cl::Hidden,
-    cl::desc("Do not instrument functions smaller than this threshold"));
+    cl::desc("Do not instrument functions smaller than this threshold."));
 
 static cl::opt<bool> MatchMemProf(
     "pgo-match-memprof", cl::init(true), cl::Hidden,
     cl::desc("Perform matching and annotation of memprof profiles."));
+
+static cl::opt<unsigned> PGOFunctionCriticalEdgeThreshold(
+    "pgo-critical-edge-threshold", cl::init(20000), cl::Hidden,
+    cl::desc("Do not instrument functions with the number of critical edges "
+             " greater than this threshold."));
 
 namespace llvm {
 // Command line option to turn on CFG dot dump after profile annotation.
@@ -338,7 +345,7 @@ static std::string getBranchCondString(Instruction *TI) {
 
   std::string result;
   raw_string_ostream OS(result);
-  OS << CmpInst::getPredicateName(CI->getPredicate()) << "_";
+  OS << CI->getPredicate() << "_";
   CI->getOperand(0)->getType()->print(OS, true);
 
   Value *RHS = CI->getOperand(1);
@@ -380,7 +387,7 @@ static GlobalVariable *createIRLevelProfileFlagVar(Module &M, bool IsCS) {
   auto IRLevelVersionVariable = new GlobalVariable(
       M, IntTy64, true, GlobalValue::WeakAnyLinkage,
       Constant::getIntegerValue(IntTy64, APInt(64, ProfileVersion)), VarName);
-  IRLevelVersionVariable->setVisibility(GlobalValue::DefaultVisibility);
+  IRLevelVersionVariable->setVisibility(GlobalValue::HiddenVisibility);
   Triple TT(M.getTargetTriple());
   if (TT.supportsCOMDAT()) {
     IRLevelVersionVariable->setLinkage(GlobalValue::ExternalLinkage);
@@ -821,7 +828,7 @@ populateEHOperandBundle(VPCandidateInfo &Cand,
   if (!isa<IntrinsicInst>(OrigCall)) {
     // The instrumentation call should belong to the same funclet as a
     // non-intrinsic call, so just copy the operand bundle, if any exists.
-    Optional<OperandBundleUse> ParentFunclet =
+    std::optional<OperandBundleUse> ParentFunclet =
         OrigCall->getOperandBundle(LLVMContext::OB_funclet);
     if (ParentFunclet)
       OpBundles.emplace_back(OperandBundleDef(*ParentFunclet));
@@ -1846,6 +1853,38 @@ static void collectComdatMembers(
       ComdatMembers.insert(std::make_pair(C, &GA));
 }
 
+// Don't perform PGO instrumeatnion / profile-use.
+static bool skipPGO(const Function &F) {
+  if (F.isDeclaration())
+    return true;
+  if (F.hasFnAttribute(llvm::Attribute::NoProfile))
+    return true;
+  if (F.hasFnAttribute(llvm::Attribute::SkipProfile))
+    return true;
+  if (F.getInstructionCount() < PGOFunctionSizeThreshold)
+    return true;
+
+  // If there are too many critical edges, PGO might cause
+  // compiler time problem. Skip PGO if the number of
+  // critical edges execeed the threshold.
+  unsigned NumCriticalEdges = 0;
+  for (auto &BB : F) {
+    const Instruction *TI = BB.getTerminator();
+    for (unsigned I = 0, E = TI->getNumSuccessors(); I != E; ++I) {
+      if (isCriticalEdge(TI, I))
+        NumCriticalEdges++;
+    }
+  }
+  if (NumCriticalEdges > PGOFunctionCriticalEdgeThreshold) {
+    LLVM_DEBUG(dbgs() << "In func " << F.getName()
+                      << ", NumCriticalEdges=" << NumCriticalEdges
+                      << " exceed the threshold. Skip PGO.\n");
+    return true;
+  }
+
+  return false;
+}
+
 static bool InstrumentAllFunctions(
     Module &M, function_ref<TargetLibraryInfo &(Function &)> LookupTLI,
     function_ref<BranchProbabilityInfo *(Function &)> LookupBPI,
@@ -1858,13 +1897,7 @@ static bool InstrumentAllFunctions(
   collectComdatMembers(M, ComdatMembers);
 
   for (auto &F : M) {
-    if (F.isDeclaration())
-      continue;
-    if (F.hasFnAttribute(llvm::Attribute::NoProfile))
-      continue;
-    if (F.hasFnAttribute(llvm::Attribute::SkipProfile))
-      continue;
-    if (F.getInstructionCount() < PGOFunctionSizeThreshold)
+    if (skipPGO(F))
       continue;
     auto &TLI = LookupTLI(F);
     auto *BPI = LookupBPI(F);
@@ -2027,6 +2060,7 @@ static void verifyFuncBFI(PGOUseFunc &Func, LoopInfo &LI,
 
 static bool annotateAllFunctions(
     Module &M, StringRef ProfileFileName, StringRef ProfileRemappingFileName,
+    vfs::FileSystem &FS,
     function_ref<TargetLibraryInfo &(Function &)> LookupTLI,
     function_ref<BranchProbabilityInfo *(Function &)> LookupBPI,
     function_ref<BlockFrequencyInfo *(Function &)> LookupBFI,
@@ -2034,8 +2068,8 @@ static bool annotateAllFunctions(
   LLVM_DEBUG(dbgs() << "Read in profile counters: ");
   auto &Ctx = M.getContext();
   // Read the counter array from file.
-  auto ReaderOrErr =
-      IndexedInstrProfReader::create(ProfileFileName, ProfileRemappingFileName);
+  auto ReaderOrErr = IndexedInstrProfReader::create(ProfileFileName, FS,
+                                                    ProfileRemappingFileName);
   if (Error E = ReaderOrErr.takeError()) {
     handleAllErrors(std::move(E), [&](const ErrorInfoBase &EI) {
       Ctx.diagnose(
@@ -2092,7 +2126,7 @@ static bool annotateAllFunctions(
   if (PGOInstrumentEntry.getNumOccurrences() > 0)
     InstrumentFuncEntry = PGOInstrumentEntry;
   for (auto &F : M) {
-    if (F.isDeclaration())
+    if (skipPGO(F))
       continue;
     auto &TLI = LookupTLI(F);
     auto *BPI = LookupBPI(F);
@@ -2217,15 +2251,18 @@ static bool annotateAllFunctions(
   return true;
 }
 
-PGOInstrumentationUse::PGOInstrumentationUse(std::string Filename,
-                                             std::string RemappingFilename,
-                                             bool IsCS)
+PGOInstrumentationUse::PGOInstrumentationUse(
+    std::string Filename, std::string RemappingFilename, bool IsCS,
+    IntrusiveRefCntPtr<vfs::FileSystem> VFS)
     : ProfileFileName(std::move(Filename)),
-      ProfileRemappingFileName(std::move(RemappingFilename)), IsCS(IsCS) {
+      ProfileRemappingFileName(std::move(RemappingFilename)), IsCS(IsCS),
+      FS(std::move(VFS)) {
   if (!PGOTestProfileFile.empty())
     ProfileFileName = PGOTestProfileFile;
   if (!PGOTestProfileRemappingFile.empty())
     ProfileRemappingFileName = PGOTestProfileRemappingFile;
+  if (!FS)
+    FS = vfs::getRealFileSystem();
 }
 
 PreservedAnalyses PGOInstrumentationUse::run(Module &M,
@@ -2244,7 +2281,7 @@ PreservedAnalyses PGOInstrumentationUse::run(Module &M,
 
   auto *PSI = &AM.getResult<ProfileSummaryAnalysis>(M);
 
-  if (!annotateAllFunctions(M, ProfileFileName, ProfileRemappingFileName,
+  if (!annotateAllFunctions(M, ProfileFileName, ProfileRemappingFileName, *FS,
                             LookupTLI, LookupBPI, LookupBFI, PSI, IsCS))
     return PreservedAnalyses::all();
 

@@ -17,6 +17,7 @@
 #include "lldb/Host/HostInfo.h"
 
 #include "PythonTestSuite.h"
+#include <optional>
 
 using namespace lldb_private;
 class TestScriptInterpreterPython : public ScriptInterpreterPythonImpl {
@@ -64,6 +65,12 @@ llvm::Expected<bool> lldb_private::LLDBSwigPythonBreakpointCallbackFunction(
 bool lldb_private::LLDBSwigPythonWatchpointCallbackFunction(
     const char *python_function_name, const char *session_dictionary_name,
     const lldb::StackFrameSP &sb_frame, const lldb::WatchpointSP &sb_wp) {
+  return false;
+}
+
+bool lldb_private::LLDBSwigPythonFormatterCallbackFunction(
+    const char *python_function_name, const char *session_dictionary_name,
+    lldb::TypeImplSP type_impl_sp) {
   return false;
 }
 
@@ -132,6 +139,14 @@ void *lldb_private::LLDBSWIGPython_CastPyObjectToSBData(PyObject *data) {
   return nullptr;
 }
 
+void *lldb_private::LLDBSWIGPython_CastPyObjectToSBAttachInfo(PyObject *data) {
+  return nullptr;
+}
+
+void *lldb_private::LLDBSWIGPython_CastPyObjectToSBLaunchInfo(PyObject *data) {
+  return nullptr;
+}
+
 void *lldb_private::LLDBSWIGPython_CastPyObjectToSBError(PyObject *data) {
   return nullptr;
 }
@@ -193,16 +208,9 @@ lldb_private::LLDBSWIGPythonCreateOSPlugin(const char *python_class_name,
   return python::PythonObject();
 }
 
-python::PythonObject lldb_private::LLDBSwigPythonCreateScriptedProcess(
+python::PythonObject lldb_private::LLDBSwigPythonCreateScriptedObject(
     const char *python_class_name, const char *session_dictionary_name,
-    const lldb::TargetSP &target_sp, const StructuredDataImpl &args_impl,
-    std::string &error_string) {
-  return python::PythonObject();
-}
-
-python::PythonObject lldb_private::LLDBSwigPythonCreateScriptedThread(
-    const char *python_class_name, const char *session_dictionary_name,
-    const lldb::ProcessSP &process_sp, const StructuredDataImpl &args_impl,
+    lldb::ExecutionContextRefSP exe_ctx_sp, const StructuredDataImpl &args_impl,
     std::string &error_string) {
   return python::PythonObject();
 }
@@ -223,10 +231,10 @@ bool lldb_private::LLDBSWIGPythonRunScriptKeywordProcess(
   return false;
 }
 
-llvm::Optional<std::string> lldb_private::LLDBSWIGPythonRunScriptKeywordThread(
+std::optional<std::string> lldb_private::LLDBSWIGPythonRunScriptKeywordThread(
     const char *python_function_name, const char *session_dictionary_name,
     lldb::ThreadSP thread) {
-  return llvm::None;
+  return std::nullopt;
 }
 
 bool lldb_private::LLDBSWIGPythonRunScriptKeywordTarget(
@@ -235,10 +243,10 @@ bool lldb_private::LLDBSWIGPythonRunScriptKeywordTarget(
   return false;
 }
 
-llvm::Optional<std::string> lldb_private::LLDBSWIGPythonRunScriptKeywordFrame(
+std::optional<std::string> lldb_private::LLDBSWIGPythonRunScriptKeywordFrame(
     const char *python_function_name, const char *session_dictionary_name,
     lldb::StackFrameSP frame) {
-  return llvm::None;
+  return std::nullopt;
 }
 
 bool lldb_private::LLDBSWIGPythonRunScriptKeywordValue(
@@ -263,4 +271,23 @@ bool lldb_private::LLDBSwigPythonStopHookCallHandleStop(
     void *implementor, lldb::ExecutionContextRefSP exc_ctx_sp,
     lldb::StreamSP stream) {
   return false;
+}
+
+python::PythonObject lldb_private::python::ToSWIGWrapper(const Status &status) {
+  return python::PythonObject();
+}
+
+python::PythonObject
+lldb_private::python::ToSWIGWrapper(lldb::ProcessAttachInfoSP) {
+  return python::PythonObject();
+}
+
+python::PythonObject
+lldb_private::python::ToSWIGWrapper(lldb::ProcessLaunchInfoSP) {
+  return python::PythonObject();
+}
+
+python::PythonObject
+lldb_private::python::ToSWIGWrapper(lldb::DataExtractorSP) {
+  return python::PythonObject();
 }

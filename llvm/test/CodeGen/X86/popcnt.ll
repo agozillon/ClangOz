@@ -806,7 +806,6 @@ define i128 @cnt128_optsize(i128 %x) nounwind readnone optsize {
 ; X86-NOSSE-NEXT:    shrl %ecx
 ; X86-NOSSE-NEXT:    movl $1431655765, %edi # imm = 0x55555555
 ; X86-NOSSE-NEXT:    andl %edi, %ecx
-; X86-NOSSE-NEXT:    movl $1431655765, %edi # imm = 0x55555555
 ; X86-NOSSE-NEXT:    subl %ecx, %ebx
 ; X86-NOSSE-NEXT:    movl $858993459, %ecx # imm = 0x33333333
 ; X86-NOSSE-NEXT:    movl %ebx, %ebp
@@ -1236,7 +1235,6 @@ define i128 @cnt128_pgso(i128 %x) nounwind readnone !prof !14 {
 ; X86-NOSSE-NEXT:    shrl %ecx
 ; X86-NOSSE-NEXT:    movl $1431655765, %edi # imm = 0x55555555
 ; X86-NOSSE-NEXT:    andl %edi, %ecx
-; X86-NOSSE-NEXT:    movl $1431655765, %edi # imm = 0x55555555
 ; X86-NOSSE-NEXT:    subl %ecx, %ebx
 ; X86-NOSSE-NEXT:    movl $858993459, %ecx # imm = 0x33333333
 ; X86-NOSSE-NEXT:    movl %ebx, %ebp

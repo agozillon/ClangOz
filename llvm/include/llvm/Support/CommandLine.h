@@ -20,8 +20,6 @@
 #define LLVM_SUPPORT_COMMANDLINE_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/None.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -317,7 +315,7 @@ public:
   }
 
   bool isInAllSubCommands() const {
-    return llvm::is_contained(Subs, &SubCommand::getAll());
+    return Subs.contains(&SubCommand::getAll());
   }
 
   //-------------------------------------------------------------------------===
@@ -2140,6 +2138,9 @@ class ExpansionContext {
   /// current directory is used instead.
   StringRef CurrentDir;
 
+  /// Directories used for search of config files.
+  ArrayRef<StringRef> SearchDirs;
+
   /// True if names of nested response files must be resolved relative to
   /// including file.
   bool RelativeNames = false;
@@ -2172,10 +2173,26 @@ public:
     return *this;
   }
 
+  ExpansionContext &setSearchDirs(ArrayRef<StringRef> X) {
+    SearchDirs = X;
+    return *this;
+  }
+
   ExpansionContext &setVFS(vfs::FileSystem *X) {
     FS = X;
     return *this;
   }
+
+  /// Looks for the specified configuration file.
+  ///
+  /// \param[in]  FileName Name of the file to search for.
+  /// \param[out] FilePath File absolute path, if it was found.
+  /// \return True if file was found.
+  ///
+  /// If the specified file name contains a directory separator, it is searched
+  /// for by its absolute path. Otherwise looks for file sequentially in
+  /// directories specified by SearchDirs field.
+  bool findConfigFile(StringRef FileName, SmallVectorImpl<char> &FilePath);
 
   /// Reads command line options from the given configuration file.
   ///
@@ -2187,10 +2204,10 @@ public:
   /// commands resolving file names in them relative to the directory where
   /// CfgFilename resides. It also expands "<CFGDIR>" to the base path of the
   /// current config file.
-  bool readConfigFile(StringRef CfgFile, SmallVectorImpl<const char *> &Argv);
+  Error readConfigFile(StringRef CfgFile, SmallVectorImpl<const char *> &Argv);
 
   /// Expands constructs "@file" in the provided array of arguments recursively.
-  bool expandResponseFiles(SmallVectorImpl<const char *> &Argv);
+  Error expandResponseFiles(SmallVectorImpl<const char *> &Argv);
 };
 
 /// A convenience helper which concatenates the options specified by the
@@ -2202,11 +2219,8 @@ bool expandResponseFiles(int Argc, const char *const *Argv, const char *EnvVar,
 
 /// A convenience helper which supports the typical use case of expansion
 /// function call.
-inline bool ExpandResponseFiles(StringSaver &Saver, TokenizerCallback Tokenizer,
-                                SmallVectorImpl<const char *> &Argv) {
-  ExpansionContext ECtx(Saver.getAllocator(), Tokenizer);
-  return ECtx.expandResponseFiles(Argv);
-}
+bool ExpandResponseFiles(StringSaver &Saver, TokenizerCallback Tokenizer,
+                         SmallVectorImpl<const char *> &Argv);
 
 /// A convenience helper which concatenates the options specified by the
 /// environment variable EnvVar and command line options, then expands response

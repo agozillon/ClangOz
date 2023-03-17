@@ -11,6 +11,7 @@
 
 include "mlir/Dialect/SparseTensor/IR/SparseTensorAttrDefs.td"
 include "mlir/Dialect/SparseTensor/IR/SparseTensorBase.td"
+include "mlir/Dialect/SparseTensor/IR/SparseTensorTypes.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
@@ -39,6 +40,10 @@ def SparseTensor_NewOp : SparseTensor_Op<"new", [Pure]>,
     code. The operation is provided as an anchor that materializes a properly
     typed sparse tensor with inital contents into a computation.
 
+    Reading in a symmetric matrix will result in just the lower/upper triangular
+    part of the matrix (so that only relevant information is stored). Proper
+    symmetry support for operating on symmetric matrices is still TBD.
+
     Example:
 
     ```mlir
@@ -48,8 +53,101 @@ def SparseTensor_NewOp : SparseTensor_Op<"new", [Pure]>,
   let assemblyFormat = "$source attr-dict `:` type($source) `to` type($result)";
 }
 
+def SparseTensor_PackOp : SparseTensor_Op<"pack", [Pure]>,
+    Arguments<(ins 1DTensorOf<[AnyType]>:$values,
+                   2DTensorOf<[AnySignlessIntegerOrIndex]>:$coordinates)>,
+    Results<(outs AnySparseTensor: $result)> {
+  let summary = "Returns a sparse tensor from the given (values, coordinates) pair";
+
+  let description = [{
+    Packs the values/coordinates into a COO sparse tensor.  The length
+    of `values` must match the outer-length of `coordinates`, since these
+    two tensors are "zipped" together.  The `coordinates` argument provides
+    level-coords for each value, therefore, the inner-length of `coordinates`
+    must match the level-rank of the returned tensor, and each level-coords
+    must be valid for the level-sizes of the returned tensor.  Note that
+    the returned tensor must be statically shaped because it is impossible
+    to infer the dimension-shape from level-coordinates alone.
+
+    TODO: The returned tensor is allowed (in principle) to have non-identity
+    dimOrdering/higherOrdering mappings.  However, the current implementation
+    does not yet support them.
+
+    - `coordinates : tensor<NSE x lvlRank x iType>`
+      supplies the level-coords for each element in `values`.
+    - `values : tensor<NSE x V>`
+      supplies the corresponding values for each entry in `coordinates`.
+
+    This operation can be used to materialize a sparse tensor from external
+    sources; e.g., when passing two numpy arrays from Python.
+
+    Example:
+
+    ```mlir
+    %values      = arith.constant dense<[ 1.1,   2.2,   3.3 ]> : tensor<3xf64>
+    %coordinates = arith.constant dense<[[0,0], [1,2], [1,3]]> : tensor<3x2xindex>
+    %st = sparse_tensor.pack %values, %coordinates
+        : tensor<3xf64>, tensor<3x2xindex> to tensor<3x4xf64, #COO>
+    // yields COO format |1.1, 0.0, 0.0, 0.0|
+    //     of 3x4 matrix |0.0, 0.0, 2.2, 3.3|
+    //                   |0.0, 0.0, 0.0, 0.0|
+    ```
+  }];
+
+  let assemblyFormat =
+    "$values `,` $coordinates attr-dict"
+    "`:` type($values) `,` type($coordinates) `to` type($result)";
+
+  let hasVerifier = 1;
+}
+
+def SparseTensor_UnpackOp : SparseTensor_Op<"unpack", [Pure]>,
+    Arguments<(ins AnySparseTensor:$tensor)>,
+    Results<(outs 1DTensorOf<[AnyType]>:$values,
+                  2DTensorOf<[AnySignlessIntegerOrIndex]>:$coordinates,
+                  AnySignlessIntegerOrIndex:$nse)> {
+  let summary = "Returns the (values, coordinates) pair unpacked from the input tensor";
+
+  let description = [{
+    The unpack operation is the inverse of `sparse_tensor::pack`.  It returns
+    the values, level-coordinates, and number-of-stored-entries extracted
+    from the sparse tensor.  The source tensor is allowed (in principle)
+    to have non-identity dimOrdering/higherOrdering mappings.  Regardless
+    of the mappings, the returned `coordinates` are always level-coordinates,
+    because this is what we mean by "unpacking" as opposed to other forms
+    of exposing sparse tensors to external clients.  This operation can be
+    used for returning an unpacked MLIR sparse tensor to frontend; e.g.,
+    returning two numpy arrays to Python.
+
+    TODO: the current implementation does not yet support non-identity mappings.
+
+    This operation ends the lifetime of the sparse tensor, and using
+    the tensor after the unpack is undefined behavior.
+
+    Example:
+
+    ```mlir
+    // input COO format |1.1, 0.0, 0.0, 0.0|
+    //    of 3x4 matrix |0.0, 0.0, 2.2, 3.3|
+    //                  |0.0, 0.0, 0.0, 0.0|
+    %values, %coordinates, %nse
+      = sparse_tensor.unpack %st
+      : tensor<3x4xf64, #COO> to tensor<2xf64>, tensor<2x2xindex>, index
+    // %values      = arith.constant dense<[ 1.1,   2.2,   3.3 ]> : tensor<3xf64>
+    // %coordinates = arith.constant dense<[[0,0], [1,2], [1,3]]> : tensor<3x2xindex>
+    // %nse = 3
+    ```
+  }];
+
+  let assemblyFormat =
+    "$tensor attr-dict `:` type($tensor)"
+    "`to` type($values) `,` type($coordinates) `,` type($nse)";
+
+  let hasVerifier = 1;
+}
+
 def SparseTensor_ConvertOp : SparseTensor_Op<"convert",
-  [Pure, SameOperandsAndResultElementType]>,
+  [Pure]>,
     Arguments<(ins AnyTensor:$source)>,
     Results<(outs AnyTensor:$dest)> {
   string summary = "Converts between different tensor types";
@@ -71,6 +169,12 @@ def SparseTensor_ConvertOp : SparseTensor_Op<"convert",
     data structure transformations. Also, conversions from sparse tensor types
     into dense tensor types may be infeasible in terms of storage requirements.
 
+    Trivial dense-to-dense convert will be removed by canonicalization while
+    trivial sparse-to-sparse convert will be removed by the sparse codegen. This
+    is because we use trivial sparse-to-sparse convert to tell bufferization
+    that the sparse codegen will expand the tensor buffer into sparse tensor
+    storage.
+
     Examples:
 
     ```mlir
@@ -90,23 +194,25 @@ def SparseTensor_ConvertOp : SparseTensor_Op<"convert",
   let hasVerifier = 1;
 }
 
-def SparseTensor_ToPointersOp : SparseTensor_Op<"pointers", [Pure]>,
-    Arguments<(ins AnySparseTensor:$tensor, IndexAttr:$dimension)>,
+def SparseTensor_ToPositionsOp : SparseTensor_Op<"positions", [Pure]>,
+    Arguments<(ins AnySparseTensor:$tensor, LevelAttr:$level)>,
     Results<(outs AnyStridedMemRefOfRank<1>:$result)> {
-  let summary = "Extracts pointers array at given dimension from a tensor";
+  let summary = "Extracts the `level`-th positions array of the `tensor`";
   let description = [{
-    Returns the pointers array of the sparse storage format at the
-    given dimension for the given sparse tensor. This is similar to the
-    `bufferization.to_memref` operation in the sense that it provides a bridge
-    between a tensor world view and a bufferized world view. Unlike the
-    `bufferization.to_memref` operation, however, this sparse operation actually
-    lowers into code that extracts the pointers array from the sparse storage
-    scheme (either by calling a support library or through direct code).
+    Returns the positions array of the tensor's storage at the given
+    level.  This is similar to the `bufferization.to_memref` operation
+    in the sense that it provides a bridge between a tensor world view
+    and a bufferized world view.  Unlike the `bufferization.to_memref`
+    operation, however, this sparse operation actually lowers into code
+    that extracts the positions array from the sparse storage itself
+    (either by calling a support library or through direct code).
+
+    Writing into the result of this operation is undefined behavior.
 
     Example:
 
     ```mlir
-    %1 = sparse_tensor.pointers %0 { dimension = 1 : index }
+    %1 = sparse_tensor.positions %0 { level = 1 : index }
        : tensor<64x64xf64, #CSR> to memref<?xindex>
     ```
   }];
@@ -114,24 +220,57 @@ def SparseTensor_ToPointersOp : SparseTensor_Op<"pointers", [Pure]>,
   let hasVerifier = 1;
 }
 
-def SparseTensor_ToIndicesOp : SparseTensor_Op<"indices", [Pure]>,
-    Arguments<(ins AnySparseTensor:$tensor, IndexAttr:$dimension)>,
+def SparseTensor_ToCoordinatesOp : SparseTensor_Op<"coordinates", [Pure]>,
+    Arguments<(ins AnySparseTensor:$tensor, LevelAttr:$level)>,
     Results<(outs AnyStridedMemRefOfRank<1>:$result)> {
-  let summary = "Extracts indices array at given dimension from a tensor";
+  let summary = "Extracts the `level`-th coordinates array of the `tensor`";
   let description = [{
-    Returns the indices array of the sparse storage format at the
-    given dimension for the given sparse tensor. This is similar to the
-    `bufferization.to_memref` operation in the sense that it provides a bridge
-    between a tensor world view and a bufferized world view. Unlike the
-    `bufferization.to_memref` operation, however, this sparse operation actually
-    lowers into code that extracts the indices array from the sparse storage
-    scheme (either by calling a support library or through direct code).
+    Returns the coordinates array of the tensor's storage at the given
+    level.  This is similar to the `bufferization.to_memref` operation
+    in the sense that it provides a bridge between a tensor world view
+    and a bufferized world view.  Unlike the `bufferization.to_memref`
+    operation, however, this sparse operation actually lowers into code
+    that extracts the coordinates array from the sparse storage itself
+    (either by calling a support library or through direct code).
+
+    Writing into the result of this operation is undefined behavior.
 
     Example:
 
     ```mlir
-    %1 = sparse_tensor.indices %0 { dimension = 1 : index }
+    %1 = sparse_tensor.coordinates %0 { level = 1 : index }
        : tensor<64x64xf64, #CSR> to memref<?xindex>
+    ```
+  }];
+  let assemblyFormat = "$tensor attr-dict `:` type($tensor) `to` type($result)";
+  let hasVerifier = 1;
+}
+
+def SparseTensor_ToCoordinatesBufferOp : SparseTensor_Op<"coordinates_buffer", [Pure]>,
+    Arguments<(ins AnySparseTensor:$tensor)>,
+    Results<(outs AnyStridedMemRefOfRank<1>:$result)> {
+  let summary = "Extracts the linear coordinates array from a tensor";
+  let description = [{
+    Returns the linear coordinates array for a sparse tensor with
+    a trailing COO region with at least two levels.  It is an error
+    if the tensor doesn't contain such a COO region.  This is similar
+    to the `bufferization.to_memref` operation in the sense that it
+    provides a bridge between a tensor world view and a bufferized
+    world view.  Unlike the `bufferization.to_memref` operation,
+    however, this operation actually lowers into code that extracts
+    the linear coordinates array from the sparse storage scheme that
+    stores the coordinates for the COO region as an array of structures.
+    For example, a 2D COO sparse tensor with two non-zero elements at
+    coordinates (1, 3) and (4, 6) are stored in a linear buffer as
+    (1, 4, 3, 6) instead of two buffer as (1, 4) and (3, 6).
+
+    Writing into the result of this operation is undefined behavior.
+
+    Example:
+
+    ```mlir
+    %1 = sparse_tensor.coordinates_buffer %0
+       : tensor<64x64xf64, #COO> to memref<?xindex>
     ```
   }];
   let assemblyFormat = "$tensor attr-dict `:` type($tensor) `to` type($result)";
@@ -151,6 +290,8 @@ def SparseTensor_ToValuesOp : SparseTensor_Op<"values", [Pure]>,
     lowers into code that extracts the values array from the sparse storage
     scheme (either by calling a support library or through direct code).
 
+    Writing into the result of this operation is undefined behavior.
+
     Example:
 
     ```mlir
@@ -161,17 +302,179 @@ def SparseTensor_ToValuesOp : SparseTensor_Op<"values", [Pure]>,
   let hasVerifier = 1;
 }
 
+def SparseTensor_ToSliceOffsetOp : SparseTensor_Op<"slice.offset", [Pure]>,
+    Arguments<(ins AnySparseTensorSlice:$slice, IndexAttr:$dim)>,
+    Results<(outs Index:$offset)> {
+  let summary = "Extracts the offset of the sparse tensor slice at the given dimension";
+  let description = [{
+    Extracts the offset of the sparse tensor slice at the given dimension.
+
+    Currently, sparse tensor slices are still a work in progress, and only
+    works when runtime library is disabled (i.e., running sparse compiler
+    with `enable-runtime-library=false`).
+
+    Example:
+
+    ```mlir
+    %0 = tensor.extract_slice %s[%v1, %v2][64, 64][1, 1] : tensor<128x128xf64, #DCSR>
+                                                        to tensor<64x64xf64, #Slice>
+
+    %1 = sparse_tensor.slice.offset %0 at 0 : tensor<64x64xf64, #Slice>
+    %2 = sparse_tensor.slice.offset %0 at 1 : tensor<64x64xf64, #Slice>
+    // %1 = %v1
+    // %2 = %v2
+    ```
+  }];
+  let assemblyFormat = "$slice `at` $dim attr-dict `:` type($slice)";
+  let hasVerifier = 1;
+}
+
+def SparseTensor_ToSliceStrideOp : SparseTensor_Op<"slice.stride", [Pure]>,
+    Arguments<(ins AnySparseTensorSlice:$slice, IndexAttr:$dim)>,
+    Results<(outs Index:$stride)> {
+  let summary = "Extracts the stride of the sparse tensor slice at the given dimension";
+  let description = [{
+    Extracts the stride of the sparse tensor slice at the given dimension.
+
+    Currently, sparse tensor slices are still a work in progress, and only
+    works when runtime library is disabled (i.e., running sparse compiler
+    with `enable-runtime-library=false`).
+
+    Example:
+
+    ```mlir
+    %0 = tensor.extract_slice %s[%v1, %v2][64, 64][%s1, %s2] : tensor<128x128xf64, #DCSR>
+                                                            to tensor<64x64xf64, #Slice>
+
+    %1 = sparse_tensor.slice.stride %0 at 0 : tensor<64x64xf64, #Slice>
+    %2 = sparse_tensor.slice.stride %0 at 1 : tensor<64x64xf64, #Slice>
+    // %1 = %s1
+    // %2 = %s2
+
+    ```
+  }];
+  let assemblyFormat = "$slice `at` $dim attr-dict `:` type($slice)";
+  let hasVerifier = 1;
+}
+
+def SparseTensor_StorageSpecifierInitOp : SparseTensor_Op<"storage_specifier.init", [Pure]>,
+    Arguments<(ins Optional<SparseTensorStorageSpecifier>:$source)>,
+    Results<(outs SparseTensorStorageSpecifier:$result)> {
+  let summary = "";
+  let description = [{
+    Returns an initial storage specifier value.  A storage specifier
+    value holds the level-sizes, position arrays, coordinate arrays,
+    and the value array.
+    If this is a specifier for slices, it also holds the extra strides/offsets
+    for each tensor dimension.
+
+    TODO: The sparse tensor slice support is currently in a unstable state, and
+    is subject to change in the future.
+
+    Example:
+
+    ```mlir
+    #CSR = #sparse_tensor.encoding<{ dimLevelType = [ "dense", "compressed" ]}>
+    #CSR_SLICE = #sparse_tensor.encoding<{
+      dimLevelType = [ "dense", "compressed" ],
+      slice = [ (1, 4, 1), (1, 4, 2) ]
+    }>
+
+    %0 = sparse_tensor.storage_specifier.init :  !sparse_tensor.storage_specifier<#CSR>
+    %1 = sparse_tensor.storage_specifier.init with %src
+         : !sparse_tensor.storage_specifier<#CSR> to
+           !sparse_tensor.storage_specifier<#CSR_SLICE>
+    ```
+  }];
+
+  let builders = [
+    OpBuilder<(ins "Type":$result),
+    [{
+      build($_builder, $_state, result, Value());
+    }]>
+  ];
+
+  let assemblyFormat = "attr-dict (`with` $source^)? `:` (`from` qualified(type($source))^ `to`)?"
+                                                        " qualified(type($result))";
+}
+
+def SparseTensor_GetStorageSpecifierOp : SparseTensor_Op<"storage_specifier.get", [Pure]>,
+    Arguments<(ins SparseTensorStorageSpecifier:$specifier,
+                   SparseTensorStorageSpecifierKindAttr:$specifierKind,
+                   OptionalAttr<LevelAttr>:$level)>,
+    Results<(outs Index:$result)> {
+  let summary = "";
+  let description = [{
+    Returns the requested field of the given storage_specifier.
+
+    Example of querying the size of the coordinates array for level 0:
+
+    ```mlir
+    %0 = sparse_tensor.storage_specifier.get %arg0 crd_mem_sz at 0
+         : !sparse_tensor.storage_specifier<#COO>
+    ```
+  }];
+
+  let assemblyFormat = "$specifier $specifierKind (`at` $level^)? attr-dict"
+                       "`:` qualified(type($specifier))";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SparseTensor_SetStorageSpecifierOp : SparseTensor_Op<"storage_specifier.set",
+    [Pure, AllTypesMatch<["result", "specifier"]>]>,
+    Arguments<(ins SparseTensorStorageSpecifier:$specifier,
+                   SparseTensorStorageSpecifierKindAttr:$specifierKind,
+                   OptionalAttr<LevelAttr>:$level,
+                   Index:$value)>,
+    Results<(outs SparseTensorStorageSpecifier:$result)> {
+  let summary = "";
+  let description = [{
+    Set the field of the storage specifier to the given input value. Returns
+    the updated storage_specifier as a new SSA value.
+
+    Example of updating the sizes of the coordinates array for level 0:
+
+    ```mlir
+    %0 = sparse_tensor.storage_specifier.set %arg0 crd_mem_sz at 0 with %new_sz
+       : !sparse_tensor.storage_specifier<#COO>
+    ```
+  }];
+  let assemblyFormat = "$specifier $specifierKind (`at` $level^)? `with` $value"
+                       " attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SparseTensor_NumberOfEntriesOp : SparseTensor_Op<"number_of_entries", [Pure]>,
+    Arguments<(ins AnySparseTensor:$tensor)>,
+    Results<(outs Index:$result)> {
+  let summary = "Returns the number of entries that are stored in the tensor.";
+  let description = [{
+    Returns the number of entries that are stored in the given sparse tensor.
+    Note that this is typically the number of nonzero elements in the tensor,
+    but since explicit zeros may appear in the storage formats, the more
+    accurate nomenclature is used.
+
+    Example:
+
+    ```mlir
+    %noe = sparse_tensor.number_of_entries %tensor : tensor<64x64xf64, #CSR>
+    ```
+  }];
+  let assemblyFormat = "$tensor attr-dict `:` type($tensor)";
+}
+
 def SparseTensor_ConcatenateOp : SparseTensor_Op<"concatenate", [Pure]>,
-    Arguments<(ins Variadic<AnyRankedTensor>:$inputs, IndexAttr:$dimension)>,
+    Arguments<(ins Variadic<AnyRankedTensor>:$inputs, DimensionAttr:$dimension)>,
     Results<(outs AnyRankedTensor:$result)> {
 
   let summary = "Concatenates a list of tensors into a single tensor.";
   let description = [{
-     Concatenates a list input tensors and the output tensor with the same rank.
-     The concatenation happens on the specified `dimension` (0<= dimension < rank).
-     The resulting `dimension` size is the sum of all the input dimension sizes,
-     while all the other dimensions should have the same size in the input and
-     output tensors.
+     Concatenates a list input tensors and the output tensor with the same
+     dimension-rank.  The concatenation happens on the specified `dimension`
+     (0 <= dimension < dimRank).  The resulting `dimension` size is the
+     sum of all the input sizes for that dimension, while all the other
+     dimensions should have the same size in the input and output tensors.
 
      Only statically-sized input tensors are accepted, while the output tensor
      can be dynamically-sized.
@@ -190,90 +493,119 @@ def SparseTensor_ConcatenateOp : SparseTensor_Op<"concatenate", [Pure]>,
 
 //===----------------------------------------------------------------------===//
 // Sparse Tensor Management Operations. These operations are "impure" in the
-// sense that they do not properly operate on SSA values. Instead, the behavior
-// is solely defined by side-effects. These operations provide a bridge between
-// "sparsification" on one hand and a support library or actual code generation
-// on the other hand. The semantics of these operations may be refined over time
-// as our sparse abstractions evolve.
+// sense that some behavior is defined by side-effects. These operations provide
+// a bridge between "sparsification" on one hand and a support library or actual
+// code generation on the other hand. The semantics of these operations may be
+// refined over time as our sparse abstractions evolve.
 //===----------------------------------------------------------------------===//
 
 def SparseTensor_InsertOp : SparseTensor_Op<"insert",
     [TypesMatchWith<"value type matches element type of tensor",
                     "tensor", "value",
-                    "$_self.cast<ShapedType>().getElementType()">]>,
+                    "$_self.cast<ShapedType>().getElementType()">,
+     AllTypesMatch<["tensor", "result"]>]>,
     Arguments<(ins AnyType:$value,
                AnySparseTensor:$tensor,
-               Variadic<Index>:$indices)> {
-  string summary = "Inserts a value into given sparse tensor";
+               Variadic<Index>:$lvlCoords)>,
+    Results<(outs AnySparseTensor:$result)> {
+  string summary = "Inserts a value into the sparse tensor";
   string description = [{
-    Inserts the given value at given indices into the underlying
-    sparse storage format of the given tensor with the given indices.
-    The arity of indices must match the rank of the tensor. This
-    operation can only be applied when a tensor materializes unintialized
-    with a `bufferization.alloc_tensor` operation and the final tensor
-    is constructed with a `load` operation that has the `hasInserts`
-    attribute set.
+    Inserts the value into the underlying storage of the tensor at the
+    given level-coordinates.  The arity of `lvlCoords` must match the
+    level-rank of the tensor.  This operation can only be applied when
+    the tensor materializes unintialized from a `bufferization.alloc_tensor`
+    operation and the final tensor is constructed with a `load` operation
+    which has the `hasInserts` attribute set.
 
-    Properties in the sparse tensor type fully describe what kind
-    of insertion order is allowed. When all dimensions have "unique"
+    The level-properties of the sparse tensor type fully describe what
+    kind of insertion order is allowed.  When all levels have "unique"
     and "ordered" properties, for example, insertions should occur in
-    strict lexicographical index order. Other properties define
-    different insertion regimens. Inserting in a way contrary to
-    these properties results in undefined behavior.
+    strict lexicographical level-coordinate order.  Other properties
+    define different insertion regimens.  Inserting in a way contrary
+    to these properties results in undefined behavior.
 
-    Note that this operation is "impure" in the sense that its behavior
-    is solely defined by side-effects and not SSA values. The semantics
-    may be refined over time as our sparse abstractions evolve. In
-    particular, this operation is scheduled to be unified with the
-    dense counterpart `tensor.insert` that has proper SSA semantics.
+    Note that this operation is "impure" in the sense that even though
+    the result is modeled through an SSA value, the insertion is eventually
+    done "in place", and referencing the old SSA value is undefined behavior.
+    This operation is scheduled to be unified with the dense counterpart
+    `tensor.insert` that has pure SSA semantics.
 
     Example:
 
     ```mlir
-    sparse_tensor.insert %val into %tensor[%i,%j] : tensor<1024x1024xf64, #CSR>
+    %result = sparse_tensor.insert %val into %tensor[%i,%j] : tensor<1024x1024xf64, #CSR>
     ```
   }];
-  let assemblyFormat = "$value `into` $tensor `[` $indices `]` attr-dict`:` type($tensor)";
+  let assemblyFormat = "$value `into` $tensor `[` $lvlCoords `]` attr-dict"
+                       "`:` type($tensor)";
   let hasVerifier = 1;
 }
 
-def SparseTensor_PushBackOp : SparseTensor_Op<"push_back", []>,
-    Arguments<(ins StridedMemRefRankOf<[Index], [1]>:$bufferSizes,
+def SparseTensor_PushBackOp : SparseTensor_Op<"push_back",
+    [TypesMatchWith<"value type matches element type of inBuffer",
+                    "inBuffer", "value",
+                    "$_self.cast<ShapedType>().getElementType()">,
+     AllTypesMatch<["inBuffer", "outBuffer"]>]>,
+    Arguments<(ins Index:$curSize,
                StridedMemRefRankOf<[AnyType], [1]>:$inBuffer,
-               AnyType:$value, IndexAttr:$idx, UnitAttr:$inbounds)>,
-    Results<(outs StridedMemRefRankOf<[AnyType], [1]>:$outBuffer)>  {
+               AnyType:$value, Optional<Index>:$n,
+               UnitAttr:$inbounds)>,
+    Results<(outs StridedMemRefRankOf<[AnyType], [1]>:$outBuffer,
+             Index:$newSize)>  {
   string summary = "Pushes a value to the back of a given buffer";
   string description = [{
-    Push `value` to the end of the given sparse tensor storage buffer
-    `inBuffer` and update the size of the buffer in `bufferSizes[idx]`. The
-    capacity of the buffer is recorded in the memref type of `inBuffer `. If the
-    current buffer is full, then `inBuffer.realloc` is called before pushing the
-    data to the buffer. This is similar to std::vector push_back.
+    Pushes `value` to the end of the given sparse tensor storage buffer
+    `inBuffer` as indicated by the value of `curSize` and returns the
+    new size of the buffer in `newSize` (`newSize = curSize + n`).
+    The capacity of the buffer is recorded in the memref type of `inBuffer`.
+    If the current buffer is full, then `inBuffer.realloc` is called before
+    pushing the data to the buffer. This is similar to std::vector push_back.
+
+    The optional input `n` specifies the number of times to repeately push
+    the value to the back of the tensor. When `n` is a compile-time constant,
+    its value can't be less than 1. If `n` is a runtime value that is less
+    than 1, the behavior is undefined. Although using input `n` is semantically
+    equivalent to calling push_back n times, it gives compiler more chances to
+    to optimize the memory reallocation and the filling of the memory with the
+    same value.
 
     The `inbounds` attribute tells the compiler that the insertion won't go
     beyond the current storage buffer. This allows the compiler to not generate
     the code for capacity check and reallocation. The typical usage will be for
     "dynamic" sparse tensors for which a capacity can be set beforehand.
 
-    The operation returns an SSA value for the memref. Referencing the memref
+    Note that this operation is "impure" in the sense that even though
+    the result is modeled through an SSA value, referencing the memref
     through the old SSA value after this operation is undefined behavior.
 
     Example:
 
     ```mlir
-    %r = sparse_tensor.push_back %bufferSizes, %buffer, %val {idx = 0 : index}
-      : memref<?xindex>, memref<?xf64>, f64 -> memref<?xf64>
+    %buf, %newSize = sparse_tensor.push_back %curSize, %buffer, %val
+       : index, memref<?xf64>, f64
     ```
 
     ```mlir
-    %r = sparse_tensor.push_back inbounds %bufferSizes, %buffer, %val
-      {idx = 0 : index} : memref<?xindex>, memref<?xf64>, f64 -> memref<?xf64>
+    %buf, %newSize = sparse_tensor.push_back inbounds %curSize, %buffer, %val
+       : xindex, memref<?xf64>, f64
+    ```
+
+    ```mlir
+    %buf, %newSize = sparse_tensor.push_back inbounds %curSize, %buffer, %val, %n
+       : xindex, memref<?xf64>, f64
     ```
   }];
-  let assemblyFormat = "(`inbounds` $inbounds^)? $bufferSizes `,` $inBuffer"
-                       " `,` $value attr-dict `:` type($bufferSizes) `,`"
-                       " type($inBuffer) `,` type($value) `to`"
-                       " type($outBuffer)";
+  let assemblyFormat = "(`inbounds` $inbounds^)? $curSize `,` $inBuffer"
+                       " `,` $value (`,` $n^ )?  attr-dict `:`"
+                       " type($curSize) `,` type($inBuffer) `,`"
+                       " type($value) (`,` type($n)^ )?";
+
+  let builders = [
+    // Build an op (reusing type from curSize and inBuffer) without input `n`
+    OpBuilder<(ins "Value":$curSize, "Value":$inBuffer, "Value":$value)>
+  ];
+
+  let hasVerifier = 1;
 }
 
 def SparseTensor_ExpandOp : SparseTensor_Op<"expand", []>,
@@ -284,7 +616,7 @@ def SparseTensor_ExpandOp : SparseTensor_Op<"expand", []>,
                   Index:$count)> {
   string summary = "Expands an access pattern for insertion";
   string description = [{
-    Performs an access pattern expansion for the innermost dimensions of the
+    Performs an access pattern expansion for the innermost levels of the
     given tensor. This operation is useful to implement kernels in which a
     sparse tensor appears as output. This technique is known under several
     different names and using several alternative implementations,
@@ -292,19 +624,21 @@ def SparseTensor_ExpandOp : SparseTensor_Op<"expand", []>,
     [Pissanetzky84], in phase scan [Duff90], access pattern expansion [Bik96],
     and workspaces [Kjolstad19].
 
-    The values and filled array have sizes that suffice for a *dense* innermost
-    dimension (e.g. a full row for matrices). The added array and count are used
-    to store new indices when a false value is encountered in the filled array.
-    All arrays should be allocated before the loop (possibly even shared between
-    loops in a future optimization) so that their *dense* initialization can be
-    amortized over many iterations. Setting and resetting the dense arrays in
-    the loop nest itself is kept *sparse* by only iterating over set elements
-    through an indirection using the added array, so that the operations are
-    kept proportional to the number of nonzeros.
+    The `values` and `filled` arrays must have lengths equal to the
+    level-size of the innermost level (i.e., as if the innermost level
+    were *dense*).  The `added` array and `count` are used to store new
+    level-coordinates when a false value is encountered in the `filled`
+    array.  All arrays should be allocated before the loop (possibly even
+    shared between loops in a future optimization) so that their *dense*
+    initialization can be amortized over many iterations.  Setting and
+    resetting the dense arrays in the loop nest itself is kept *sparse*
+    by only iterating over set elements through an indirection using
+    the added array, so that the operations are kept proportional to
+    the number of nonzeros.
 
-    Note that this operation is "impure" in the sense that its behavior
-    is solely defined by side-effects and not SSA values. The semantics
-    may be refined over time as our sparse abstractions evolve.
+    Note that this operation is "impure" in the sense that even though the
+    results are modeled through SSA values, the operation relies on a proper
+    side-effecting context that sets and resets the expanded arrays.
 
     Example:
 
@@ -317,39 +651,42 @@ def SparseTensor_ExpandOp : SparseTensor_Op<"expand", []>,
                        " `,` type($filled) `,` type($added)";
 }
 
-def SparseTensor_CompressOp : SparseTensor_Op<"compress", []>,
+def SparseTensor_CompressOp : SparseTensor_Op<"compress",
+    [AllTypesMatch<["tensor", "result"]>]>,
     Arguments<(ins AnyStridedMemRefOfRank<1>:$values,
                    StridedMemRefRankOf<[I1],[1]>:$filled,
                    StridedMemRefRankOf<[Index],[1]>:$added,
                    Index:$count,
                    AnySparseTensor:$tensor,
-		   Variadic<Index>:$indices)> {
+                   Variadic<Index>:$lvlCoords)>,
+    Results<(outs AnySparseTensor:$result)> {
   string summary = "Compressed an access pattern for insertion";
   string description = [{
     Finishes a single access pattern expansion by moving inserted elements
     into the sparse storage scheme of the given tensor with the given
-    indices. The arity of indices is one less than the rank of the tensor,
-    with the remainder innermost indices defined through the added array.
-    The values and filled array are reset in a *sparse* fashion by only
-    iterating over set elements through an indirection using the added
-    array, so that the operations are kept proportional to the number of
-    nonzeros. See the `sparse_tensor.expand` operation for more details.
+    level-coordinates.  The arity of `lvlCoords` is one less than the
+    level-rank of the tensor, with the coordinate of the innermost
+    level defined through the `added` array.  The `values` and `filled`
+    arrays are reset in a *sparse* fashion by only iterating over set
+    elements through an indirection using the `added` array, so that
+    the operations are kept proportional to the number of nonzeros.
+    See the `sparse_tensor.expand` operation for more details.
 
-    Note that this operation is "impure" in the sense that its behavior
-    is solely defined by side-effects and not SSA values. The semantics
-    may be refined over time as our sparse abstractions evolve.
+    Note that this operation is "impure" in the sense that even though
+    the result is modeled through an SSA value, the insertion is eventually
+    done "in place", and referencing the old SSA value is undefined behavior.
 
     Example:
 
     ```mlir
-    sparse_tensor.compress %values, %filled, %added, %count into %tensor[%i]
+    %result = sparse_tensor.compress %values, %filled, %added, %count into %tensor[%i]
       : memref<?xf64>, memref<?xi1>, memref<?xindex>, tensor<4x4xf64, #CSR>
     ```
   }];
   let assemblyFormat = "$values `,` $filled `,` $added `,` $count"
-                       " `into` $tensor `[` $indices `]` attr-dict"
-		       " `:` type($values) `,` type($filled) `,` type($added)"
-		       " `,` type($tensor)";
+                       " `into` $tensor `[` $lvlCoords `]` attr-dict"
+                       " `:` type($values) `,` type($filled) `,` type($added)"
+                       " `,` type($tensor)";
   let hasVerifier = 1;
 }
 
@@ -372,14 +709,16 @@ def SparseTensor_LoadOp : SparseTensor_Op<"load", [SameOperandsAndResultType]>,
     sparse storage format needs to be finalized. Otherwise, the operation
     simply folds away.
 
-    Note that this operation is "impure" in the sense that its behavior
-    is solely defined by side-effects and not SSA values. The semantics
-    may be refined over time as our sparse abstractions evolve.
+    Note that this operation is "impure" in the sense that even though
+    the result is modeled through an SSA value, the operation relies on
+    a proper context of materializing and inserting the tensor value.
 
-    Example:
+    Examples:
 
     ```mlir
-    %1 = sparse_tensor.load %0 : tensor<8xf64, #SV>
+    %result = sparse_tensor.load %tensor : tensor<8xf64, #SV>
+
+    %1 = sparse_tensor.load %0 hasInserts : tensor<16x32xf32, #CSR>
     ```
   }];
   let assemblyFormat = "$tensor (`hasInserts` $hasInserts^)? attr-dict `:` type($tensor)";
@@ -397,8 +736,7 @@ def SparseTensor_OutOp : SparseTensor_Op<"out", []>,
     a buffer defined by a pointer.
 
     Note that this operation is "impure" in the sense that its behavior
-    is solely defined by side-effects and not SSA values. The semantics
-    may be refined over time as our sparse abstractions evolve.
+    is solely defined by side-effects and not SSA values.
 
     Example:
 
@@ -413,10 +751,15 @@ def SparseTensor_SortOp : SparseTensor_Op<"sort", [AttrSizedOperandSegments]>,
     // TODO: May want to extend tablegen with
     // class NonemptyVariadic<Type type> : Variadic<type> { let minSize = 1; }
     // and then use NonemptyVariadic<...>:$xs here.
+    //
+    // TODO: Currently tablegen doesn't support the assembly syntax when
+    // `algorithm` is an optional enum attribute. We may want to use an optional
+    // enum attribute when this is fixed in tablegen.
+    //
     Arguments<(ins Index:$n,
                Variadic<StridedMemRefRankOf<[AnyInteger, Index], [1]>>:$xs,
                Variadic<StridedMemRefRankOf<[AnyType], [1]>>:$ys,
-               UnitAttr:$stable)>  {
+               SparseTensorSortKindAttr:$algorithm)>  {
   string summary = "Sorts the arrays in xs and ys lexicographically on the "
                    "integral values found in the xs list";
   string description = [{
@@ -438,28 +781,68 @@ def SparseTensor_SortOp : SparseTensor_Op<"sort", [AttrSizedOperandSegments]>,
     is undefined if this condition is not met. The operator requires at least
     one buffer in `xs` while `ys` can be empty.
 
-    The `stable` attribute indicates whether a stable sorting algorithm should
-    be used to implement the operator.
+    The enum attribute `algorithm` indicates the sorting algorithm used to
+    implement the operator: hybrid_quick_sort, insertion_sort_stable,
+    quick_sort, or heap_sort.
 
     Note that this operation is "impure" in the sense that its behavior is
-    solely defined by side-effects and not SSA values. The semantics may be
-    refined over time as our sparse abstractions evolve.
+    solely defined by side-effects and not SSA values.
 
     Example:
 
     ```mlir
-    sparse_tensor.sort %n, %x1, %x2 jointly y1, %y2
+    sparse_tensor.sort insertion_sort_stable %n, %x1, %x2 jointly y1, %y2
       : memref<?xindex>, memref<?xindex> jointly memref<?xindex>, memref<?xf32>
     ```
 
     ```mlir
-    sparse_tensor.sort stable %n, %x1, %x2 jointly y1, %y2
+    sparse_tensor.sort hybrid_quick_sort %n, %x1, %x2 jointly y1, %y2
+      { alg=1 : index}
       : memref<?xindex>, memref<?xindex> jointly memref<?xindex>, memref<?xf32>
     ```
   }];
-  let assemblyFormat = "(`stable` $stable^)? $n"
-                       "`,`$xs (`jointly` $ys^)? attr-dict"
+  let assemblyFormat = "$algorithm $n `,` $xs (`jointly` $ys^)? attr-dict"
                        "`:` type($xs) (`jointly` type($ys)^)?";
+  let hasVerifier = 1;
+}
+
+def SparseTensor_SortCooOp : SparseTensor_Op<"sort_coo">,
+    Arguments<(ins Index:$n, StridedMemRefRankOf<[AnyInteger, Index], [1]>:$xy,
+               Variadic<StridedMemRefRankOf<[AnyType], [1]>>:$ys,
+               OptionalAttr<IndexAttr>:$nx, OptionalAttr<IndexAttr>:$ny,
+               SparseTensorSortKindAttr:$algorithm)>  {
+  let summary = "Sorts the arrays in xs and ys lexicographically on the "
+                "integral values found in the xs list";
+  let description = [{
+    Sparse_tensor.sort_coo is similar to sparse_tensor.sort, except that all the
+    `xs` values and some `ys` values are put in the linear buffer `xy`. The
+    optional index attribute `nx` provides the number of `xs` values in `xy`.
+    When `nx` is not explicitly specified, its value is 1. The optional index
+    attribute `ny` provides the number of `ys` values in `xy`. When `ny` is not
+    explicitly specified, its value is 0. This instruction supports a more
+    efficient way to store the COO definition in sparse tensor type.
+
+    The buffer xy should have a dimension not less than n * (nx + ny) while the
+    buffers in `ys` should have a dimension not less than `n`. The behavior of
+    the operator is undefined if this condition is not met.
+
+    Example:
+
+    ```mlir
+    sparse_tensor.sort_coo insertion_sort_stable %n, %x { nx = 2 : index}
+      : memref<?xindex>
+    ```
+
+    ```mlir
+    sparse_tensor.sort hybrid_quick_sort %n, %xy jointly %y1
+      { nx = 2 : index, ny = 2 : index}
+      : memref<?xi64> jointly memref<?xf32>
+    ```
+  }];
+
+  let assemblyFormat = "$algorithm $n"
+                       "`,`$xy (`jointly` $ys^)? attr-dict"
+                       "`:` type($xy) (`jointly` type($ys)^)?";
   let hasVerifier = 1;
 }
 
@@ -802,36 +1185,108 @@ def SparseTensor_YieldOp : SparseTensor_Op<"yield", [Pure, Terminator]>,
 
 def SparseTensor_ForeachOp : SparseTensor_Op<"foreach",
     [SingleBlockImplicitTerminator<"YieldOp">]>,
-    Arguments<(ins AnySparseTensor:$tensor)>{
-  let summary = "Iterates over non-zero elements in a sparse tensor";
+     Arguments<(ins AnyTensor:$tensor,
+                    Variadic<AnyType>:$initArgs,
+                    OptionalAttr<AffineMapAttr>:$order)>,
+     Results<(outs Variadic<AnyType>:$results)> {
+  let summary = "Iterates over elements in a tensor";
   let description = [{
-     Iterates over every non-zero element in the given sparse tensor and executes
-     the block.
+     Iterates over stored elements in a tensor (which are typically, but not always,
+     non-zero for sparse tensors) and executes the block.
 
-     For a input sparse tensor with rank n, the block must take n + 1 arguments. The
-     first n arguments must be Index type, together indicating the current coordinates
-     of the element being visited. The last argument must have the same type as the
-     sparse tensor's element type, representing the actual value loaded from the input
-     tensor at the given coordinates.
+     `tensor`: the input tensor to iterate over.
+     `initArgs`: the initial loop argument to carry and update during each iteration.
+     `order`: an optional permutation affine map that specifies the order in which
+     the dimensions are visited (e.g., row first or column first). This is only
+     applicable when the input tensor is a non-annotated dense tensor.
 
-     Example:
+     For an input tensor with dim-rank `n`, the block must take `n + 1`
+     arguments (plus additional loop-carried variables as described below).
+     The first `n` arguments provide the dimension-coordinates of the element
+     being visited, and must all have `index` type.  The `(n+1)`-th argument
+     provides the element's value, and must have the tensor's element type.
 
+     `sparse_tensor.foreach` can also operate on loop-carried variables and returns
+     the final values after loop termination. The initial values of the variables are
+     passed as additional SSA operands to the "sparse_tensor.foreach" following the n + 1
+     SSA values mentioned above (n coordinates and 1 value).
+
+     The region must terminate with a "sparse_tensor.yield" that passes the current
+     values of all loop-carried variables to the next iteration, or to the
+     result, if at the last iteration. The number and static types of loop-carried
+     variables may not change with iterations.
+
+     For example:
      ```mlir
-     sparse_tensor.foreach in %0 : tensor<?x?xf64, #DCSR> do {
-      ^bb0(%arg1: index, %arg2: index, %arg3: f64):
-        do something...
+     %c0 = arith.constant 0 : i32
+     %ret = sparse_tensor.foreach in %0 init(%c0): tensor<?x?xi32, #DCSR>, i32 -> i32 do {
+      ^bb0(%arg1: index, %arg2: index, %arg3: i32, %iter: i32):
+        %sum = arith.add %iter, %arg3
+        sparse_tensor.yield %sum
      }
+     ```
+
+     It is important to note that the generated loop iterates over
+     elements in their storage order.  However, regardless of the
+     storage scheme used by the tensor, the block is always given
+     the dimension-coordinates.
+
+     For example:
+     ```mlir
+     #COL_MAJOR = #sparse_tensor.encoding<{
+       dimLevelType = [ "compressed", "compressed" ],
+       dimOrdering = affine_map<(i,j) -> (j,i)>
+     }>
+
+     // foreach on a column-major sparse tensor
+     sparse_tensor.foreach in %0 : tensor<2x3xf64, #COL_MAJOR> do {
+      ^bb0(%row: index, %col: index, %arg3: f64):
+         // [%row, %col] -> [0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]
+     }
+
+     #ROW_MAJOR = #sparse_tensor.encoding<{
+       dimLevelType = [ "compressed", "compressed" ],
+     }>
+
+     // foreach on a row-major sparse tensor
+     sparse_tensor.foreach in %0 : tensor<2x3xf64, #ROW_MAJOR> do {
+      ^bb0(%row: index, %col: index, %arg3: f64):
+         // [%row, %col] -> [0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]
+     }
+
+     // foreach on a row-major dense tensor but visit column first
+     sparse_tensor.foreach in %0 {order=affine_map<(i,j)->(j,i)>}: tensor<2x3xf64> do {
+      ^bb0(%row: index, %col: index, %arg3: f64):
+         // [%row, %col] -> [0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]
+     }
+
      ```
   }];
 
   let builders = [
-    OpBuilder<(
-      ins "Value":$tensor,
-      "function_ref<void(OpBuilder &, Location, ValueRange)>")>
+    OpBuilder<(ins "Value":$tensor, "ValueRange":$iterArgs, "AffineMapAttr":$order,
+      "function_ref<void(OpBuilder &, Location, ValueRange, Value, ValueRange)>")>,
+    OpBuilder<(ins "Value":$tensor, "AffineMapAttr":$order,
+      "function_ref<void(OpBuilder &, Location, ValueRange, Value, ValueRange)>":$bodyBuilder),
+    [{
+      build($_builder, $_state, tensor, ValueRange(), order, bodyBuilder);
+    }]>,
+    OpBuilder<(ins "Value":$tensor,
+      "function_ref<void(OpBuilder &, Location, ValueRange, Value, ValueRange)>":$bodyBuilder),
+    [{
+      build($_builder, $_state, tensor, ValueRange(), nullptr, bodyBuilder);
+    }]>,
+    OpBuilder<(ins "Value":$tensor, "ValueRange":$iterArgs,
+      "function_ref<void(OpBuilder &, Location, ValueRange, Value, ValueRange)>":$bodyBuilder),
+    [{
+      build($_builder, $_state, tensor, iterArgs, nullptr, bodyBuilder);
+    }]>
   ];
 
-  let regions = (region AnyRegion:$region);
-  let assemblyFormat = "`in` $tensor attr-dict `:` type($tensor)  `do` $region";
+  let regions = (region SizedRegion<1>:$region);
+  let assemblyFormat = "`in` $tensor (`init``(`$initArgs^`)`)? attr-dict"
+                       "    `:` type($tensor) (`,` type($initArgs)^)?"
+                       "  (`->` type($results)^)?  `do` $region";
   let hasVerifier = 1;
 }
 

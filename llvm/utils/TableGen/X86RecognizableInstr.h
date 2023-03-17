@@ -17,8 +17,10 @@
 #define LLVM_UTILS_TABLEGEN_X86RECOGNIZABLEINSTR_H
 
 #include "CodeGenInstruction.h"
-#include "llvm/Support/DataTypes.h"
 #include "llvm/Support/X86DisassemblerDecoderCommon.h"
+#include <cstdint>
+#include <string>
+#include <vector>
 
 struct InstructionSpecifier;
 
@@ -106,6 +108,7 @@ namespace X86Local {
     RawFrmImm16   = 8,
     AddCCFrm      = 9,
     PrefixByte    = 10,
+    MRMDestMem4VOp3CC = 20,
     MRMr0          = 21,
     MRMSrcMemFSIB  = 22,
     MRMDestMemFSIB = 23,

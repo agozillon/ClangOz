@@ -23,7 +23,7 @@
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Support/FileUtilities.h"
-#include "mlir/Tools/ParseUtilties.h"
+#include "mlir/Tools/ParseUtilities.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
@@ -39,6 +39,7 @@
 #include <cstdint>
 #include <numeric>
 #include <utility>
+#include <optional>
 
 using namespace mlir;
 using llvm::Error;
@@ -129,8 +130,8 @@ static OwningOpRef<Operation *> parseMLIRInput(StringRef inputFilename,
     return nullptr;
   }
 
-  llvm::SourceMgr sourceMgr;
-  sourceMgr.AddNewSourceBuffer(std::move(file), SMLoc());
+  auto sourceMgr = std::make_shared<llvm::SourceMgr>();
+  sourceMgr->AddNewSourceBuffer(std::move(file), SMLoc());
   OwningOpRef<Operation *> module =
       parseSourceFileForTool(sourceMgr, context, insertImplicitModule);
   if (!module)
@@ -147,8 +148,8 @@ static inline Error makeStringError(const Twine &message) {
                                              llvm::inconvertibleErrorCode());
 }
 
-static Optional<unsigned> getCommandLineOptLevel(Options &options) {
-  Optional<unsigned> optLevel;
+static std::optional<unsigned> getCommandLineOptLevel(Options &options) {
+  std::optional<unsigned> optLevel;
   SmallVector<std::reference_wrapper<llvm::cl::opt<bool>>, 4> optFlags{
       options.optO0, options.optO1, options.optO2, options.optO3};
 
@@ -167,7 +168,7 @@ static Optional<unsigned> getCommandLineOptLevel(Options &options) {
 static Error compileAndExecute(Options &options, Operation *module,
                                StringRef entryPoint,
                                CompileAndExecuteConfig config, void **args) {
-  Optional<llvm::CodeGenOpt::Level> jitCodeGenOptLevel;
+  std::optional<llvm::CodeGenOpt::Level> jitCodeGenOptLevel;
   if (auto clOptLevel = getCommandLineOptLevel(options))
     jitCodeGenOptLevel = static_cast<llvm::CodeGenOpt::Level>(*clOptLevel);
 
@@ -229,7 +230,7 @@ static Error compileAndExecute(Options &options, Operation *module,
     engineOptions.transformer = config.transformer;
   engineOptions.jitCodeGenOptLevel = jitCodeGenOptLevel;
   engineOptions.sharedLibPaths = executionEngineLibs;
-  engineOptions.enableObjectCache = true;
+  engineOptions.enableObjectDump = true;
   auto expectedEngine = mlir::ExecutionEngine::create(module, engineOptions);
   if (!expectedEngine)
     return expectedEngine.takeError();
@@ -351,7 +352,7 @@ int mlir::JitRunnerMain(int argc, char **argv, const DialectRegistry &registry,
     return 0;
   }
 
-  Optional<unsigned> optLevel = getCommandLineOptLevel(options);
+  std::optional<unsigned> optLevel = getCommandLineOptLevel(options);
   SmallVector<std::reference_wrapper<llvm::cl::opt<bool>>, 4> optFlags{
       options.optO0, options.optO1, options.optO2, options.optO3};
 
@@ -364,8 +365,9 @@ int mlir::JitRunnerMain(int argc, char **argv, const DialectRegistry &registry,
     return 1;
   }
 
+  JitRunnerOptions runnerOptions{options.mainFuncName, options.mainFuncType};
   if (config.mlirTransformer)
-    if (failed(config.mlirTransformer(m.get())))
+    if (failed(config.mlirTransformer(m.get(), runnerOptions)))
       return EXIT_FAILURE;
 
   auto tmBuilderOrError = llvm::orc::JITTargetMachineBuilder::detectHost();

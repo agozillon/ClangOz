@@ -41,6 +41,7 @@ public:
     Others,
     A64FX,
     Ampere1,
+    Ampere1A,
     AppleA7,
     AppleA10,
     AppleA11,
@@ -64,10 +65,12 @@ public:
     CortexA78,
     CortexA78C,
     CortexA710,
+    CortexA715,
     CortexR82,
     CortexX1,
     CortexX1C,
     CortexX2,
+    CortexX3,
     ExynosM3,
     Falkor,
     Kryo,
@@ -105,8 +108,8 @@ protected:
   uint16_t PrefetchDistance = 0;
   uint16_t MinPrefetchStride = 1;
   unsigned MaxPrefetchIterationsAhead = UINT_MAX;
-  unsigned PrefFunctionLogAlignment = 0;
-  unsigned PrefLoopLogAlignment = 0;
+  Align PrefFunctionAlignment;
+  Align PrefLoopAlignment;
   unsigned MaxBytesForLoopAlignment = 0;
   unsigned MaxJumpTableSize = 0;
 
@@ -121,6 +124,7 @@ protected:
 
   bool IsLittle;
 
+  bool StreamingSVEModeDisabled;
   unsigned MinSVEVectorSizeInBits;
   unsigned MaxSVEVectorSizeInBits;
   unsigned VScaleForTuning = 2;
@@ -154,11 +158,11 @@ private:
 public:
   /// This constructor initializes the data members to match that
   /// of the specified triple.
-  AArch64Subtarget(const Triple &TT, const std::string &CPU,
-                   const std::string &TuneCPU, const std::string &FS,
-                   const TargetMachine &TM, bool LittleEndian,
+  AArch64Subtarget(const Triple &TT, StringRef CPU, StringRef TuneCPU,
+                   StringRef FS, const TargetMachine &TM, bool LittleEndian,
                    unsigned MinSVEVectorSizeInBitsOverride = 0,
-                   unsigned MaxSVEVectorSizeInBitsOverride = 0);
+                   unsigned MaxSVEVectorSizeInBitsOverride = 0,
+                   bool StreamingSVEModeDisabled = true);
 
 // Getters for SubtargetFeatures defined in tablegen
 #define GET_SUBTARGETINFO_MACRO(ATTRIBUTE, DEFAULT, GETTER)                    \
@@ -198,6 +202,9 @@ public:
   bool isXRaySupported() const override { return true; }
 
   unsigned getMinVectorRegisterBitWidth() const {
+    // Don't assume any minimum vector size when PSTATE.SM may not be 0.
+    if (!isStreamingSVEModeDisabled())
+      return 0;
     return MinVectorRegisterBitWidth;
   }
 
@@ -234,10 +241,10 @@ public:
   unsigned getMaxPrefetchIterationsAhead() const override {
     return MaxPrefetchIterationsAhead;
   }
-  unsigned getPrefFunctionLogAlignment() const {
-    return PrefFunctionLogAlignment;
+  Align getPrefFunctionAlignment() const {
+    return PrefFunctionAlignment;
   }
-  unsigned getPrefLoopLogAlignment() const { return PrefLoopLogAlignment; }
+  Align getPrefLoopAlignment() const { return PrefLoopAlignment; }
 
   unsigned getMaxBytesForLoopAlignment() const {
     return MaxBytesForLoopAlignment;
@@ -354,16 +361,20 @@ public:
 
   void mirFileLoaded(MachineFunction &MF) const override;
 
+  bool hasSVEorSME() const { return hasSVE() || hasSME(); }
+
   // Return the known range for the bit length of SVE data registers. A value
   // of 0 means nothing is known about that particular limit beyong what's
   // implied by the architecture.
   unsigned getMaxSVEVectorSizeInBits() const {
-    assert(HasSVE && "Tried to get SVE vector length without SVE support!");
+    assert(hasSVEorSME() &&
+           "Tried to get SVE vector length without SVE support!");
     return MaxSVEVectorSizeInBits;
   }
 
   unsigned getMinSVEVectorSizeInBits() const {
-    assert(HasSVE && "Tried to get SVE vector length without SVE support!");
+    assert(hasSVEorSME() &&
+           "Tried to get SVE vector length without SVE support!");
     return MinSVEVectorSizeInBits;
   }
 
@@ -391,6 +402,7 @@ public:
     return "__security_check_cookie";
   }
 
+  bool isStreamingSVEModeDisabled() const { return StreamingSVEModeDisabled; }
 };
 } // End llvm namespace
 

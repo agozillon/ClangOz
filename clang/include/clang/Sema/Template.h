@@ -23,6 +23,7 @@
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
 #include <cassert>
+#include <optional>
 #include <utility>
 
 namespace clang {
@@ -77,7 +78,7 @@ enum class TemplateSubstitutionKind : char {
 
     using ArgList = ArrayRef<TemplateArgument>;
     struct ArgumentListLevel {
-      Decl *AssociatedDecl;
+      llvm::PointerIntPair<Decl *, 1, bool> AssociatedDeclAndFinal;
       ArgList Args;
     };
     using ContainerType = SmallVector<ArgumentListLevel, 4>;
@@ -101,8 +102,8 @@ enum class TemplateSubstitutionKind : char {
     MultiLevelTemplateArgumentList() = default;
 
     /// Construct a single-level template argument list.
-    MultiLevelTemplateArgumentList(Decl *D, ArgList Args) {
-      addOuterTemplateArguments(D, Args);
+    MultiLevelTemplateArgumentList(Decl *D, ArgList Args, bool Final) {
+      addOuterTemplateArguments(D, Args, Final);
     }
 
     void setKind(TemplateSubstitutionKind K) { Kind = K; }
@@ -160,9 +161,11 @@ enum class TemplateSubstitutionKind : char {
     /// A template-like entity which owns the whole pattern being substituted.
     /// This will usually own a set of template parameters, or in some
     /// cases might even be a template parameter itself.
-    Decl *getAssociatedDecl(unsigned Depth) const {
+    std::pair<Decl *, bool> getAssociatedDecl(unsigned Depth) const {
       assert(NumRetainedOuterLevels <= Depth && Depth < getNumLevels());
-      return TemplateArgumentLists[getNumLevels() - Depth - 1].AssociatedDecl;
+      auto AD = TemplateArgumentLists[getNumLevels() - Depth - 1]
+                    .AssociatedDeclAndFinal;
+      return {AD.getPointer(), AD.getInt()};
     }
 
     /// Determine whether there is a non-NULL template argument at the
@@ -202,24 +205,25 @@ enum class TemplateSubstitutionKind : char {
 
     /// Add a new outmost level to the multi-level template argument
     /// list.
-    void addOuterTemplateArguments(Decl *AssociatedDecl, ArgList Args) {
+    /// A 'Final' substitution means that Subst* nodes won't be built
+    /// for the replacements.
+    void addOuterTemplateArguments(Decl *AssociatedDecl, ArgList Args,
+                                   bool Final) {
       assert(!NumRetainedOuterLevels &&
              "substituted args outside retained args?");
       assert(getKind() == TemplateSubstitutionKind::Specialization);
-      assert(AssociatedDecl != nullptr || Args.size() == 0);
       TemplateArgumentLists.push_back(
-          {AssociatedDecl ? AssociatedDecl->getCanonicalDecl() : nullptr,
-           Args});
+          {{AssociatedDecl->getCanonicalDecl(), Final}, Args});
     }
 
     void addOuterTemplateArguments(ArgList Args) {
       assert(!NumRetainedOuterLevels &&
              "substituted args outside retained args?");
       assert(getKind() == TemplateSubstitutionKind::Rewrite);
-      TemplateArgumentLists.push_back({nullptr, Args});
+      TemplateArgumentLists.push_back({{}, Args});
     }
 
-    void addOuterTemplateArguments(llvm::NoneType) {
+    void addOuterTemplateArguments(std::nullopt_t) {
       assert(!NumRetainedOuterLevels &&
              "substituted args outside retained args?");
       TemplateArgumentLists.push_back({});
@@ -568,6 +572,7 @@ enum class TemplateSubstitutionKind : char {
 // Decls which never appear inside a class or function.
 #define OBJCCONTAINER(DERIVED, BASE)
 #define FILESCOPEASM(DERIVED, BASE)
+#define TOPLEVELSTMT(DERIVED, BASE)
 #define IMPORT(DERIVED, BASE)
 #define EXPORT(DERIVED, BASE)
 #define LINKAGESPEC(DERIVED, BASE)
@@ -596,8 +601,8 @@ enum class TemplateSubstitutionKind : char {
     // A few supplemental visitor functions.
     Decl *VisitCXXMethodDecl(CXXMethodDecl *D,
                              TemplateParameterList *TemplateParams,
-                             Optional<const ASTTemplateArgumentListInfo *>
-                                 ClassScopeSpecializationArgs = llvm::None,
+                             std::optional<const ASTTemplateArgumentListInfo *>
+                                 ClassScopeSpecializationArgs = std::nullopt,
                              RewriteKind RK = RewriteKind::None);
     Decl *VisitFunctionDecl(FunctionDecl *D,
                             TemplateParameterList *TemplateParams,

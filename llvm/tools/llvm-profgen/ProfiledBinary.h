@@ -11,7 +11,7 @@
 
 #include "CallContext.h"
 #include "ErrorHandling.h"
-#include "llvm/ADT/Optional.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
@@ -42,8 +42,10 @@
 #include <unordered_set>
 #include <vector>
 
+namespace llvm {
 extern cl::opt<bool> EnableCSPreInliner;
 extern cl::opt<bool> UseContextCostForPreInliner;
+} // namespace llvm
 
 using namespace llvm;
 using namespace sampleprof;
@@ -53,6 +55,7 @@ namespace llvm {
 namespace sampleprof {
 
 class ProfiledBinary;
+class MissingFrameInferrer;
 
 struct InstructionPointer {
   const ProfiledBinary *Binary;
@@ -166,8 +169,8 @@ public:
 
   using ProbeFrameStack = SmallVector<std::pair<StringRef, uint32_t>>;
   void trackInlineesOptimizedAway(MCPseudoProbeDecoder &ProbeDecoder,
-                              MCDecodedPseudoProbeInlineTree &ProbeNode,
-                              ProbeFrameStack &Context);
+                                  MCDecodedPseudoProbeInlineTree &ProbeNode,
+                                  ProbeFrameStack &Context);
 
   void dump() { RootContext.dumpTree(); }
 
@@ -218,8 +221,14 @@ class ProfiledBinary {
   // A list of binary functions that have samples.
   std::unordered_set<const BinaryFunction *> ProfiledFunctions;
 
+  // GUID to Elf symbol start address map
+  DenseMap<uint64_t, uint64_t> SymbolStartAddrs;
+
+  // Start address to Elf symbol GUID map
+  std::unordered_multimap<uint64_t, uint64_t> StartAddrToSymMap;
+
   // An ordered map of mapping function's start address to function range
-  // relevant info. Currently to determine if the address of ELF is the start of
+  // relevant info. Currently to determine if the offset of ELF is the start of
   // a real function, we leverage the function range info from DWARF.
   std::map<uint64_t, FuncRange> StartAddrToFuncRangeMap;
 
@@ -243,6 +252,10 @@ class ProfiledBinary {
 
   // Estimate and track function prolog and epilog ranges.
   PrologEpilogTracker ProEpilogTracker;
+
+  // Infer missing frames due to compiler optimizations such as tail call
+  // elimination.
+  std::unique_ptr<MissingFrameInferrer> MissingContextInferrer;
 
   // Track function sizes under different context
   BinarySizeContextTracker FuncSizeTracker;
@@ -278,7 +291,8 @@ class ProfiledBinary {
   void setPreferredTextSegmentAddresses(const ELFObjectFileBase *O);
 
   template <class ELFT>
-  void setPreferredTextSegmentAddresses(const ELFFile<ELFT> &Obj, StringRef FileName);
+  void setPreferredTextSegmentAddresses(const ELFFile<ELFT> &Obj,
+                                        StringRef FileName);
 
   void checkPseudoProbe(const ELFObjectFileBase *Obj);
 
@@ -298,10 +312,13 @@ class ProfiledBinary {
   // Load debug info from DWARF unit.
   void loadSymbolsFromDWARFUnit(DWARFUnit &CompilationUnit);
 
+  // Create elf symbol to its start address mapping.
+  void populateElfSymbolAddressList(const ELFObjectFileBase *O);
+
   // A function may be spilt into multiple non-continuous address ranges. We use
-  // this to set whether start address of a function is the real entry of the
+  // this to set whether start a function range is the real entry of the
   // function and also set false to the non-function label.
-  void setIsFuncEntry(uint64_t Address, StringRef RangeSymName);
+  void setIsFuncEntry(FuncRange *FRange, StringRef RangeSymName);
 
   // Warn if no entry range exists in the function.
   void warnNoFuncEntry();
@@ -326,15 +343,8 @@ class ProfiledBinary {
   void load();
 
 public:
-  ProfiledBinary(const StringRef ExeBinPath, const StringRef DebugBinPath)
-      : Path(ExeBinPath), DebugBinaryPath(DebugBinPath), ProEpilogTracker(this),
-        TrackFuncContextSize(EnableCSPreInliner &&
-                             UseContextCostForPreInliner) {
-    // Point to executable binary if debug info binary is not specified.
-    SymbolizerPath = DebugBinPath.empty() ? ExeBinPath : DebugBinPath;
-    setupSymbolizer();
-    load();
-  }
+  ProfiledBinary(const StringRef ExeBinPath, const StringRef DebugBinPath);
+  ~ProfiledBinary();
 
   void decodePseudoProbe();
 
@@ -348,7 +358,9 @@ public:
     return Address - BaseAddress + getPreferredBaseAddress();
   }
   // Return the preferred load address for the first executable segment.
-  uint64_t getPreferredBaseAddress() const { return PreferredTextSegmentAddresses[0]; }
+  uint64_t getPreferredBaseAddress() const {
+    return PreferredTextSegmentAddresses[0];
+  }
   // Return the preferred load address for the first loadable segment.
   uint64_t getFirstLoadableAddress() const { return FirstLoadableAddress; }
   // Return the file offset for the first executable segment.
@@ -474,27 +486,40 @@ public:
     return FuncSizeTracker.getFuncSizeForContext(ContextNode);
   }
 
+  void inferMissingFrames(const SmallVectorImpl<uint64_t> &Context,
+                          SmallVectorImpl<uint64_t> &NewContext);
+
   // Load the symbols from debug table and populate into symbol list.
   void populateSymbolListFromDWARF(ProfileSymbolList &SymbolList);
 
-  const SampleContextFrameVector &
+  SampleContextFrameVector
   getFrameLocationStack(uint64_t Address, bool UseProbeDiscriminator = false) {
+    InstructionPointer IP(this, Address);
+    return symbolize(IP, true, UseProbeDiscriminator);
+  }
+
+  const SampleContextFrameVector &
+  getCachedFrameLocationStack(uint64_t Address,
+                              bool UseProbeDiscriminator = false) {
     auto I = AddressToLocStackMap.emplace(Address, SampleContextFrameVector());
     if (I.second) {
-      InstructionPointer IP(this, Address);
-      I.first->second = symbolize(IP, true, UseProbeDiscriminator);
+      I.first->second = getFrameLocationStack(Address, UseProbeDiscriminator);
     }
     return I.first->second;
   }
 
-  Optional<SampleContextFrame> getInlineLeafFrameLoc(uint64_t Address) {
-    const auto &Stack = getFrameLocationStack(Address);
+  std::optional<SampleContextFrame> getInlineLeafFrameLoc(uint64_t Address) {
+    const auto &Stack = getCachedFrameLocationStack(Address);
     if (Stack.empty())
       return {};
     return Stack.back();
   }
 
   void flushSymbolizer() { Symbolizer.reset(); }
+
+  MissingFrameInferrer* getMissingContextInferrer() {
+    return MissingContextInferrer.get();
+  }
 
   // Compare two addresses' inline context
   bool inlineContextEqual(uint64_t Add1, uint64_t Add2);

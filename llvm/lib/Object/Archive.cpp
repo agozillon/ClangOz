@@ -11,7 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Object/Archive.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
@@ -22,11 +21,11 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Host.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Host.h"
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
@@ -136,8 +135,18 @@ BigArchiveMemberHeader::BigArchiveMemberHeader(const Archive *Parent,
     return;
   ErrorAsOutParameter ErrAsOutParam(Err);
 
-  if (Size < getSizeOf())
-    *Err = createMemberHeaderParseError(this, RawHeaderPtr, Size);
+  if (RawHeaderPtr + getSizeOf() >= Parent->getData().end()) {
+    if (Err)
+      *Err = malformedError("malformed AIX big archive: remaining buffer is "
+                            "unable to contain next archive member");
+    return;
+  }
+
+  if (Size < getSizeOf()) {
+    Error SubErr = createMemberHeaderParseError(this, RawHeaderPtr, Size);
+    if (Err)
+      *Err = std::move(SubErr);
+  }
 }
 
 // This gets the raw name from the ArMemHdr->Name field and checks that it is
@@ -1142,7 +1151,7 @@ uint32_t Archive::getNumberOfSymbols() const {
   return read32le(buf);
 }
 
-Expected<Optional<Archive::Child>> Archive::findSym(StringRef name) const {
+Expected<std::optional<Archive::Child>> Archive::findSym(StringRef name) const {
   Archive::symbol_iterator bs = symbol_begin();
   Archive::symbol_iterator es = symbol_end();
 
@@ -1155,7 +1164,7 @@ Expected<Optional<Archive::Child>> Archive::findSym(StringRef name) const {
         return MemberOrErr.takeError();
     }
   }
-  return Optional<Child>();
+  return std::nullopt;
 }
 
 // Returns true if archive file contains no member file.
@@ -1170,6 +1179,14 @@ BigArchive::BigArchive(MemoryBufferRef Source, Error &Err)
   ErrorAsOutParameter ErrAsOutParam(&Err);
   StringRef Buffer = Data.getBuffer();
   ArFixLenHdr = reinterpret_cast<const FixLenHdr *>(Buffer.data());
+  uint64_t BufferSize = Data.getBufferSize();
+
+  if (BufferSize < sizeof(FixLenHdr)) {
+    Err = malformedError("malformed AIX big archive: incomplete fixed length "
+                         "header, the archive is only" +
+                         Twine(BufferSize) + " byte(s)");
+    return;
+  }
 
   StringRef RawOffset = getFieldRawString(ArFixLenHdr->FirstChildOffset);
   if (RawOffset.getAsInteger(10, FirstChildOffset))
@@ -1196,7 +1213,6 @@ BigArchive::BigArchive(MemoryBufferRef Source, Error &Err)
     return;
 
   if (GlobSymOffset > 0) {
-    uint64_t BufferSize = Data.getBufferSize();
     uint64_t GlobalSymTblContentOffset =
         GlobSymOffset + sizeof(BigArMemHdrType);
     if (GlobalSymTblContentOffset > BufferSize) {

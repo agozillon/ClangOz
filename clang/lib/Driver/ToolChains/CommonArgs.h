@@ -14,6 +14,9 @@
 #include "clang/Driver/Multilib.h"
 #include "clang/Driver/Tool.h"
 #include "clang/Driver/ToolChain.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Option/Arg.h"
+#include "llvm/Option/ArgList.h"
 #include "llvm/Support/CodeGen.h"
 
 namespace clang {
@@ -101,16 +104,19 @@ ParsePICArgs(const ToolChain &ToolChain, const llvm::opt::ArgList &Args);
 unsigned ParseFunctionAlignment(const ToolChain &TC,
                                 const llvm::opt::ArgList &Args);
 
-unsigned ParseDebugDefaultVersion(const ToolChain &TC,
-                                  const llvm::opt::ArgList &Args);
+// Extract the integer N from a string spelled "-dwarf-N", returning 0
+// on mismatch. The StringRef input (rather than an Arg) allows
+// for use by the "-Xassembler" option parser.
+unsigned DwarfVersionNum(StringRef ArgValue);
+// Find a DWARF format version option.
+// This function is a complementary for DwarfVersionNum().
+const llvm::opt::Arg *getDwarfNArg(const llvm::opt::ArgList &Args);
+unsigned getDwarfVersion(const ToolChain &TC, const llvm::opt::ArgList &Args);
 
 void AddAssemblerKPIC(const ToolChain &ToolChain,
                       const llvm::opt::ArgList &Args,
                       llvm::opt::ArgStringList &CmdArgs);
 
-void addOpenMPRuntimeSpecificRPath(const ToolChain &TC,
-                                   const llvm::opt::ArgList &Args,
-                                   llvm::opt::ArgStringList &CmdArgs);
 void addArchSpecificRPath(const ToolChain &TC, const llvm::opt::ArgList &Args,
                           llvm::opt::ArgStringList &CmdArgs);
 void addOpenMPRuntimeLibraryPath(const ToolChain &TC,
@@ -164,6 +170,11 @@ void AddTargetFeature(const llvm::opt::ArgList &Args,
 
 std::string getCPUName(const Driver &D, const llvm::opt::ArgList &Args,
                        const llvm::Triple &T, bool FromAs = false);
+
+void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
+                       const llvm::opt::ArgList &Args,
+                       llvm::opt::ArgStringList &CmdArgs, bool ForAS,
+                       bool IsAux = false);
 
 /// Iterate \p Args and convert -mxxx to +xxx and -mno-xxx to -xxx and
 /// append it to \p Features.

@@ -55,6 +55,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <tuple>
 
 #include <cassert>
@@ -263,7 +264,7 @@ CompilerType ValueObject::MaybeCalculateCompleteType() {
 
   if (auto *runtime =
           process_sp->GetLanguageRuntime(GetObjectRuntimeLanguage())) {
-    if (llvm::Optional<CompilerType> complete_type =
+    if (std::optional<CompilerType> complete_type =
             runtime->GetRuntimeType(compiler_type)) {
       m_override_type = *complete_type;
       if (m_override_type.IsValid())
@@ -272,6 +273,8 @@ CompilerType ValueObject::MaybeCalculateCompleteType() {
   }
   return compiler_type;
 }
+
+
 
 DataExtractor &ValueObject::GetDataExtractor() {
   UpdateValueIfNeeded(false);
@@ -407,9 +410,8 @@ ValueObject::GetChildAtIndexPath(llvm::ArrayRef<size_t> idxs,
   return root;
 }
 
-lldb::ValueObjectSP
-ValueObject::GetChildAtIndexPath(llvm::ArrayRef<std::pair<size_t, bool>> idxs,
-                                 size_t *index_of_error) {
+lldb::ValueObjectSP ValueObject::GetChildAtIndexPath(
+  llvm::ArrayRef<std::pair<size_t, bool>> idxs, size_t *index_of_error) {
   if (idxs.size() == 0)
     return GetSP();
   ValueObjectSP root(GetSP());
@@ -593,6 +595,14 @@ bool ValueObject::GetSummaryAsCString(TypeSummaryImpl *summary_ptr,
                                       const TypeSummaryOptions &options) {
   destination.clear();
 
+  // If we have a forcefully completed type, don't try and show a summary from
+  // a valid summary string or function because the type is not complete and
+  // no member variables or member functions will be available.
+  if (GetCompilerType().IsForcefullyCompleted()) {
+      destination = "<incomplete type>";
+      return true;
+  }
+
   // ideally we would like to bail out if passing NULL, but if we do so we end
   // up not providing the summary for function pointers anymore
   if (/*summary_ptr == NULL ||*/ m_flags.m_is_getting_summary)
@@ -673,7 +683,7 @@ size_t ValueObject::GetPointeeData(DataExtractor &data, uint32_t item_idx,
 
   ExecutionContext exe_ctx(GetExecutionContextRef());
 
-  llvm::Optional<uint64_t> item_type_size =
+  std::optional<uint64_t> item_type_size =
       pointee_or_element_compiler_type.GetByteSize(
           exe_ctx.GetBestExecutionContextScope());
   if (!item_type_size)
@@ -1163,6 +1173,15 @@ bool ValueObject::DumpPrintableRepresentation(
     Stream &s, ValueObjectRepresentationStyle val_obj_display,
     Format custom_format, PrintableRepresentationSpecialCases special,
     bool do_dump_error) {
+    
+  // If the ValueObject has an error, we might end up dumping the type, which
+  // is useful, but if we don't even have a type, then don't examine the object
+  // further as that's not meaningful, only the error is.
+  if (m_error.Fail() && !GetCompilerType().IsValid()) {
+    if (do_dump_error)
+      s.Printf("<%s>", m_error.AsCString());
+    return false;
+  }
 
   Flags flags(GetTypeInfo());
 
@@ -1184,10 +1203,9 @@ bool ValueObject::DumpPrintableRepresentation(
       {
         Status error;
         lldb::WritableDataBufferSP buffer_sp;
-        std::pair<size_t, bool> read_string =
-            ReadPointedString(buffer_sp, error, 0,
-                              (custom_format == eFormatVectorOfChar) ||
-                                  (custom_format == eFormatCharArray));
+        std::pair<size_t, bool> read_string = ReadPointedString(
+            buffer_sp, error, 0, (custom_format == eFormatVectorOfChar) ||
+                                     (custom_format == eFormatCharArray));
         lldb_private::formatters::StringPrinter::
             ReadBufferAndDumpToStreamOptions options(*this);
         options.SetData(DataExtractor(
@@ -1365,6 +1383,8 @@ bool ValueObject::DumpPrintableRepresentation(
     if (!str.empty())
       s << str;
     else {
+      // We checked for errors at the start, but do it again here in case
+      // realizing the value for dumping produced an error.
       if (m_error.Fail()) {
         if (do_dump_error)
           s.Printf("<%s>", m_error.AsCString());
@@ -1552,7 +1572,8 @@ bool ValueObject::GetDeclaration(Declaration &decl) {
   return false;
 }
 
-void ValueObject::AddSyntheticChild(ConstString key, ValueObject *valobj) {
+void ValueObject::AddSyntheticChild(ConstString key,
+                                    ValueObject *valobj) {
   m_synthetic_children[key] = valobj;
 }
 
@@ -1696,7 +1717,7 @@ ValueObjectSP ValueObject::GetSyntheticChildAtOffset(
     return {};
 
   ExecutionContext exe_ctx(GetExecutionContextRef());
-  llvm::Optional<uint64_t> size =
+  std::optional<uint64_t> size =
       type.GetByteSize(exe_ctx.GetBestExecutionContextScope());
   if (!size)
     return {};
@@ -1738,7 +1759,7 @@ ValueObjectSP ValueObject::GetSyntheticBase(uint32_t offset,
   const bool is_base_class = true;
 
   ExecutionContext exe_ctx(GetExecutionContextRef());
-  llvm::Optional<uint64_t> size =
+  std::optional<uint64_t> size =
       type.GetByteSize(exe_ctx.GetBestExecutionContextScope());
   if (!size)
     return {};
@@ -1838,7 +1859,7 @@ ValueObjectSP ValueObject::GetDynamicValue(DynamicValueType use_dynamic) {
   if (!IsDynamic() && m_dynamic_value == nullptr) {
     CalculateDynamicValue(use_dynamic);
   }
-  if (m_dynamic_value)
+  if (m_dynamic_value && m_dynamic_value->GetError().Success())
     return m_dynamic_value->GetSP();
   else
     return ValueObjectSP();
@@ -1923,96 +1944,64 @@ void ValueObject::GetExpressionPath(Stream &s,
     return;
   }
 
-  // Checks whether a value is dereference of a non-reference parent.
-  // This is used to determine whether to print a dereference operation (*).
-  auto is_deref_of_non_reference = [](ValueObject *value) {
-    if (value == nullptr)
-      return false;
-    ValueObject *value_parent = value->GetParent();
-    if (value_parent) {
-      CompilerType parent_compiler_type = value_parent->GetCompilerType();
-      if (parent_compiler_type) {
-        const uint32_t parent_type_info = parent_compiler_type.GetTypeInfo();
-        if (parent_type_info & eTypeIsReference)
-          return false;
-      }
-    }
-    return value->IsDereferenceOfParent();
-  };
+  const bool is_deref_of_parent = IsDereferenceOfParent();
 
-  ValueObject *parent = GetParent();
-
-  if (is_deref_of_non_reference(this) &&
+  if (is_deref_of_parent &&
       epformat == eGetExpressionPathFormatDereferencePointers) {
     // this is the original format of GetExpressionPath() producing code like
     // *(a_ptr).memberName, which is entirely fine, until you put this into
     // StackFrame::GetValueForVariableExpressionPath() which prefers to see
-    // a_ptr->memberName. The eHonorPointers mode is meant to produce strings
-    // in this latter format.
-    s.PutChar('*');
-    if (parent)
-      parent->GetExpressionPath(s, epformat);
-    return;
+    // a_ptr->memberName. the eHonorPointers mode is meant to produce strings
+    // in this latter format
+    s.PutCString("*(");
   }
 
-  const bool is_deref_of_parent = IsDereferenceOfParent();
-  bool is_parent_deref_of_non_reference = false;
-  bool print_obj_access = false;
-  bool print_ptr_access = false;
+  ValueObject *parent = GetParent();
 
-  if (!IsBaseClass() && !is_deref_of_parent) {
-    ValueObject *non_base_class_parent = GetNonBaseClassParent();
-    if (non_base_class_parent && !non_base_class_parent->GetName().IsEmpty()) {
-      CompilerType non_base_class_parent_compiler_type =
-          non_base_class_parent->GetCompilerType();
-      if (non_base_class_parent_compiler_type) {
-        if (parent && parent->IsDereferenceOfParent() &&
-            epformat == eGetExpressionPathFormatHonorPointers) {
-          print_ptr_access = true;
-        } else {
-          const uint32_t non_base_class_parent_type_info =
-              non_base_class_parent_compiler_type.GetTypeInfo();
+  if (parent)
+    parent->GetExpressionPath(s, epformat);
 
-          if (non_base_class_parent_type_info & eTypeIsPointer) {
-            print_ptr_access = true;
-          } else if ((non_base_class_parent_type_info & eTypeHasChildren) &&
-                     !(non_base_class_parent_type_info & eTypeIsArray)) {
-            print_obj_access = true;
+  // if we are a deref_of_parent just because we are synthetic array members
+  // made up to allow ptr[%d] syntax to work in variable printing, then add our
+  // name ([%d]) to the expression path
+  if (m_flags.m_is_array_item_for_pointer &&
+      epformat == eGetExpressionPathFormatHonorPointers)
+    s.PutCString(m_name.GetStringRef());
+
+  if (!IsBaseClass()) {
+    if (!is_deref_of_parent) {
+      ValueObject *non_base_class_parent = GetNonBaseClassParent();
+      if (non_base_class_parent &&
+          !non_base_class_parent->GetName().IsEmpty()) {
+        CompilerType non_base_class_parent_compiler_type =
+            non_base_class_parent->GetCompilerType();
+        if (non_base_class_parent_compiler_type) {
+          if (parent && parent->IsDereferenceOfParent() &&
+              epformat == eGetExpressionPathFormatHonorPointers) {
+            s.PutCString("->");
+          } else {
+            const uint32_t non_base_class_parent_type_info =
+                non_base_class_parent_compiler_type.GetTypeInfo();
+
+            if (non_base_class_parent_type_info & eTypeIsPointer) {
+              s.PutCString("->");
+            } else if ((non_base_class_parent_type_info & eTypeHasChildren) &&
+                       !(non_base_class_parent_type_info & eTypeIsArray)) {
+              s.PutChar('.');
+            }
           }
         }
       }
-      is_parent_deref_of_non_reference =
-          is_deref_of_non_reference(non_base_class_parent) &&
-          epformat == eGetExpressionPathFormatDereferencePointers;
+
+      const char *name = GetName().GetCString();
+      if (name)
+        s.PutCString(name);
     }
   }
 
-  if (parent) {
-    // The parent should be wrapped in parenthesis when doing a member access.
-    // This prevents forming incorrect expressions such as *(ptr).field,
-    // which dereferences the field instead of the ptr, and constructs the
-    // expression in the format (*(ptr)).field. To create expressions compatible
-    // with StackFrame::GetValueForVariableExpressionPath() and reduce amount of
-    // unnecessary parenthesis, this is done only when the parent has the
-    // dereference syntax *(parent).
-    const bool wrap_parent_in_parens = (print_obj_access || print_ptr_access) &&
-                                       is_parent_deref_of_non_reference;
-    if (wrap_parent_in_parens)
-      s.PutChar('(');
-    parent->GetExpressionPath(s, epformat);
-    if (wrap_parent_in_parens)
-      s.PutChar(')');
-  }
-
-  if (print_obj_access)
-    s.PutChar('.');
-  if (print_ptr_access)
-    s.PutCString("->");
-
-  if (!IsBaseClass() && !is_deref_of_parent) {
-    const char *name = GetName().GetCString();
-    if (name)
-      s.PutCString(name);
+  if (is_deref_of_parent &&
+      epformat == eGetExpressionPathFormatDereferencePointers) {
+    s.PutChar(')');
   }
 }
 
@@ -2704,7 +2693,10 @@ ValueObjectSP ValueObject::Dereference(Status &error) {
     // In case of incomplete child compiler type, use the pointee type and try
     // to recreate a new ValueObjectChild using it.
     if (!m_deref_valobj) {
-      if (HasSyntheticValue()) {
+      // FIXME(#59012): C++ stdlib formatters break with incomplete types (e.g.
+      // `std::vector<int> &`). Remove ObjC restriction once that's resolved.
+      if (Language::LanguageIsObjC(GetPreferredDisplayLanguage()) &&
+          HasSyntheticValue()) {
         child_compiler_type = compiler_type.GetPointeeType();
 
         if (child_compiler_type) {
@@ -3138,6 +3130,8 @@ bool ValueObject::CanProvideValue() {
   CompilerType type = GetCompilerType();
   return (!type.IsValid()) || (0 != (type.GetTypeInfo() & eTypeHasValue));
 }
+
+
 
 ValueObjectSP ValueObject::Persist() {
   if (!UpdateValueIfNeeded())

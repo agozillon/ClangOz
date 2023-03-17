@@ -61,6 +61,7 @@ tool_dirs = [config.clang_tools_dir, config.llvm_tools_dir]
 tools = [
     'apinotes-test', 'c-index-test', 'clang-diff', 'clang-format', 'clang-repl', 'clang-offload-packager',
     'clang-tblgen', 'clang-scan-deps', 'opt', 'llvm-ifs', 'yaml2obj', 'clang-linker-wrapper',
+    'llvm-lto', 'llvm-lto2', 'llvm-profdata',
     ToolSubst('%clang_extdef_map', command=FindTool(
         'clang-extdef-mapping'), unresolved='ignore'),
 ]
@@ -177,7 +178,7 @@ if re.match(r'.*-(windows-msvc)$', config.target_triple):
     config.available_features.add('ms-sdk')
 
 # [PR8833] LLP64-incompatible tests
-if not re.match(r'^x86_64.*-(windows-msvc|windows-gnu)$', config.target_triple):
+if not re.match(r'^(aarch64|x86_64).*-(windows-msvc|windows-gnu)$', config.target_triple):
     config.available_features.add('LP64')
 
 # Tests that are specific to the Apple Silicon macOS.
@@ -238,6 +239,9 @@ if config.enable_shared:
 if config.clang_vendor_uti:
     config.available_features.add('clang-vendor=' + config.clang_vendor_uti)
 
+if config.have_llvm_driver:
+  config.available_features.add('llvm-driver')
+
 def exclude_unsupported_files_for_aix(dirname):
     for filename in os.listdir(dirname):
         source_path = os.path.join( dirname, filename)
@@ -278,6 +282,7 @@ elif platform.system() == 'AIX':
 
 if 'system-aix' in config.available_features:
         config.substitutions.append(('llvm-nm', 'env OBJECT_MODE=any llvm-nm'))
+        config.substitutions.append(('llvm-ar', 'env OBJECT_MODE=any llvm-ar'))
 
 # It is not realistically possible to account for all options that could
 # possibly be present in system and user configuration files, so disable

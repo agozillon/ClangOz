@@ -61,6 +61,38 @@ struct DuplicateSymbolDiag {
 SmallVector<DuplicateSymbolDiag> dupSymDiags;
 } // namespace
 
+// Move symbols at \p fromOff in \p fromIsec into \p toIsec, unless that symbol
+// is \p skip.
+static void transplantSymbolsAtOffset(InputSection *fromIsec,
+                                      InputSection *toIsec, Defined *skip,
+                                      uint64_t fromOff, uint64_t toOff) {
+  // Ensure the symbols will still be in address order after our insertions.
+  auto insertIt = llvm::upper_bound(toIsec->symbols, toOff,
+                                    [](uint64_t off, const Symbol *s) {
+                                      return cast<Defined>(s)->value < off;
+                                    });
+  llvm::erase_if(fromIsec->symbols, [&](Symbol *s) {
+    auto *d = cast<Defined>(s);
+    if (d->value != fromOff)
+      return false;
+    if (d != skip) {
+      // This repeated insertion will be quadratic unless insertIt is the end
+      // iterator. However, that is typically the case for files that have
+      // .subsections_via_symbols set.
+      insertIt = toIsec->symbols.insert(insertIt, d);
+      d->isec = toIsec;
+      d->value = toOff;
+      // We don't want to have more than one unwindEntry at a given address, so
+      // drop the redundant ones. We We can safely drop the unwindEntries of
+      // the symbols in fromIsec since we will be adding another unwindEntry as
+      // we finish parsing toIsec's file. (We can assume that toIsec has its
+      // own unwindEntry because of the ODR.)
+      d->unwindEntry = nullptr;
+    }
+    return true;
+  });
+}
+
 Defined *SymbolTable::addDefined(StringRef name, InputFile *file,
                                  InputSection *isec, uint64_t value,
                                  uint64_t size, bool isWeakDef,
@@ -82,18 +114,27 @@ Defined *SymbolTable::addDefined(StringRef name, InputFile *file,
           defined->referencedDynamically |= isReferencedDynamically;
           defined->noDeadStrip |= noDeadStrip;
         }
-        // FIXME: Handle this for bitcode files.
-        if (auto concatIsec = dyn_cast_or_null<ConcatInputSection>(isec))
+        if (auto concatIsec = dyn_cast_or_null<ConcatInputSection>(isec)) {
           concatIsec->wasCoalesced = true;
+          // Any local symbols that alias the coalesced symbol should be moved
+          // into the prevailing section. Note that we have sorted the symbols
+          // in ObjFile::parseSymbols() such that extern weak symbols appear
+          // last, so we don't need to worry about subsequent symbols being
+          // added to an already-coalesced section.
+          if (defined->isec)
+            transplantSymbolsAtOffset(concatIsec, defined->isec,
+                                      /*skip=*/nullptr, value, defined->value);
+        }
         return defined;
       }
 
       if (defined->isWeakDef()) {
-        // FIXME: Handle this for bitcode files.
         if (auto concatIsec =
                 dyn_cast_or_null<ConcatInputSection>(defined->isec)) {
           concatIsec->wasCoalesced = true;
-          concatIsec->symbols.erase(llvm::find(concatIsec->symbols, defined));
+          if (isec)
+            transplantSymbolsAtOffset(concatIsec, isec, defined, defined->value,
+                                      value);
         }
       } else {
         std::string srcLoc1 = defined->getSourceLocation();
@@ -108,6 +149,11 @@ Defined *SymbolTable::addDefined(StringRef name, InputFile *file,
     } else if (auto *dysym = dyn_cast<DylibSymbol>(s)) {
       overridesWeakDef = !isWeakDef && dysym->isWeakDef();
       dysym->unreference();
+    } else if (auto *undef = dyn_cast<Undefined>(s)) {
+      // Preserve the original bitcode file name (instead of using the object
+      // file name).
+      if (undef->wasBitcodeSymbol)
+        file = undef->getFile();
     }
     // Defined symbols take priority over other types of symbols, so in case
     // of a name conflict, we fall through to the replaceSymbol() call below.
@@ -142,7 +188,8 @@ Symbol *SymbolTable::addUndefined(StringRef name, InputFile *file,
   RefState refState = isWeakRef ? RefState::Weak : RefState::Strong;
 
   if (wasInserted)
-    replaceSymbol<Undefined>(s, name, file, refState);
+    replaceSymbol<Undefined>(s, name, file, refState,
+                             /*wasBitcodeSymbol=*/false);
   else if (auto *lazy = dyn_cast<LazyArchive>(s))
     lazy->fetchArchiveMember();
   else if (isa<LazyObject>(s))
@@ -376,7 +423,7 @@ struct UndefinedDiag {
 };
 
 MapVector<const Undefined *, UndefinedDiag> undefs;
-}
+} // namespace
 
 void macho::reportPendingDuplicateSymbols() {
   for (const auto &duplicate : dupSymDiags) {

@@ -31,7 +31,10 @@
 
 template <size_t S, size_t Align>
 void testForSizeAndAlign() {
-  using T = typename std::aligned_storage<S, Align>::type;
+  struct T {
+    alignas(Align) std::byte buf[S];
+  };
+
   TestResource R;
   std::pmr::polymorphic_allocator<T> a(&R);
 
@@ -47,7 +50,10 @@ void testForSizeAndAlign() {
 #ifndef TEST_HAS_NO_EXCEPTIONS
 template <size_t S>
 void testAllocForSizeThrows() {
-  using T      = typename std::aligned_storage<S>::type;
+  struct T {
+    std::byte buf[S];
+  };
+
   using Alloc  = std::pmr::polymorphic_allocator<T>;
   using Traits = std::allocator_traits<Alloc>;
   NullResource R;
@@ -55,17 +61,11 @@ void testAllocForSizeThrows() {
 
   // Test that allocating exactly the max size does not throw.
   size_t maxSize = Traits::max_size(a);
-  try {
-    a.allocate(maxSize);
-  } catch (...) {
-    assert(false);
-  }
-
   size_t sizeTypeMax = std::numeric_limits<std::size_t>::max();
   if (maxSize != sizeTypeMax) {
     // Test that allocating size_t(~0) throws bad alloc.
     try {
-      a.allocate(sizeTypeMax);
+      (void)a.allocate(sizeTypeMax);
       assert(false);
     } catch (const std::exception&) {
     }
@@ -73,7 +73,7 @@ void testAllocForSizeThrows() {
     // Test that allocating even one more than the max size does throw.
     size_t overSize = maxSize + 1;
     try {
-      a.allocate(overSize);
+      (void)a.allocate(overSize);
       assert(false);
     } catch (const std::exception&) {
     }

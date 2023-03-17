@@ -127,7 +127,7 @@ class MergerTestBase : public ::testing::Test {
 protected:
   MergerTestBase(unsigned numTensors, unsigned numLoops)
       : numTensors(numTensors), numLoops(numLoops),
-        merger(numTensors, numLoops) {}
+        merger(numTensors, numLoops, /*numFilterLoops=*/0) {}
 
   ///
   /// Expression construction helpers.
@@ -225,7 +225,7 @@ protected:
     case kTensor:
       return tensorExp.tensor == pattern->tensorNum;
     case kInvariant:
-    case kIndex:
+    case kLoopVar:
       llvm_unreachable("invariant not handled yet");
     // Unary operations.
     case kAbsF:
@@ -309,17 +309,19 @@ protected:
   const unsigned l0 = 0;
 
   MergerTest3T1L() : MergerTestBase(3, 1) {
+    EXPECT_TRUE(merger.getOutTensorID() == t2);
+
     // Tensor 0: sparse input vector.
     merger.addExp(Kind::kTensor, t0, -1u);
-    merger.setDimLevelFormat(t0, l0, DimLevelFormat(DimLvlType::kCompressed));
+    merger.setLevelAndType(t0, l0, 0, DimLevelType::Compressed);
 
     // Tensor 1: sparse input vector.
     merger.addExp(Kind::kTensor, t1, -1u);
-    merger.setDimLevelFormat(t1, l0, DimLevelFormat(DimLvlType::kCompressed));
+    merger.setLevelAndType(t1, l0, 0, DimLevelType::Compressed);
 
     // Tensor 2: dense output vector.
     merger.addExp(Kind::kTensor, t2, -1u);
-    merger.setDimLevelFormat(t2, l0, DimLevelFormat(DimLvlType::kDense));
+    merger.setLevelAndType(t2, l0, 0, DimLevelType::Dense);
   }
 };
 
@@ -332,21 +334,23 @@ protected:
   const unsigned l0 = 0;
 
   MergerTest4T1L() : MergerTestBase(4, 1) {
+    EXPECT_TRUE(merger.getOutTensorID() == t3);
+
     // Tensor 0: sparse input vector.
     merger.addExp(Kind::kTensor, t0, -1u);
-    merger.setDimLevelFormat(t0, l0, DimLevelFormat(DimLvlType::kCompressed));
+    merger.setLevelAndType(t0, l0, 0, DimLevelType::Compressed);
 
     // Tensor 1: sparse input vector.
     merger.addExp(Kind::kTensor, t1, -1u);
-    merger.setDimLevelFormat(t1, l0, DimLevelFormat(DimLvlType::kCompressed));
+    merger.setLevelAndType(t1, l0, 0, DimLevelType::Compressed);
 
     // Tensor 2: sparse input vector
     merger.addExp(Kind::kTensor, t2, -1u);
-    merger.setDimLevelFormat(t2, l0, DimLevelFormat(DimLvlType::kCompressed));
+    merger.setLevelAndType(t2, l0, 0, DimLevelType::Compressed);
 
     // Tensor 3: dense output vector
     merger.addExp(Kind::kTensor, t3, -1u);
-    merger.setDimLevelFormat(t3, l0, DimLevelFormat(DimLvlType::kDense));
+    merger.setLevelAndType(t3, l0, 0, DimLevelType::Dense);
   }
 };
 
@@ -363,17 +367,19 @@ protected:
   const unsigned l0 = 0;
 
   MergerTest3T1LD() : MergerTestBase(3, 1) {
+    EXPECT_TRUE(merger.getOutTensorID() == t2);
+
     // Tensor 0: sparse input vector.
     merger.addExp(Kind::kTensor, t0, -1u);
-    merger.setDimLevelFormat(t0, l0, DimLevelFormat(DimLvlType::kCompressed));
+    merger.setLevelAndType(t0, l0, 0, DimLevelType::Compressed);
 
     // Tensor 1: dense input vector.
     merger.addExp(Kind::kTensor, t1, -1u);
-    merger.setDimLevelFormat(t1, l0, DimLevelFormat(DimLvlType::kDense));
+    merger.setLevelAndType(t1, l0, 0, DimLevelType::Dense);
 
     // Tensor 2: dense output vector.
     merger.addExp(Kind::kTensor, t2, -1u);
-    merger.setDimLevelFormat(t2, l0, DimLevelFormat(DimLvlType::kDense));
+    merger.setLevelAndType(t2, l0, 0, DimLevelType::Dense);
   }
 };
 
@@ -383,28 +389,30 @@ protected:
 
 class MergerTest4T1LU : public MergerTestBase {
 protected:
-  // Our three tensors (two inputs, one output).
+  // Our three tensors (three inputs, one output).
   const unsigned t0 = 0, t1 = 1, t2 = 2, t3 = 3;
 
   // Our single loop.
   const unsigned l0 = 0;
 
   MergerTest4T1LU() : MergerTestBase(4, 1) {
+    EXPECT_TRUE(merger.getOutTensorID() == t3);
+
     // Tensor 0: undef input vector.
     merger.addExp(Kind::kTensor, t0, -1u);
-    merger.setDimLevelFormat(t0, l0, DimLevelFormat(DimLvlType::kUndef));
+    merger.setLevelAndType(t0, l0, 0, DimLevelType::Undef);
 
     // Tensor 1: dense input vector.
     merger.addExp(Kind::kTensor, t1, -1u);
-    merger.setDimLevelFormat(t1, l0, DimLevelFormat(DimLvlType::kDense));
+    merger.setLevelAndType(t1, l0, 0, DimLevelType::Dense);
 
     // Tensor 2: undef input vector.
     merger.addExp(Kind::kTensor, t2, -1u);
-    merger.setDimLevelFormat(t2, l0, DimLevelFormat(DimLvlType::kUndef));
+    merger.setLevelAndType(t2, l0, 0, DimLevelType::Undef);
 
     // Tensor 3: dense output vector.
     merger.addExp(Kind::kTensor, t3, -1u);
-    merger.setDimLevelFormat(t3, l0, DimLevelFormat(DimLvlType::kDense));
+    merger.setLevelAndType(t3, l0, 0, DimLevelType::Dense);
   }
 };
 
@@ -412,7 +420,7 @@ protected:
 /// Tests with operation on sparse output.
 ///
 
-class MergerTest3T1L_SO : public MergerTestBase {
+class MergerTest3T1LSo : public MergerTestBase {
 protected:
   // Our three tensors (two inputs, one output, one synthetic).
   const unsigned t0 = 0, t1 = 1, t2 = 2, t3 = 3;
@@ -420,20 +428,23 @@ protected:
   // Our single loop.
   const unsigned l0 = 0;
 
-  MergerTest3T1L_SO() : MergerTestBase(3, 1) {
+  MergerTest3T1LSo() : MergerTestBase(3, 1) {
+    EXPECT_TRUE(merger.getOutTensorID() == t2);
+    EXPECT_TRUE(merger.getSynTensorID() == t3);
+
     merger.setHasSparseOut(true);
 
     // Tensor 0: undef input vector.
     merger.addExp(Kind::kTensor, t0, -1u);
-    merger.setDimLevelFormat(t0, l0, DimLevelFormat(DimLvlType::kUndef));
+    merger.setLevelAndType(t0, l0, 0, DimLevelType::Undef);
 
     // Tensor 1: undef input vector.
     merger.addExp(Kind::kTensor, t1, -1u);
-    merger.setDimLevelFormat(t1, l0, DimLevelFormat(DimLvlType::kUndef));
+    merger.setLevelAndType(t1, l0, 0, DimLevelType::Undef);
 
     // Tensor 2: sparse output vector.
     merger.addExp(Kind::kTensor, t2, -1u);
-    merger.setDimLevelFormat(t2, l0, DimLevelFormat(DimLvlType::kCompressed));
+    merger.setLevelAndType(t2, l0, 0, DimLevelType::Compressed);
   }
 };
 
@@ -483,7 +494,7 @@ FOREVERY_PAIR_OF_COMMON_CONJ_CONJ_BINOP(IMPL_MERGER_TEST_CONJ_CONJ_UNDEF)
 ///   lat( i_03_U / (tensor_0 * tensor_1 * output_tensor2) )
 /// }
 #define IMPL_MERGER_TEST_CONJ_CONJ_SPARSE_OUT(CONJ1, CONJ2)                    \
-  TEST_F(MergerTest3T1L_SO, vector_##CONJ1##_##CONJ2) {                        \
+  TEST_F(MergerTest3T1LSo, vector_##CONJ1##_##CONJ2) {                         \
     auto em = CONJ1##Expr(t0, t1);                                             \
     auto e = CONJ2##Expr(em, t2);                                              \
     auto p0 = tensorPattern(t0);                                               \

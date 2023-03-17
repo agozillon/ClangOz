@@ -21,6 +21,7 @@
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/Support/PointerLikeTypeTraits.h"
 #include <cassert>
+#include <optional>
 
 namespace clang {
 
@@ -126,7 +127,7 @@ public:
   iterator end() const { return getStorage() + Bits.Data; }
 
   llvm::ArrayRef<NamedDecl*> decls() const {
-    return llvm::makeArrayRef(begin(), end());
+    return llvm::ArrayRef(begin(), end());
   }
 };
 
@@ -139,24 +140,23 @@ public:
 class SubstTemplateTemplateParmPackStorage : public UncommonTemplateNameStorage,
                                              public llvm::FoldingSetNode {
   const TemplateArgument *Arguments;
-  Decl *AssociatedDecl;
+  llvm::PointerIntPair<Decl *, 1, bool> AssociatedDeclAndFinal;
 
 public:
   SubstTemplateTemplateParmPackStorage(ArrayRef<TemplateArgument> ArgPack,
-                                       Decl *AssociatedDecl, unsigned Index)
-      : UncommonTemplateNameStorage(SubstTemplateTemplateParmPack, Index,
-                                    ArgPack.size()),
-        Arguments(ArgPack.data()), AssociatedDecl(AssociatedDecl) {
-    assert(AssociatedDecl != nullptr);
-  }
+                                       Decl *AssociatedDecl, unsigned Index,
+                                       bool Final);
 
   /// A template-like entity which owns the whole pattern being substituted.
   /// This will own a set of template parameters.
-  Decl *getAssociatedDecl() const { return AssociatedDecl; }
+  Decl *getAssociatedDecl() const;
 
   /// Returns the index of the replaced parameter in the associated declaration.
   /// This should match the result of `getParameterPack()->getIndex()`.
   unsigned getIndex() const { return Bits.Index; }
+
+  // When true the substitution will be 'Final' (subst node won't be placed).
+  bool getFinal() const;
 
   /// Retrieve the template template parameter pack being substituted.
   TemplateTemplateParmDecl *getParameterPack() const;
@@ -169,7 +169,7 @@ public:
 
   static void Profile(llvm::FoldingSetNodeID &ID, ASTContext &Context,
                       const TemplateArgument &ArgPack, Decl *AssociatedDecl,
-                      unsigned Index);
+                      unsigned Index, bool Final);
 };
 
 /// Represents a C++ template name within the type system.
@@ -351,9 +351,7 @@ public:
   /// error.
   void dump() const;
 
-  void Profile(llvm::FoldingSetNodeID &ID) {
-    ID.AddPointer(Storage.getOpaqueValue());
-  }
+  void Profile(llvm::FoldingSetNodeID &ID);
 
   /// Retrieve the template name as a void pointer.
   void *getAsVoidPointer() const { return Storage.getOpaqueValue(); }
@@ -380,7 +378,7 @@ class SubstTemplateTemplateParmStorage
 
   SubstTemplateTemplateParmStorage(TemplateName Replacement,
                                    Decl *AssociatedDecl, unsigned Index,
-                                   Optional<unsigned> PackIndex)
+                                   std::optional<unsigned> PackIndex)
       : UncommonTemplateNameStorage(SubstTemplateTemplateParm, Index,
                                     PackIndex ? *PackIndex + 1 : 0),
         Replacement(Replacement), AssociatedDecl(AssociatedDecl) {
@@ -396,9 +394,9 @@ public:
   /// This should match the result of `getParameter()->getIndex()`.
   unsigned getIndex() const { return Bits.Index; }
 
-  Optional<unsigned> getPackIndex() const {
+  std::optional<unsigned> getPackIndex() const {
     if (Bits.Data == 0)
-      return None;
+      return std::nullopt;
     return Bits.Data - 1;
   }
 
@@ -409,7 +407,7 @@ public:
 
   static void Profile(llvm::FoldingSetNodeID &ID, TemplateName Replacement,
                       Decl *AssociatedDecl, unsigned Index,
-                      Optional<unsigned> PackIndex);
+                      std::optional<unsigned> PackIndex);
 };
 
 inline TemplateName TemplateName::getUnderlying() const {

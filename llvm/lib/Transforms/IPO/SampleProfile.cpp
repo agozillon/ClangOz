@@ -67,6 +67,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorOr.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/ProfiledCallGraph.h"
@@ -129,6 +130,15 @@ static cl::opt<std::string> SampleProfileRemappingFile(
     "sample-profile-remapping-file", cl::init(""), cl::value_desc("filename"),
     cl::desc("Profile remapping file loaded by -sample-profile"), cl::Hidden);
 
+static cl::opt<bool> ReportProfileStaleness(
+    "report-profile-staleness", cl::Hidden, cl::init(false),
+    cl::desc("Compute and report stale profile statistical metrics."));
+
+static cl::opt<bool> PersistProfileStaleness(
+    "persist-profile-staleness", cl::Hidden, cl::init(false),
+    cl::desc("Compute stale profile statistical metrics and write it into the "
+             "native object file(.llvm_stats section)."));
+
 static cl::opt<bool> ProfileSampleAccurate(
     "profile-sample-accurate", cl::Hidden, cl::init(false),
     cl::desc("If the sample profile is accurate, we will mark all un-sampled "
@@ -164,9 +174,6 @@ static cl::opt<bool>
                          cl::desc("Process functions in a top-down order "
                                   "defined by the profiled call graph when "
                                   "-sample-profile-top-down-load is on."));
-cl::opt<bool>
-    SortProfiledSCC("sort-profiled-scc-member", cl::init(true), cl::Hidden,
-                    cl::desc("Sort profiled recursion by edge weights."));
 
 static cl::opt<bool> ProfileSizeInline(
     "sample-profile-inline-size", cl::Hidden, cl::init(false),
@@ -181,6 +188,11 @@ static cl::opt<bool> DisableSampleLoaderInlining(
     cl::desc("If true, artifically skip inline transformation in sample-loader "
              "pass, and merge (or scale) profiles (as configured by "
              "--sample-profile-merge-inlinee)."));
+
+namespace llvm {
+cl::opt<bool>
+    SortProfiledSCC("sort-profiled-scc-member", cl::init(true), cl::Hidden,
+                    cl::desc("Sort profiled recursion by edge weights."));
 
 cl::opt<int> ProfileInlineGrowthLimit(
     "sample-profile-inline-growth-limit", cl::Hidden, cl::init(12),
@@ -205,6 +217,7 @@ cl::opt<int> SampleHotCallSiteThreshold(
 cl::opt<int> SampleColdCallSiteThreshold(
     "sample-profile-cold-inline-threshold", cl::Hidden, cl::init(45),
     cl::desc("Threshold for inlining cold callsites"));
+} // namespace llvm
 
 static cl::opt<unsigned> ProfileICPRelativeHotness(
     "sample-profile-icp-relative-hotness", cl::Hidden, cl::init(25),
@@ -298,7 +311,9 @@ static cl::opt<bool> AnnotateSampleProfileInlinePhase(
     cl::desc("Annotate LTO phase (prelink / postlink), or main (no LTO) for "
              "sample-profile inline pass name."));
 
+namespace llvm {
 extern cl::opt<bool> EnableExtTspBlockPlacement;
+}
 
 namespace {
 
@@ -414,6 +429,30 @@ using CandidateQueue =
     PriorityQueue<InlineCandidate, std::vector<InlineCandidate>,
                   CandidateComparer>;
 
+// Sample profile matching - fuzzy match.
+class SampleProfileMatcher {
+  Module &M;
+  SampleProfileReader &Reader;
+  const PseudoProbeManager *ProbeManager;
+
+  // Profile mismatching statstics.
+  uint64_t TotalProfiledCallsites = 0;
+  uint64_t NumMismatchedCallsites = 0;
+  uint64_t MismatchedCallsiteSamples = 0;
+  uint64_t TotalCallsiteSamples = 0;
+  uint64_t TotalProfiledFunc = 0;
+  uint64_t NumMismatchedFuncHash = 0;
+  uint64_t MismatchedFuncHashSamples = 0;
+  uint64_t TotalFuncHashSamples = 0;
+
+public:
+  SampleProfileMatcher(Module &M, SampleProfileReader &Reader,
+                       const PseudoProbeManager *ProbeManager)
+      : M(M), Reader(Reader), ProbeManager(ProbeManager) {}
+  void detectProfileMismatch();
+  void detectProfileMismatch(const Function &F, const FunctionSamples &FS);
+};
+
 /// Sample profile pass.
 ///
 /// This pass reads profile data from the file specified by
@@ -424,10 +463,12 @@ class SampleProfileLoader final
 public:
   SampleProfileLoader(
       StringRef Name, StringRef RemapName, ThinOrFullLTOPhase LTOPhase,
+      IntrusiveRefCntPtr<vfs::FileSystem> FS,
       std::function<AssumptionCache &(Function &)> GetAssumptionCache,
       std::function<TargetTransformInfo &(Function &)> GetTargetTransformInfo,
       std::function<const TargetLibraryInfo &(Function &)> GetTLI)
-      : SampleProfileLoaderBaseImpl(std::string(Name), std::string(RemapName)),
+      : SampleProfileLoaderBaseImpl(std::string(Name), std::string(RemapName),
+                                    std::move(FS)),
         GetAC(std::move(GetAssumptionCache)),
         GetTTI(std::move(GetTargetTransformInfo)), GetTLI(std::move(GetTLI)),
         LTOPhase(LTOPhase),
@@ -461,7 +502,7 @@ protected:
 
   bool inlineHotFunctions(Function &F,
                           DenseSet<GlobalValue::GUID> &InlinedGUIDs);
-  Optional<InlineCost> getExternalInlineAdvisorCost(CallBase &CB);
+  std::optional<InlineCost> getExternalInlineAdvisorCost(CallBase &CB);
   bool getExternalInlineAdvisorShouldInline(CallBase &CB);
   InlineCost shouldInlineCandidate(InlineCandidate &Candidate);
   bool getInlineCandidate(InlineCandidate *NewCandidate, CallBase *CB);
@@ -543,6 +584,9 @@ protected:
   // A pseudo probe helper to correlate the imported sample counts.
   std::unique_ptr<PseudoProbeManager> ProbeManager;
 
+  // A helper to implement the sample profile matching algorithm.
+  std::unique_ptr<SampleProfileMatcher> MatchingManager;
+
 private:
   const char *getAnnotatedRemarkPassName() const {
     return AnnotatedPassName.c_str();
@@ -584,7 +628,7 @@ ErrorOr<uint64_t> SampleProfileLoader::getInstWeight(const Instruction &Inst) {
 ErrorOr<uint64_t> SampleProfileLoader::getProbeWeight(const Instruction &Inst) {
   assert(FunctionSamples::ProfileIsProbeBased &&
          "Profile is not pseudo probe based");
-  Optional<PseudoProbe> Probe = extractProbe(Inst);
+  std::optional<PseudoProbe> Probe = extractProbe(Inst);
   // Ignore the non-probe instruction. If none of the instruction in the BB is
   // probe, we choose to infer the BB's weight.
   if (!Probe)
@@ -737,7 +781,7 @@ SampleProfileLoader::findIndirectCallFunctionSamples(
 const FunctionSamples *
 SampleProfileLoader::findFunctionSamples(const Instruction &Inst) const {
   if (FunctionSamples::ProfileIsProbeBased) {
-    Optional<PseudoProbe> Probe = extractProbe(Inst);
+    std::optional<PseudoProbe> Probe = extractProbe(Inst);
     if (!Probe)
       return nullptr;
   }
@@ -1118,7 +1162,7 @@ bool SampleProfileLoader::inlineHotFunctions(
       bool Hot = false;
       SmallVector<CallBase *, 10> AllCandidates;
       SmallVector<CallBase *, 10> ColdCandidates;
-      for (auto &I : BB.getInstList()) {
+      for (auto &I : BB) {
         const FunctionSamples *FS = nullptr;
         if (auto *CB = dyn_cast<CallBase>(&I)) {
           if (!isa<IntrinsicInst>(I)) {
@@ -1250,7 +1294,7 @@ bool SampleProfileLoader::tryInlineCandidate(
   // aggregation of duplication.
   if (Candidate.CallsiteDistribution < 1) {
     for (auto &I : IFI.InlinedCallSites) {
-      if (Optional<PseudoProbe> Probe = extractProbe(*I))
+      if (std::optional<PseudoProbe> Probe = extractProbe(*I))
         setProbeDistributionFactor(*I, Probe->Factor *
                                    Candidate.CallsiteDistribution);
     }
@@ -1275,7 +1319,7 @@ bool SampleProfileLoader::getInlineCandidate(InlineCandidate *NewCandidate,
     return false;
 
   float Factor = 1.0;
-  if (Optional<PseudoProbe> Probe = extractProbe(*CB))
+  if (std::optional<PseudoProbe> Probe = extractProbe(*CB))
     Factor = Probe->Factor;
 
   uint64_t CallsiteCount =
@@ -1284,7 +1328,7 @@ bool SampleProfileLoader::getInlineCandidate(InlineCandidate *NewCandidate,
   return true;
 }
 
-Optional<InlineCost>
+std::optional<InlineCost>
 SampleProfileLoader::getExternalInlineAdvisorCost(CallBase &CB) {
   std::unique_ptr<InlineAdvice> Advice = nullptr;
   if (ExternalInlineAdvisor) {
@@ -1303,15 +1347,15 @@ SampleProfileLoader::getExternalInlineAdvisorCost(CallBase &CB) {
 }
 
 bool SampleProfileLoader::getExternalInlineAdvisorShouldInline(CallBase &CB) {
-  Optional<InlineCost> Cost = getExternalInlineAdvisorCost(CB);
-  return Cost ? !!Cost.value() : false;
+  std::optional<InlineCost> Cost = getExternalInlineAdvisorCost(CB);
+  return Cost ? !!*Cost : false;
 }
 
 InlineCost
 SampleProfileLoader::shouldInlineCandidate(InlineCandidate &Candidate) {
-  if (Optional<InlineCost> ReplayCost =
+  if (std::optional<InlineCost> ReplayCost =
           getExternalInlineAdvisorCost(*Candidate.CallInstr))
-    return ReplayCost.value();
+    return *ReplayCost;
   // Adjust threshold based on call site hotness, only do this for callsite
   // prioritized inliner because otherwise cost-benefit check is done earlier.
   int SampleThreshold = SampleColdCallSiteThreshold;
@@ -1387,7 +1431,7 @@ bool SampleProfileLoader::inlineHotFunctionsWithPriority(
   CandidateQueue CQueue;
   InlineCandidate NewCandidate;
   for (auto &BB : F) {
-    for (auto &I : BB.getInstList()) {
+    for (auto &I : BB) {
       auto *CB = dyn_cast<CallBase>(&I);
       if (!CB)
         continue;
@@ -1581,7 +1625,7 @@ void SampleProfileLoader::generateMDProfMetadata(Function &F) {
     BasicBlock *BB = &BI;
 
     if (BlockWeights[BB]) {
-      for (auto &I : BB->getInstList()) {
+      for (auto &I : *BB) {
         if (!isa<CallInst>(I) && !isa<InvokeInst>(I))
           continue;
         if (!cast<CallBase>(I).getCalledFunction()) {
@@ -1600,7 +1644,7 @@ void SampleProfileLoader::generateMDProfMetadata(Function &F) {
             // Prorate the callsite counts based on the pre-ICP distribution
             // factor to reflect what is already done to the callsite before
             // ICP, such as calliste cloning.
-            if (Optional<PseudoProbe> Probe = extractProbe(I)) {
+            if (std::optional<PseudoProbe> Probe = extractProbe(I)) {
               if (Probe->Factor < 1)
                 T = SampleRecord::adjustCallTargets(T.get(), Probe->Factor);
             }
@@ -1633,7 +1677,7 @@ void SampleProfileLoader::generateMDProfMetadata(Function &F) {
     } else if (OverwriteExistingWeights || ProfileSampleBlockAccurate) {
       // Set profile metadata (possibly annotated by LTO prelink) to zero or
       // clear it for cold code.
-      for (auto &I : BB->getInstList()) {
+      for (auto &I : *BB) {
         if (isa<CallInst>(I) || isa<InvokeInst>(I)) {
           if (cast<CallBase>(I).isIndirectCall())
             I.setMetadata(LLVMContext::MD_prof, nullptr);
@@ -1918,7 +1962,7 @@ bool SampleProfileLoader::doInitialization(Module &M,
   auto &Ctx = M.getContext();
 
   auto ReaderOrErr = SampleProfileReader::create(
-      Filename, Ctx, FSDiscriminatorPass::Base, RemappingFilename);
+      Filename, Ctx, *FS, FSDiscriminatorPass::Base, RemappingFilename);
   if (std::error_code EC = ReaderOrErr.getError()) {
     std::string Msg = "Could not open profile: " + EC.message();
     Ctx.diagnose(DiagnosticInfoSampleProfile(Filename, Msg));
@@ -2010,7 +2054,154 @@ bool SampleProfileLoader::doInitialization(Module &M,
     }
   }
 
+  if (ReportProfileStaleness || PersistProfileStaleness) {
+    MatchingManager =
+        std::make_unique<SampleProfileMatcher>(M, *Reader, ProbeManager.get());
+  }
+
   return true;
+}
+
+void SampleProfileMatcher::detectProfileMismatch(const Function &F,
+                                                 const FunctionSamples &FS) {
+  if (FunctionSamples::ProfileIsProbeBased) {
+    uint64_t Count = FS.getTotalSamples();
+    TotalFuncHashSamples += Count;
+    TotalProfiledFunc++;
+    if (!ProbeManager->profileIsValid(F, FS)) {
+      MismatchedFuncHashSamples += Count;
+      NumMismatchedFuncHash++;
+      return;
+    }
+  }
+
+  std::unordered_set<LineLocation, LineLocationHash> MatchedCallsiteLocs;
+
+  // Go through all the callsites on the IR and flag the callsite if the target
+  // name is the same as the one in the profile.
+  for (auto &BB : F) {
+    for (auto &I : BB) {
+      if (!isa<CallBase>(&I) || isa<IntrinsicInst>(&I))
+        continue;
+
+      const auto *CB = dyn_cast<CallBase>(&I);
+      if (auto &DLoc = I.getDebugLoc()) {
+        LineLocation IRCallsite = FunctionSamples::getCallSiteIdentifier(DLoc);
+
+        StringRef CalleeName;
+        if (Function *Callee = CB->getCalledFunction())
+          CalleeName = FunctionSamples::getCanonicalFnName(Callee->getName());
+
+        const auto CTM = FS.findCallTargetMapAt(IRCallsite);
+        const auto CallsiteFS = FS.findFunctionSamplesMapAt(IRCallsite);
+
+        // Indirect call case.
+        if (CalleeName.empty()) {
+          // Since indirect call does not have the CalleeName, check
+          // conservatively if callsite in the profile is a callsite location.
+          // This is to avoid nums of false positive since otherwise all the
+          // indirect call samples will be reported as mismatching.
+          if ((CTM && !CTM->empty()) || (CallsiteFS && !CallsiteFS->empty()))
+            MatchedCallsiteLocs.insert(IRCallsite);
+        } else {
+          // Check if the call target name is matched for direct call case.
+          if ((CTM && CTM->count(CalleeName)) ||
+              (CallsiteFS && CallsiteFS->count(CalleeName)))
+            MatchedCallsiteLocs.insert(IRCallsite);
+        }
+      }
+    }
+  }
+
+  auto isInvalidLineOffset = [](uint32_t LineOffset) {
+    return LineOffset & 0x8000;
+  };
+
+  // Check if there are any callsites in the profile that does not match to any
+  // IR callsites, those callsite samples will be discarded.
+  for (auto &I : FS.getBodySamples()) {
+    const LineLocation &Loc = I.first;
+    if (isInvalidLineOffset(Loc.LineOffset))
+      continue;
+
+    uint64_t Count = I.second.getSamples();
+    if (!I.second.getCallTargets().empty()) {
+      TotalCallsiteSamples += Count;
+      TotalProfiledCallsites++;
+      if (!MatchedCallsiteLocs.count(Loc)) {
+        MismatchedCallsiteSamples += Count;
+        NumMismatchedCallsites++;
+      }
+    }
+  }
+
+  for (auto &I : FS.getCallsiteSamples()) {
+    const LineLocation &Loc = I.first;
+    if (isInvalidLineOffset(Loc.LineOffset))
+      continue;
+
+    uint64_t Count = 0;
+    for (auto &FM : I.second) {
+      Count += FM.second.getHeadSamplesEstimate();
+    }
+    TotalCallsiteSamples += Count;
+    TotalProfiledCallsites++;
+    if (!MatchedCallsiteLocs.count(Loc)) {
+      MismatchedCallsiteSamples += Count;
+      NumMismatchedCallsites++;
+    }
+  }
+}
+
+void SampleProfileMatcher::detectProfileMismatch() {
+  for (auto &F : M) {
+    if (F.isDeclaration() || !F.hasFnAttribute("use-sample-profile"))
+      continue;
+    FunctionSamples *FS = Reader.getSamplesFor(F);
+    if (!FS)
+      continue;
+    detectProfileMismatch(F, *FS);
+  }
+
+  if (ReportProfileStaleness) {
+    if (FunctionSamples::ProfileIsProbeBased) {
+      errs() << "(" << NumMismatchedFuncHash << "/" << TotalProfiledFunc << ")"
+             << " of functions' profile are invalid and "
+             << " (" << MismatchedFuncHashSamples << "/" << TotalFuncHashSamples
+             << ")"
+             << " of samples are discarded due to function hash mismatch.\n";
+    }
+    errs() << "(" << NumMismatchedCallsites << "/" << TotalProfiledCallsites
+           << ")"
+           << " of callsites' profile are invalid and "
+           << "(" << MismatchedCallsiteSamples << "/" << TotalCallsiteSamples
+           << ")"
+           << " of samples are discarded due to callsite location mismatch.\n";
+  }
+
+  if (PersistProfileStaleness) {
+    LLVMContext &Ctx = M.getContext();
+    MDBuilder MDB(Ctx);
+
+    SmallVector<std::pair<StringRef, uint64_t>> ProfStatsVec;
+    if (FunctionSamples::ProfileIsProbeBased) {
+      ProfStatsVec.emplace_back("NumMismatchedFuncHash", NumMismatchedFuncHash);
+      ProfStatsVec.emplace_back("TotalProfiledFunc", TotalProfiledFunc);
+      ProfStatsVec.emplace_back("MismatchedFuncHashSamples",
+                                MismatchedFuncHashSamples);
+      ProfStatsVec.emplace_back("TotalFuncHashSamples", TotalFuncHashSamples);
+    }
+
+    ProfStatsVec.emplace_back("NumMismatchedCallsites", NumMismatchedCallsites);
+    ProfStatsVec.emplace_back("TotalProfiledCallsites", TotalProfiledCallsites);
+    ProfStatsVec.emplace_back("MismatchedCallsiteSamples",
+                              MismatchedCallsiteSamples);
+    ProfStatsVec.emplace_back("TotalCallsiteSamples", TotalCallsiteSamples);
+
+    auto *MD = MDB.createLLVMStats(ProfStatsVec);
+    auto *NMD = M.getOrInsertNamedMetadata("llvm.stats");
+    NMD->addOperand(MD);
+  }
 }
 
 bool SampleProfileLoader::runOnModule(Module &M, ModuleAnalysisManager *AM,
@@ -2056,6 +2247,9 @@ bool SampleProfileLoader::runOnModule(Module &M, ModuleAnalysisManager *AM,
   }
   assert(SymbolMap.count(StringRef()) == 0 &&
          "No empty StringRef should be added in SymbolMap");
+
+  if (ReportProfileStaleness || PersistProfileStaleness)
+    MatchingManager->detectProfileMismatch();
 
   bool retval = false;
   for (auto *F : buildFunctionOrder(M, CG)) {
@@ -2141,6 +2335,11 @@ bool SampleProfileLoader::runOnFunction(Function &F, ModuleAnalysisManager *AM) 
     return emitAnnotations(F);
   return false;
 }
+SampleProfileLoaderPass::SampleProfileLoaderPass(
+    std::string File, std::string RemappingFile, ThinOrFullLTOPhase LTOPhase,
+    IntrusiveRefCntPtr<vfs::FileSystem> FS)
+    : ProfileFileName(File), ProfileRemappingFileName(RemappingFile),
+      LTOPhase(LTOPhase), FS(std::move(FS)) {}
 
 PreservedAnalyses SampleProfileLoaderPass::run(Module &M,
                                                ModuleAnalysisManager &AM) {
@@ -2157,11 +2356,14 @@ PreservedAnalyses SampleProfileLoaderPass::run(Module &M,
     return FAM.getResult<TargetLibraryAnalysis>(F);
   };
 
+  if (!FS)
+    FS = vfs::getRealFileSystem();
+
   SampleProfileLoader SampleLoader(
       ProfileFileName.empty() ? SampleProfileFile : ProfileFileName,
       ProfileRemappingFileName.empty() ? SampleProfileRemappingFile
                                        : ProfileRemappingFileName,
-      LTOPhase, GetAssumptionCache, GetTTI, GetTLI);
+      LTOPhase, FS, GetAssumptionCache, GetTTI, GetTLI);
 
   if (!SampleLoader.doInitialization(M, &FAM))
     return PreservedAnalyses::all();

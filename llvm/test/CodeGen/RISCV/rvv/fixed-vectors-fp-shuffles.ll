@@ -226,6 +226,39 @@ define <4 x double> @vrgather_shuffle_vx_v4f64(<4 x double> %x) {
   ret <4 x double> %s
 }
 
+define <4 x half> @shuffle_v8f16_to_vslidedown_1(<8 x half> %x) {
+; CHECK-LABEL: shuffle_v8f16_to_vslidedown_1:
+; CHECK:       # %bb.0: # %entry
+; CHECK-NEXT:    vsetivli zero, 8, e16, m1, ta, ma
+; CHECK-NEXT:    vslidedown.vi v8, v8, 1
+; CHECK-NEXT:    ret
+entry:
+  %s = shufflevector <8 x half> %x, <8 x half> poison, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  ret <4 x half> %s
+}
+
+define <4 x half> @shuffle_v8f16_to_vslidedown_3(<8 x half> %x) {
+; CHECK-LABEL: shuffle_v8f16_to_vslidedown_3:
+; CHECK:       # %bb.0: # %entry
+; CHECK-NEXT:    vsetivli zero, 8, e16, m1, ta, ma
+; CHECK-NEXT:    vslidedown.vi v8, v8, 3
+; CHECK-NEXT:    ret
+entry:
+  %s = shufflevector <8 x half> %x, <8 x half> poison, <4 x i32> <i32 3, i32 4, i32 5, i32 6>
+  ret <4 x half> %s
+}
+
+define <2 x float> @shuffle_v4f32_to_vslidedown(<4 x float> %x) {
+; CHECK-LABEL: shuffle_v4f32_to_vslidedown:
+; CHECK:       # %bb.0: # %entry
+; CHECK-NEXT:    vsetivli zero, 4, e32, m1, ta, ma
+; CHECK-NEXT:    vslidedown.vi v8, v8, 1
+; CHECK-NEXT:    ret
+entry:
+  %s = shufflevector <4 x float> %x, <4 x float> poison, <2 x i32> <i32 1, i32 2>
+  ret <2 x float> %s
+}
+
 define <4 x half> @slidedown_v4f16(<4 x half> %x) {
 ; CHECK-LABEL: slidedown_v4f16:
 ; CHECK:       # %bb.0:
@@ -273,9 +306,9 @@ define <8 x float> @splice_unary(<8 x float> %x) {
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    vsetivli zero, 7, e32, m2, ta, ma
 ; CHECK-NEXT:    vslidedown.vi v10, v8, 1
-; CHECK-NEXT:    vsetivli zero, 8, e32, m2, tu, ma
+; CHECK-NEXT:    vsetivli zero, 8, e32, m2, ta, ma
 ; CHECK-NEXT:    vslideup.vi v10, v8, 7
-; CHECK-NEXT:    vmv2r.v v8, v10
+; CHECK-NEXT:    vmv.v.v v8, v10
 ; CHECK-NEXT:    ret
   %s = shufflevector <8 x float> %x, <8 x float> poison, <8 x i32> <i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, i32 0>
   ret <8 x float> %s
@@ -286,9 +319,9 @@ define <8 x double> @splice_unary2(<8 x double> %x) {
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    vsetivli zero, 2, e64, m4, ta, ma
 ; CHECK-NEXT:    vslidedown.vi v12, v8, 6
-; CHECK-NEXT:    vsetivli zero, 8, e64, m4, tu, ma
+; CHECK-NEXT:    vsetivli zero, 8, e64, m4, ta, ma
 ; CHECK-NEXT:    vslideup.vi v12, v8, 2
-; CHECK-NEXT:    vmv4r.v v8, v12
+; CHECK-NEXT:    vmv.v.v v8, v12
 ; CHECK-NEXT:    ret
   %s = shufflevector <8 x double> %x, <8 x double> poison, <8 x i32> <i32 6, i32 7, i32 0, i32 1, i32 2, i32 3, i32 4, i32 5>
   ret <8 x double> %s
@@ -299,7 +332,7 @@ define <8 x float> @splice_binary(<8 x float> %x, <8 x float> %y) {
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    vsetivli zero, 6, e32, m2, ta, ma
 ; CHECK-NEXT:    vslidedown.vi v8, v8, 2
-; CHECK-NEXT:    vsetivli zero, 8, e32, m2, tu, ma
+; CHECK-NEXT:    vsetivli zero, 8, e32, m2, ta, ma
 ; CHECK-NEXT:    vslideup.vi v8, v10, 6
 ; CHECK-NEXT:    ret
   %s = shufflevector <8 x float> %x, <8 x float> %y, <8 x i32> <i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, i32 undef, i32 9>
@@ -311,9 +344,9 @@ define <8 x double> @splice_binary2(<8 x double> %x, <8 x double> %y) {
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    vsetivli zero, 3, e64, m4, ta, ma
 ; CHECK-NEXT:    vslidedown.vi v12, v12, 5
-; CHECK-NEXT:    vsetivli zero, 8, e64, m4, tu, ma
+; CHECK-NEXT:    vsetivli zero, 8, e64, m4, ta, ma
 ; CHECK-NEXT:    vslideup.vi v12, v8, 3
-; CHECK-NEXT:    vmv4r.v v8, v12
+; CHECK-NEXT:    vmv.v.v v8, v12
 ; CHECK-NEXT:    ret
   %s = shufflevector <8 x double> %x, <8 x double> %y, <8 x i32> <i32 13, i32 14, i32 15, i32 0, i32 1, i32 2, i32 3, i32 4>
   ret <8 x double> %s

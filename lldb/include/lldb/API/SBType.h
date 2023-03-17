@@ -106,6 +106,9 @@ public:
   SBType();
 
   SBType(const lldb::SBType &rhs);
+#ifndef SWIG
+  SBType(const lldb::TypeImplSP &);
+#endif
 
   ~SBType();
 
@@ -236,10 +239,10 @@ protected:
   friend class SBTypeMemberFunction;
   friend class SBTypeList;
   friend class SBValue;
+  friend class SBWatchpoint;
 
   SBType(const lldb_private::CompilerType &);
   SBType(const lldb::TypeSP &);
-  SBType(const lldb::TypeImplSP &);
 };
 
 class SBTypeList {

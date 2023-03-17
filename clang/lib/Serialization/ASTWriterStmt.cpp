@@ -433,16 +433,13 @@ addSubstitutionDiagnostic(
 void ASTStmtWriter::VisitConceptSpecializationExpr(
         ConceptSpecializationExpr *E) {
   VisitExpr(E);
-  ArrayRef<TemplateArgument> TemplateArgs = E->getTemplateArguments();
-  Record.push_back(TemplateArgs.size());
   Record.AddNestedNameSpecifierLoc(E->getNestedNameSpecifierLoc());
   Record.AddSourceLocation(E->getTemplateKWLoc());
   Record.AddDeclarationNameInfo(E->getConceptNameInfo());
   Record.AddDeclRef(E->getNamedConcept());
   Record.AddDeclRef(E->getFoundDecl());
+  Record.AddDeclRef(E->getSpecializationDecl());
   Record.AddASTTemplateArgumentListInfo(E->getTemplateArgsAsWritten());
-  for (const TemplateArgument &Arg : TemplateArgs)
-    Record.AddTemplateArgument(Arg);
   if (!E->isValueDependent())
     addConstraintSatisfaction(Record, E->getSatisfaction());
 
@@ -496,12 +493,12 @@ void ASTStmtWriter::VisitRequiresExpr(RequiresExpr *E) {
     } else {
       auto *NestedReq = cast<concepts::NestedRequirement>(R);
       Record.push_back(concepts::Requirement::RK_Nested);
-      Record.push_back(NestedReq->isSubstitutionFailure());
-      if (NestedReq->isSubstitutionFailure()){
-        addSubstitutionDiagnostic(Record,
-                                  NestedReq->getSubstitutionDiagnostic());
+      Record.push_back(NestedReq->hasInvalidConstraint());
+      if (NestedReq->hasInvalidConstraint()) {
+        Record.AddString(NestedReq->getInvalidConstraintEntity());
+        addConstraintSatisfaction(Record, *NestedReq->Satisfaction);
       } else {
-        Record.AddStmt(NestedReq->Value.get<Expr *>());
+        Record.AddStmt(NestedReq->getConstraintExpr());
         if (!NestedReq->isDependent())
           addConstraintSatisfaction(Record, *NestedReq->Satisfaction);
       }
@@ -1748,14 +1745,20 @@ void ASTStmtWriter::VisitCXXDefaultArgExpr(CXXDefaultArgExpr *E) {
   Record.AddDeclRef(E->getParam());
   Record.AddDeclRef(cast_or_null<Decl>(E->getUsedContext()));
   Record.AddSourceLocation(E->getUsedLocation());
+  Record.push_back(E->hasRewrittenInit());
+  if (E->hasRewrittenInit())
+    Record.AddStmt(E->getRewrittenExpr());
   Code = serialization::EXPR_CXX_DEFAULT_ARG;
 }
 
 void ASTStmtWriter::VisitCXXDefaultInitExpr(CXXDefaultInitExpr *E) {
   VisitExpr(E);
+  Record.push_back(E->hasRewrittenInit());
   Record.AddDeclRef(E->getField());
   Record.AddDeclRef(cast_or_null<Decl>(E->getUsedContext()));
   Record.AddSourceLocation(E->getExprLoc());
+  if (E->hasRewrittenInit())
+    Record.AddStmt(E->getRewrittenExpr());
   Code = serialization::EXPR_CXX_DEFAULT_INIT;
 }
 
@@ -2084,6 +2087,30 @@ void ASTStmtWriter::VisitCXXFoldExpr(CXXFoldExpr *E) {
   Code = serialization::EXPR_CXX_FOLD;
 }
 
+void ASTStmtWriter::VisitCXXParenListInitExpr(CXXParenListInitExpr *E) {
+  VisitExpr(E);
+  ArrayRef<Expr *> InitExprs = E->getInitExprs();
+  Record.push_back(InitExprs.size());
+  Record.push_back(E->getUserSpecifiedInitExprs().size());
+  Record.AddSourceLocation(E->getInitLoc());
+  Record.AddSourceLocation(E->getBeginLoc());
+  Record.AddSourceLocation(E->getEndLoc());
+  for (Expr *InitExpr : E->getInitExprs())
+    Record.AddStmt(InitExpr);
+  Expr *ArrayFiller = E->getArrayFiller();
+  FieldDecl *UnionField = E->getInitializedFieldInUnion();
+  bool HasArrayFillerOrUnionDecl = ArrayFiller || UnionField;
+  Record.push_back(HasArrayFillerOrUnionDecl);
+  if (HasArrayFillerOrUnionDecl) {
+    Record.push_back(static_cast<bool>(ArrayFiller));
+    if (ArrayFiller)
+      Record.AddStmt(ArrayFiller);
+    else
+      Record.AddDeclRef(UnionField);
+  }
+  Code = serialization::EXPR_CXX_PAREN_LIST_INIT;
+}
+
 void ASTStmtWriter::VisitOpaqueValueExpr(OpaqueValueExpr *E) {
   VisitExpr(E);
   Record.AddStmt(E->getSourceExpr());
@@ -2399,6 +2426,13 @@ void ASTStmtWriter::VisitOMPTaskwaitDirective(OMPTaskwaitDirective *D) {
   Code = serialization::STMT_OMP_TASKWAIT_DIRECTIVE;
 }
 
+void ASTStmtWriter::VisitOMPErrorDirective(OMPErrorDirective *D) {
+  VisitStmt(D);
+  Record.push_back(D->getNumClauses());
+  VisitOMPExecutableDirective(D);
+  Code = serialization::STMT_OMP_ERROR_DIRECTIVE;
+}
+
 void ASTStmtWriter::VisitOMPTaskgroupDirective(OMPTaskgroupDirective *D) {
   VisitStmt(D);
   VisitOMPExecutableDirective(D);
@@ -2664,16 +2698,14 @@ void ASTStmtWriter::VisitOMPTargetParallelGenericLoopDirective(
 //===----------------------------------------------------------------------===//
 
 unsigned ASTWriter::RecordSwitchCaseID(SwitchCase *S) {
-  assert(SwitchCaseIDs.find(S) == SwitchCaseIDs.end() &&
-         "SwitchCase recorded twice");
+  assert(!SwitchCaseIDs.contains(S) && "SwitchCase recorded twice");
   unsigned NextID = SwitchCaseIDs.size();
   SwitchCaseIDs[S] = NextID;
   return NextID;
 }
 
 unsigned ASTWriter::getSwitchCaseID(SwitchCase *S) {
-  assert(SwitchCaseIDs.find(S) != SwitchCaseIDs.end() &&
-         "SwitchCase hasn't been seen yet");
+  assert(SwitchCaseIDs.contains(S) && "SwitchCase hasn't been seen yet");
   return SwitchCaseIDs[S];
 }
 

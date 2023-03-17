@@ -13,8 +13,9 @@
 #ifndef LLVM_CLANG_AST_INTERP_RECORD_H
 #define LLVM_CLANG_AST_INTERP_RECORD_H
 
-#include "clang/AST/Decl.h"
 #include "Descriptor.h"
+#include "clang/AST/Decl.h"
+#include "clang/AST/DeclCXX.h"
 
 namespace clang {
 namespace interp {
@@ -48,6 +49,8 @@ public:
 public:
   /// Returns the underlying declaration.
   const RecordDecl *getDecl() const { return Decl; }
+  /// Returns the name of the underlying declaration.
+  const std::string getName() const { return Decl->getNameAsString(); }
   /// Checks if the record is a union.
   bool isUnion() const { return getDecl()->isUnion(); }
   /// Returns the size of the record.
@@ -60,6 +63,12 @@ public:
   const Base *getBase(const RecordDecl *FD) const;
   /// Returns a virtual base descriptor.
   const Base *getVirtualBase(const RecordDecl *RD) const;
+  // Returns the destructor of the record, if any.
+  const CXXDestructorDecl *getDestructor() const {
+    if (const auto *CXXDecl = dyn_cast<CXXRecordDecl>(Decl))
+      return CXXDecl->getDestructor();
+    return nullptr;
+  }
 
   using const_field_iter = FieldList::const_iterator;
   llvm::iterator_range<const_field_iter> fields() const {
@@ -110,7 +119,6 @@ private:
   llvm::DenseMap<const FieldDecl *, Field *> FieldMap;
   /// Mapping from declarations to virtual bases.
   llvm::DenseMap<const RecordDecl *, Base *> VirtualBaseMap;
-  /// Mapping from
   /// Size of the structure.
   unsigned BaseSize;
   /// Size of all virtual bases.

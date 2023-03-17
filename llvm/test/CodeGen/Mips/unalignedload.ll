@@ -43,14 +43,14 @@ define void @bar1() nounwind {
 ; MIPS32-EB-NEXT:    addu $gp, $2, $25
 ; MIPS32-EB-NEXT:    lw $1, %got(s2)($gp)
 ; MIPS32-EB-NEXT:    lbu $2, 3($1)
+; MIPS32-EB-NEXT:    sll $2, $2, 16
 ; MIPS32-EB-NEXT:    lbu $1, 2($1)
-; MIPS32-EB-NEXT:    sll $1, $1, 8
-; MIPS32-EB-NEXT:    or $1, $1, $2
+; MIPS32-EB-NEXT:    sll $1, $1, 24
 ; MIPS32-EB-NEXT:    lw $25, %call16(foo2)($gp)
 ; MIPS32-EB-NEXT:    .reloc ($tmp0), R_MIPS_JALR, foo2
 ; MIPS32-EB-NEXT:  $tmp0:
 ; MIPS32-EB-NEXT:    jalr $25
-; MIPS32-EB-NEXT:    sll $4, $1, 16
+; MIPS32-EB-NEXT:    or $4, $1, $2
 ; MIPS32-EB-NEXT:    lw $ra, 20($sp) # 4-byte Folded Reload
 ; MIPS32-EB-NEXT:    jr $ra
 ; MIPS32-EB-NEXT:    addiu $sp, $sp, 24
@@ -90,7 +90,7 @@ define void @bar1() nounwind {
 ; MIPS32R6-EB-NEXT:    jr $ra
 ; MIPS32R6-EB-NEXT:    addiu $sp, $sp, 24
 entry:
-  tail call void @foo2(%struct.S1* byval(%struct.S1) getelementptr inbounds (%struct.S2, %struct.S2* @s2, i32 0, i32 1)) nounwind
+  tail call void @foo2(ptr byval(%struct.S1) getelementptr inbounds (%struct.S2, ptr @s2, i32 0, i32 1)) nounwind
   ret void
 }
 
@@ -130,12 +130,12 @@ define void @bar2() nounwind {
 ; MIPS32-EB-NEXT:    addu $gp, $2, $25
 ; MIPS32-EB-NEXT:    lw $1, %got(s4)($gp)
 ; MIPS32-EB-NEXT:    lwl $4, 0($1)
-; MIPS32-EB-NEXT:    lwr $4, 3($1)
 ; MIPS32-EB-NEXT:    lbu $2, 5($1)
-; MIPS32-EB-NEXT:    lbu $3, 4($1)
-; MIPS32-EB-NEXT:    sll $3, $3, 8
-; MIPS32-EB-NEXT:    or $2, $3, $2
+; MIPS32-EB-NEXT:    lwr $4, 3($1)
 ; MIPS32-EB-NEXT:    sll $2, $2, 16
+; MIPS32-EB-NEXT:    lbu $3, 4($1)
+; MIPS32-EB-NEXT:    sll $3, $3, 24
+; MIPS32-EB-NEXT:    or $2, $3, $2
 ; MIPS32-EB-NEXT:    lbu $1, 6($1)
 ; MIPS32-EB-NEXT:    sll $1, $1, 8
 ; MIPS32-EB-NEXT:    lw $25, %call16(foo4)($gp)
@@ -190,9 +190,9 @@ define void @bar2() nounwind {
 ; MIPS32R6-EB-NEXT:    jr $ra
 ; MIPS32R6-EB-NEXT:    addiu $sp, $sp, 24
 entry:
-  tail call void @foo4(%struct.S4* byval(%struct.S4) @s4) nounwind
+  tail call void @foo4(ptr byval(%struct.S4) @s4) nounwind
   ret void
 }
 
-declare void @foo2(%struct.S1* byval(%struct.S1))
-declare void @foo4(%struct.S4* byval(%struct.S4))
+declare void @foo2(ptr byval(%struct.S1))
+declare void @foo4(ptr byval(%struct.S4))

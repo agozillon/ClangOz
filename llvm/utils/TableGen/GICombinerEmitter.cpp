@@ -15,8 +15,12 @@
 #include "GlobalISel/CodeExpander.h"
 #include "GlobalISel/CodeExpansions.h"
 #include "GlobalISel/GIMatchDag.h"
+#include "GlobalISel/GIMatchDagEdge.h"
+#include "GlobalISel/GIMatchDagInstr.h"
+#include "GlobalISel/GIMatchDagOperands.h"
 #include "GlobalISel/GIMatchDagPredicate.h"
 #include "GlobalISel/GIMatchTree.h"
+#include "TableGenBackends.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringSet.h"
@@ -24,6 +28,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ScopedPrinter.h"
 #include "llvm/TableGen/Error.h"
+#include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/StringMatcher.h"
 #include "llvm/TableGen/TableGenBackend.h"
 #include <cstdint>
@@ -636,7 +641,7 @@ void GICombinerEmitter::emitNameMatcher(raw_ostream &OS) const {
         std::make_pair(std::string(EnumeratedRule.getName()), Code));
   }
 
-  OS << "static Optional<uint64_t> getRuleIdxForIdentifier(StringRef "
+  OS << "static std::optional<uint64_t> getRuleIdxForIdentifier(StringRef "
         "RuleIdentifier) {\n"
      << "  uint64_t I;\n"
      << "  // getAtInteger(...) returns false on success\n"
@@ -647,7 +652,7 @@ void GICombinerEmitter::emitNameMatcher(raw_ostream &OS) const {
   StringMatcher Matcher("RuleIdentifier", Cases, OS);
   Matcher.Emit();
   OS << "#endif // ifndef NDEBUG\n\n"
-     << "  return None;\n"
+     << "  return std::nullopt;\n"
      << "}\n";
 }
 
@@ -764,6 +769,29 @@ void GICombinerEmitter::generateCodeForTree(raw_ostream &OS,
 
     OS << Indent << "  if (1\n";
 
+    // Emit code for C++ Predicates.
+    if (RuleDef.getValue("Predicates")) {
+      ListInit *Preds = RuleDef.getValueAsListInit("Predicates");
+      for (Init *I : Preds->getValues()) {
+        if (DefInit *Pred = dyn_cast<DefInit>(I)) {
+          Record *Def = Pred->getDef();
+          if (!Def->isSubClassOf("Predicate")) {
+            PrintError(Def->getLoc(), "Unknown 'Predicate' Type");
+            return;
+          }
+
+          StringRef CondString = Def->getValueAsString("CondString");
+          if (CondString.empty())
+            continue;
+
+          OS << Indent << "      && (\n"
+             << Indent << "           // Predicate: " << Def->getName() << "\n"
+             << Indent << "           " << CondString << "\n"
+             << Indent << "         )\n";
+        }
+      }
+    }
+
     // Attempt to emit code for any untested predicates left over. Note that
     // isFullyTested() will remain false even if we succeed here and therefore
     // combine rule elision will not be performed. This is because we do not
@@ -800,16 +828,19 @@ void GICombinerEmitter::generateCodeForTree(raw_ostream &OS,
          << Indent << "      "
          << CodeExpander(Rule->getMatchingFixupCode()->getValue(), Expansions,
                          RuleDef.getLoc(), ShowExpansions)
-         << "\n"
+         << '\n'
          << Indent << "      return true;\n"
          << Indent << "  }()";
     }
-    OS << ") {\n" << Indent << "   ";
+    OS << Indent << "     ) {\n" << Indent << "   ";
 
     if (const StringInit *Code = dyn_cast<StringInit>(Applyer->getArg(0))) {
-      OS << CodeExpander(Code->getAsUnquotedString(), Expansions,
+      OS << "    LLVM_DEBUG(dbgs() << \"Applying rule '"
+         << RuleDef.getName()
+         << "'\\n\");\n"
+         << CodeExpander(Code->getAsUnquotedString(), Expansions,
                          RuleDef.getLoc(), ShowExpansions)
-         << "\n"
+         << '\n'
          << Indent << "    return true;\n"
          << Indent << "  }\n";
     } else {
@@ -924,7 +955,7 @@ void GICombinerEmitter::run(raw_ostream &OS) {
 
   emitNameMatcher(OS);
 
-  OS << "static Optional<std::pair<uint64_t, uint64_t>> "
+  OS << "static std::optional<std::pair<uint64_t, uint64_t>> "
         "getRuleRangeForIdentifier(StringRef RuleIdentifier) {\n"
      << "  std::pair<StringRef, StringRef> RangePair = "
         "RuleIdentifier.split('-');\n"
@@ -934,7 +965,7 @@ void GICombinerEmitter::run(raw_ostream &OS) {
      << "    const auto Last = "
         "getRuleIdxForIdentifier(RangePair.second);\n"
      << "    if (!First || !Last)\n"
-     << "      return None;\n"
+     << "      return std::nullopt;\n"
      << "    if (First >= Last)\n"
      << "      report_fatal_error(\"Beginning of range should be before "
         "end of range\");\n"
@@ -945,7 +976,7 @@ void GICombinerEmitter::run(raw_ostream &OS) {
      << "  }\n"
      << "  const auto I = getRuleIdxForIdentifier(RangePair.first);\n"
      << "  if (!I)\n"
-     << "    return None;\n"
+     << "    return std::nullopt;\n"
      << "  return {{*I, *I + 1}};\n"
      << "}\n\n";
 

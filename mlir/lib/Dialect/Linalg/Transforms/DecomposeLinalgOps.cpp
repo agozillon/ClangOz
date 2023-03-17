@@ -10,6 +10,7 @@
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include <optional>
 
 using namespace mlir;
 using namespace mlir::linalg;
@@ -161,7 +162,7 @@ DecomposeLinalgOp::createPeeledGenericOp(GenericOp genericOp,
     // If the result is yielded by the original op, use the operand, indexing
     // map and result type that correspond to the yielded value.
 
-    Optional<unsigned> resultNumber;
+    std::optional<unsigned> resultNumber;
     for (auto *user : scalarOpResult.getUsers()) {
       if (auto yieldOp = dyn_cast<YieldOp>(user)) {
         // Find the first use of the `scalarOpResult` in the yield op.
@@ -176,7 +177,8 @@ DecomposeLinalgOp::createPeeledGenericOp(GenericOp genericOp,
       }
     }
     if (resultNumber) {
-      newInitValues.push_back(genericOp.getOutputOperand(*resultNumber)->get());
+      newInitValues.push_back(
+          genericOp.getDpsInitOperand(*resultNumber)->get());
       OpResult result = genericOp.getResult(*resultNumber).cast<OpResult>();
       newResultTypes.push_back(result.getType());
       peeledGenericOpIndexingMaps.push_back(
@@ -224,7 +226,7 @@ DecomposeLinalgOp::createResidualGenericOp(GenericOp genericOp,
   /// Add indexing maps for the newly added operands. Use the same map
   /// as those used for the new results of the peeledGenericOp.
   auto indexingMaps = llvm::to_vector(
-      llvm::map_range(genericOp.getInputOperands(), [&](OpOperand *operand) {
+      llvm::map_range(genericOp.getDpsInputOperands(), [&](OpOperand *operand) {
         return genericOp.getMatchingIndexingMap(operand);
       }));
   for (auto resultNum :
@@ -233,7 +235,7 @@ DecomposeLinalgOp::createResidualGenericOp(GenericOp genericOp,
     indexingMaps.push_back(
         peeledGenericOp.getIndexingMapMatchingResult(result));
   }
-  for (OpOperand *outOperand : genericOp.getOutputOperands())
+  for (OpOperand *outOperand : genericOp.getDpsInitOperands())
     indexingMaps.push_back(genericOp.getMatchingIndexingMap(outOperand));
 
   auto indexingMapAttr = rewriter.getAffineMapArrayAttr(indexingMaps);
@@ -261,7 +263,7 @@ DecomposeLinalgOp::matchAndRewrite(GenericOp genericOp,
         genericOp, "only operations with tensor semantics are handled");
   }
 
-  if (llvm::any_of(genericOp.getOutputOperands(), [&](OpOperand *outOperand) {
+  if (llvm::any_of(genericOp.getDpsInitOperands(), [&](OpOperand *outOperand) {
         return !genericOp.getMatchingIndexingMap(outOperand).isPermutation();
       })) {
     return rewriter.notifyMatchFailure(
@@ -322,20 +324,20 @@ DecomposeLinalgOp::matchAndRewrite(GenericOp genericOp,
 
   /// In the split operations, replace block arguments uses that refer to
   /// original operation to the block arguments of the newly created operation.
-  unsigned origNumInputs = genericOp.getNumInputs();
+  unsigned origNumInputs = genericOp.getNumDpsInputs();
   for (const auto &inputBlockArg :
        llvm::enumerate(genericOp.getBody()->getArguments())) {
     Value residualOpReplacementArg =
         residualGenericOpBody->getArgument(inputBlockArg.index());
-    inputBlockArg.value().replaceUsesWithIf(
-        residualOpReplacementArg, [&](OpOperand &use) {
+    rewriter.replaceUsesWithIf(
+        inputBlockArg.value(), residualOpReplacementArg, [&](OpOperand &use) {
           return use.getOwner()->getBlock() == residualGenericOpBody;
         });
 
     Value peeledOpReplacementArg =
         peeledGenericOpBody->getArgument(inputBlockArg.index());
-    inputBlockArg.value().replaceUsesWithIf(
-        peeledOpReplacementArg, [&](OpOperand &use) {
+    rewriter.replaceUsesWithIf(
+        inputBlockArg.value(), peeledOpReplacementArg, [&](OpOperand &use) {
           return use.getOwner()->getBlock() == peeledGenericOpBody;
         });
   }
@@ -375,6 +377,9 @@ DecomposeLinalgOp::matchAndRewrite(GenericOp genericOp,
 }
 
 void mlir::linalg::populateDecomposeLinalgOpsPattern(
-    RewritePatternSet &patterns) {
+    RewritePatternSet &patterns, bool removeDeadArgsAndResults) {
   patterns.insert<DecomposeLinalgOp>(patterns.getContext());
+  // Add the patterns to clean up the dead operands and results.
+  if (removeDeadArgsAndResults)
+    populateEraseUnusedOperandsAndResultsPatterns(patterns);
 }

@@ -116,11 +116,19 @@
 // RUN: %clang -### %s -g -target x86_64-scei-ps5 2>&1 \
 // RUN:             | FileCheck -check-prefix=LDGARANGE %s
 
-// On the AIX, -g defaults to -gdbx and limited debug info.
+// On the AIX, -g defaults to limited debug info.
 // RUN: %clang -### -c -g %s -target powerpc-ibm-aix-xcoff 2>&1 \
-// RUN:             | FileCheck -check-prefix=G_LIMITED -check-prefix=G_DBX %s
+// RUN:             | FileCheck -check-prefix=G_LIMITED %s
 // RUN: %clang -### -c -g %s -target powerpc64-ibm-aix-xcoff 2>&1 \
-// RUN:             | FileCheck -check-prefix=G_LIMITED -check-prefix=G_DBX %s
+// RUN:             | FileCheck -check-prefix=G_LIMITED %s
+// RUN: %clang -### -c -g %s -target powerpc-ibm-aix-xcoff 2>&1 \
+// RUN:             | FileCheck -check-prefix=G_NOTUNING %s
+// RUN: %clang -### -c -g %s -target powerpc64-ibm-aix-xcoff 2>&1 \
+// RUN:             | FileCheck -check-prefix=G_NOTUNING %s
+// RUN: %clang -### -c -g -gdbx %s -target powerpc-ibm-aix-xcoff 2>&1 \
+// RUN:             | FileCheck -check-prefixes=G_LIMITED,G_DBX %s
+// RUN: %clang -### -c -g -gdbx %s -target powerpc64-ibm-aix-xcoff 2>&1 \
+// RUN:             | FileCheck -check-prefixes=G_LIMITED,G_DBX %s
 
 // For DBX, -g defaults to -gstrict-dwarf.
 // RUN: %clang -### -c -g %s -target powerpc-ibm-aix-xcoff 2>&1 \
@@ -292,6 +300,11 @@
 // RUN: %clang -### -target %itanium_abi_triple -gmodules -gline-directives-only %s 2>&1 \
 // RUN:        | FileCheck -check-prefix=GLIO_ONLY %s
 //
+// RUN: %clang -### -gmodules -gno-modules %s 2>&1 \
+// RUN:        | FileCheck -check-prefix=NOGEXTREFS %s
+//
+// RUN: %clang -### -gno-modules %s 2>&1 | FileCheck -check-prefix=GNOMOD %s
+//
 // NOG_PS: "-cc1"
 // NOG_PS-NOT: "-dwarf-version=
 // NOG_PS: "-generate-arange-section"
@@ -399,6 +412,9 @@
 //
 // GEXTREFS: "-dwarf-ext-refs" "-fmodule-format=obj"
 // GEXTREFS: "-debug-info-kind={{standalone|constructor}}"
+// NOGEXTREFS-NOT: -dwarf-ext-refs
+//
+// GNOMOD-NOT: -debug-info-kind=
 
 // RUN: not %clang -cc1 -debug-info-kind=watkind 2>&1 | FileCheck -check-prefix=BADSTRING1 %s
 // BADSTRING1: error: invalid value 'watkind' in '-debug-info-kind=watkind'

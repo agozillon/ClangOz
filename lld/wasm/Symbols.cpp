@@ -77,6 +77,7 @@ DefinedFunction *WasmSym::callDtors;
 DefinedFunction *WasmSym::initMemory;
 DefinedFunction *WasmSym::applyDataRelocs;
 DefinedFunction *WasmSym::applyGlobalRelocs;
+DefinedFunction *WasmSym::applyTLSRelocs;
 DefinedFunction *WasmSym::applyGlobalTLSRelocs;
 DefinedFunction *WasmSym::initTLS;
 DefinedFunction *WasmSym::startFunction;
@@ -84,6 +85,7 @@ DefinedData *WasmSym::dsoHandle;
 DefinedData *WasmSym::dataEnd;
 DefinedData *WasmSym::globalBase;
 DefinedData *WasmSym::heapBase;
+DefinedData *WasmSym::heapEnd;
 DefinedData *WasmSym::initMemoryFlag;
 GlobalSymbol *WasmSym::stackPointer;
 DefinedData *WasmSym::stackLow;
@@ -307,7 +309,7 @@ uint64_t DefinedData::getVA() const {
   // output segment (__tls_base).  When building without shared memory, TLS
   // symbols absolute, just like non-TLS.
   if (isTLS() && config->sharedMemory)
-    return getOutputSegmentOffset() + value;
+    return getOutputSegmentOffset();
   if (segment)
     return segment->getVA(value);
   return value;
@@ -456,6 +458,7 @@ void printTraceSymbol(Symbol *sym) {
 
 const char *defaultModule = "env";
 const char *functionTableName = "__indirect_function_table";
+const char *memoryName = "memory";
 
 } // namespace wasm
 } // namespace lld

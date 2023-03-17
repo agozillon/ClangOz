@@ -65,7 +65,12 @@ add_entrypoint_object(
 )
 
 add_math_entrypoint_object(acosf)
+add_math_entrypoint_object(acoshf)
+
+add_math_entrypoint_object(asin)
 add_math_entrypoint_object(asinf)
+add_math_entrypoint_object(asinhf)
+
 add_math_entrypoint_object(atanf)
 
 add_math_entrypoint_object(atanhf)
@@ -128,6 +133,7 @@ add_math_entrypoint_object(ldexp)
 add_math_entrypoint_object(ldexpf)
 add_math_entrypoint_object(ldexpl)
 
+add_math_entrypoint_object(log10)
 add_math_entrypoint_object(log10f)
 
 add_math_entrypoint_object(log1pf)
@@ -168,6 +174,8 @@ add_math_entrypoint_object(nextafter)
 add_math_entrypoint_object(nextafterf)
 add_math_entrypoint_object(nextafterl)
 
+add_math_entrypoint_object(pow)
+
 add_math_entrypoint_object(remainder)
 add_math_entrypoint_object(remainderf)
 add_math_entrypoint_object(remainderl)
@@ -183,6 +191,10 @@ add_math_entrypoint_object(rintl)
 add_math_entrypoint_object(round)
 add_math_entrypoint_object(roundf)
 add_math_entrypoint_object(roundl)
+
+add_math_entrypoint_object(scalbn)
+add_math_entrypoint_object(scalbnf)
+add_math_entrypoint_object(scalbnl)
 
 add_math_entrypoint_object(sincosf)
 

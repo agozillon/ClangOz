@@ -15,7 +15,7 @@
 #include "lldb/lldb-forward.h"
 #include "lldb/lldb-private-enumerations.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/Triple.h"
+#include "llvm/TargetParser/Triple.h"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -106,6 +106,12 @@ public:
     eRISCVSubType_unknown,
     eRISCVSubType_riscv32,
     eRISCVSubType_riscv64,
+  };
+
+  enum LoongArchSubType {
+    eLoongArchSubType_unknown,
+    eLoongArchSubType_loongarch32,
+    eLoongArchSubType_loongarch64,
   };
 
   enum Core {
@@ -203,6 +209,9 @@ public:
 
     eCore_riscv32,
     eCore_riscv64,
+
+    eCore_loongarch32,
+    eCore_loongarch64,
 
     eCore_uknownMach32,
     eCore_uknownMach64,

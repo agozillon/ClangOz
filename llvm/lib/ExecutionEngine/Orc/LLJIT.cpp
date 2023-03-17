@@ -16,6 +16,7 @@
 #include "llvm/ExecutionEngine/Orc/ObjectTransformLayer.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/Shared/OrcError.h"
+#include "llvm/ExecutionEngine/Orc/TargetProcess/RegisterEHFrames.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
@@ -714,10 +715,22 @@ Error LLJITBuilderState::prepareForConstruction() {
   // JIT linker.
   if (!CreateObjectLinkingLayer) {
     auto &TT = JTMB->getTargetTriple();
-    if (TT.getArch() == Triple::riscv64 ||
-        (TT.isOSBinFormatMachO() &&
-         (TT.getArch() == Triple::aarch64 || TT.getArch() == Triple::x86_64))) {
-
+    bool UseJITLink = false;
+    switch (TT.getArch()) {
+    case Triple::riscv64:
+    case Triple::loongarch64:
+      UseJITLink = true;
+      break;
+    case Triple::aarch64:
+      UseJITLink = !TT.isOSBinFormatCOFF();
+      break;
+    case Triple::x86_64:
+      UseJITLink = TT.isOSBinFormatMachO();
+      break;
+    default:
+      break;
+    }
+    if (UseJITLink) {
       JTMB->setRelocationModel(Reloc::PIC_);
       JTMB->setCodeModel(CodeModel::Small);
       CreateObjectLinkingLayer =
@@ -1012,6 +1025,13 @@ LLLazyJIT::LLLazyJIT(LLLazyJITBuilderState &S, Error &Err) : LLJIT(S, Err) {
 
   if (S.NumCompileThreads > 0)
     CODLayer->setCloneToNewContextOnEmit(true);
+}
+
+// In-process LLJIT uses eh-frame section wrappers via EPC, so we need to force
+// them to be linked in.
+LLVM_ATTRIBUTE_USED void linkComponents() {
+  errs() << (void *)&llvm_orc_registerEHFrameSectionWrapper
+         << (void *)&llvm_orc_deregisterEHFrameSectionWrapper;
 }
 
 } // End namespace orc.

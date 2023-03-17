@@ -1,5 +1,3 @@
-def StructTimevalType : NamedType<"struct timeval">;
-
 def Linux : StandardSpec<"Linux"> {
   HeaderSpec Errno = HeaderSpec<
       "errno.h",
@@ -81,7 +79,7 @@ def Linux : StandardSpec<"Linux"> {
         Macro<"GRND_NONBLOCK">,
         Macro<"GRND_INSECURE">,
       ],
-      [], // Types
+      [SizeTType, SSizeTType], // Types
       [], // Enumerations
       [
         FunctionSpec<
@@ -94,6 +92,19 @@ def Linux : StandardSpec<"Linux"> {
           ]
         >,
       ]
+  >;
+
+  HeaderSpec SysSocket = HeaderSpec<
+      "sys/socket.h",
+      [
+        Macro<"AF_UNSPEC">,
+        Macro<"AF_LOCAL">,
+        Macro<"AF_INET">,
+        Macro<"AF_INET6">,
+      ],
+      [], // Types
+      [], // Enumerations
+      []  // Functions
   >;
 
   HeaderSpec SysTime = HeaderSpec<
@@ -157,6 +168,7 @@ def Linux : StandardSpec<"Linux"> {
     SysMMan,
     SysPrctl,
     SysRandom,
+    SysSocket,
     SysTime,
     Signal,
   ];

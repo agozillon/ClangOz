@@ -21,6 +21,7 @@
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/Support/LLVM.h"
+#include <optional>
 
 using namespace mlir;
 using namespace linalg;
@@ -69,7 +70,7 @@ getTiledProducerLoops(OpResult producerResult,
   // Get the indexing map of the `producerOp` output operand that matches
   // ´producerResult´.
   AffineMap producerIndexingMap = producerOp.getMatchingIndexingMap(
-      producerOp.getOutputOperand(producerResult.getResultNumber()));
+      producerOp.getDpsInitOperand(producerResult.getResultNumber()));
 
   // Keep only the tiled result slice dimensions of `producerIndexingMap`.
   AffineMap tiledProducerIndexingSubMap =
@@ -173,16 +174,16 @@ static LinalgOp getTiledProducer(OpBuilder &b, OpResult producerResult,
   // output operand.
   if (iterArg) {
     OpOperand *outputOperand =
-        producerOp.getOutputOperand(producerResult.getResultNumber());
+        producerOp.getDpsInitOperand(producerResult.getResultNumber());
     iterArg->set(outputOperand->get());
     tiledOperands[outputOperand->getOperandNumber()] = sliceOp.getResult();
   }
 
   // Clone the producer using the tiled producer operands.
   TypeRange resultTypes = ValueRange(tiledOperands)
-                              .take_back(producerOp.getNumOutputs())
+                              .take_back(producerOp.getNumDpsInits())
                               .getTypes();
-  LinalgOp clonedOp = producerOp.clone(b, loc, resultTypes, tiledOperands);
+  LinalgOp clonedOp = clone(b, producerOp, resultTypes, tiledOperands);
 
   // Shift all IndexOp results by the tile offset.
   offsetIndices(b, clonedOp, allIvs);
@@ -274,7 +275,7 @@ bool TileLoopNest::hasOtherUses(BlockArgument bbArg,
 LogicalResult TileLoopNest::tileRootOp(
     OpBuilder &b, ArrayRef<int64_t> tileSizes,
     ArrayRef<int64_t> tileInterchange,
-    Optional<LinalgLoopDistributionOptions> tileDistribution) {
+    std::optional<LinalgLoopDistributionOptions> tileDistribution) {
   // Exit if all tile sizes are zero.
   if (tileSizes.size() == static_cast<size_t>(count(tileSizes, 0)))
     return success();

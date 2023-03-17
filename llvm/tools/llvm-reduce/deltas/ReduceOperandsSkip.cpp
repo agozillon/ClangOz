@@ -187,7 +187,9 @@ opportunities(Function &F,
   }
 }
 
-static void extractOperandsFromModule(Oracle &O, Module &Program) {
+static void extractOperandsFromModule(Oracle &O, ReducerWorkItem &WorkItem) {
+  Module &Program = WorkItem.getModule();
+
   for (Function &F : Program.functions()) {
     SmallVector<std::pair<Use *, Value *>> Replacements;
     opportunities(F, [&](Use &Op, ArrayRef<Value *> Candidates) {
@@ -222,6 +224,6 @@ static void extractOperandsFromModule(Oracle &O, Module &Program) {
 }
 
 void llvm::reduceOperandsSkipDeltaPass(TestRunner &Test) {
-  errs() << "*** Reducing operands by skipping over instructions ...\n";
-  runDeltaPass(Test, extractOperandsFromModule);
+  runDeltaPass(Test, extractOperandsFromModule,
+               "Reducing operands by skipping over instructions");
 }

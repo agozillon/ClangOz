@@ -62,10 +62,7 @@ struct FusePadOp : OpRewritePattern<tensor::PadOp> {
           padOp, "only supported for ops with all parallel iterator types");
     }
     ReifiedRankedShapedTypeDims resultShape;
-    ReifyRankedShapedTypeOpInterface reifyShapedTypeInterface =
-        dyn_cast<ReifyRankedShapedTypeOpInterface>(padOp.getOperation());
-    if (failed(reifyShapedTypeInterface.reifyResultShapes(rewriter,
-                                                          resultShape)) ||
+    if (failed(reifyResultShapes(rewriter, padOp, resultShape)) ||
         resultShape.size() != 1) {
       return rewriter.notifyMatchFailure(
           padOp, "failed to get shape of pad op result");
@@ -75,7 +72,7 @@ struct FusePadOp : OpRewritePattern<tensor::PadOp> {
 
     // Create the tensor of same size as output of the pad op.
     RankedTensorType padResultType = padOp.getResultType();
-    auto resultSizes = getAsOpFoldResult(resultShape[0]);
+    auto resultSizes = resultShape[0];
     auto emptyTensor = rewriter.create<tensor::EmptyOp>(
         loc, resultSizes, padResultType.getElementType());
 
@@ -110,7 +107,7 @@ struct FusePadOp : OpRewritePattern<tensor::PadOp> {
     // Clone the generic op.
     auto clonedOp =
         cast<linalg::GenericOp>(rewriter.clone(*linalgOp.getOperation()));
-    clonedOp.setOutputOperand(resultNumber, slice.getResult());
+    clonedOp.setDpsInitOperand(resultNumber, slice.getResult());
 
     // Insert it back into the result of the fill.
     rewriter.replaceOpWithNewOp<tensor::InsertSliceOp>(

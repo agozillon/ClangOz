@@ -10,14 +10,16 @@
 #ifndef _LIBCPP___RANGES_RANGE_ADAPTOR_H
 #define _LIBCPP___RANGES_RANGE_ADAPTOR_H
 
+#include <__concepts/constructible.h>
+#include <__concepts/derived_from.h>
+#include <__concepts/invocable.h>
+#include <__concepts/same_as.h>
 #include <__config>
 #include <__functional/compose.h>
 #include <__functional/invoke.h>
 #include <__ranges/concepts.h>
 #include <__utility/forward.h>
 #include <__utility/move.h>
-#include <concepts>
-#include <type_traits>
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
 #  pragma GCC system_header
@@ -25,7 +27,7 @@
 
 _LIBCPP_BEGIN_NAMESPACE_STD
 
-#if _LIBCPP_STD_VER > 17
+#if _LIBCPP_STD_VER >= 20
 
 // CRTP base that one can derive from in order to be considered a range adaptor closure
 // by the library. When deriving from this class, a pipe operator will be provided to
@@ -67,7 +69,7 @@ struct __range_adaptor_closure {
     { return __range_adaptor_closure_t(std::__compose(std::forward<_OtherClosure>(__c2), std::forward<_Closure>(__c1))); }
 };
 
-#endif // _LIBCPP_STD_VER > 17
+#endif // _LIBCPP_STD_VER >= 20
 
 _LIBCPP_END_NAMESPACE_STD
 

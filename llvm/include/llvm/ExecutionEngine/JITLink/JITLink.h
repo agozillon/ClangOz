@@ -15,18 +15,20 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/ExecutionEngine/JITLink/JITLinkMemoryManager.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
 #include "llvm/ExecutionEngine/Orc/Shared/MemoryFlags.h"
 #include "llvm/Support/Allocator.h"
+#include "llvm/Support/BinaryStreamReader.h"
+#include "llvm/Support/BinaryStreamWriter.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/TargetParser/Triple.h"
+#include <optional>
 
 #include <map>
 #include <string>
@@ -161,7 +163,7 @@ private:
     assert(AlignmentOffset <= MaxAlignmentOffset &&
            "Alignment offset exceeds maximum");
     ContentMutable = false;
-    P2Align = Alignment ? countTrailingZeros(Alignment) : 0;
+    P2Align = Alignment ? llvm::countr_zero(Alignment) : 0;
     this->AlignmentOffset = AlignmentOffset;
   }
 
@@ -178,7 +180,7 @@ private:
     assert(AlignmentOffset <= MaxAlignmentOffset &&
            "Alignment offset exceeds maximum");
     ContentMutable = false;
-    P2Align = Alignment ? countTrailingZeros(Alignment) : 0;
+    P2Align = Alignment ? llvm::countr_zero(Alignment) : 0;
     this->AlignmentOffset = AlignmentOffset;
   }
 
@@ -197,7 +199,7 @@ private:
     assert(AlignmentOffset <= MaxAlignmentOffset &&
            "Alignment offset exceeds maximum");
     ContentMutable = true;
-    P2Align = Alignment ? countTrailingZeros(Alignment) : 0;
+    P2Align = Alignment ? llvm::countr_zero(Alignment) : 0;
     this->AlignmentOffset = AlignmentOffset;
   }
 
@@ -287,7 +289,7 @@ public:
   /// Set the alignment for this content.
   void setAlignment(uint64_t Alignment) {
     assert(isPowerOf2_64(Alignment) && "Alignment must be a power of two");
-    P2Align = Alignment ? countTrailingZeros(Alignment) : 0;
+    P2Align = Alignment ? llvm::countr_zero(Alignment) : 0;
   }
 
   /// Get the alignment offset for this content.
@@ -359,6 +361,11 @@ inline uint64_t alignToBlock(uint64_t Addr, Block &B) {
 inline orc::ExecutorAddr alignToBlock(orc::ExecutorAddr Addr, Block &B) {
   return orc::ExecutorAddr(alignToBlock(Addr.getValue(), B));
 }
+
+// Returns true if the given blocks contains exactly one valid c-string.
+// Zero-fill blocks of size 1 count as valid empty strings. Content blocks
+// must end with a zero, and contain no zeros before the end.
+bool isCStringBlock(Block &B);
 
 /// Describes symbol linkage. This can be used to make resolve definition
 /// clashes.
@@ -528,7 +535,7 @@ public:
     return *Base;
   }
 
-  /// Return the addressable that thsi symbol points to.
+  /// Return the addressable that this symbol points to.
   const Addressable &getAddressable() const {
     assert(Base && "Cannot get underlying addressable for null symbol");
     return *Base;
@@ -994,12 +1001,42 @@ public:
   /// Note: This Twine-based overload requires an extra string copy and an
   /// extra heap allocation for large strings. The ArrayRef<char> overload
   /// should be preferred where possible.
-  MutableArrayRef<char> allocateString(Twine Source) {
+  MutableArrayRef<char> allocateContent(Twine Source) {
     SmallString<256> TmpBuffer;
     auto SourceStr = Source.toStringRef(TmpBuffer);
     auto *AllocatedBuffer = Allocator.Allocate<char>(SourceStr.size());
     llvm::copy(SourceStr, AllocatedBuffer);
     return MutableArrayRef<char>(AllocatedBuffer, SourceStr.size());
+  }
+
+  /// Allocate a copy of the given string using the LinkGraph's allocator.
+  ///
+  /// The allocated string will be terminated with a null character, and the
+  /// returned MutableArrayRef will include this null character in the last
+  /// position.
+  MutableArrayRef<char> allocateCString(StringRef Source) {
+    char *AllocatedBuffer = Allocator.Allocate<char>(Source.size() + 1);
+    llvm::copy(Source, AllocatedBuffer);
+    AllocatedBuffer[Source.size()] = '\0';
+    return MutableArrayRef<char>(AllocatedBuffer, Source.size() + 1);
+  }
+
+  /// Allocate a copy of the given string using the LinkGraph's allocator.
+  ///
+  /// The allocated string will be terminated with a null character, and the
+  /// returned MutableArrayRef will include this null character in the last
+  /// position.
+  ///
+  /// Note: This Twine-based overload requires an extra string copy and an
+  /// extra heap allocation for large strings. The ArrayRef<char> overload
+  /// should be preferred where possible.
+  MutableArrayRef<char> allocateCString(Twine Source) {
+    SmallString<256> TmpBuffer;
+    auto SourceStr = Source.toStringRef(TmpBuffer);
+    auto *AllocatedBuffer = Allocator.Allocate<char>(SourceStr.size() + 1);
+    llvm::copy(SourceStr, AllocatedBuffer);
+    AllocatedBuffer[SourceStr.size()] = '\0';
+    return MutableArrayRef<char>(AllocatedBuffer, SourceStr.size() + 1);
   }
 
   /// Create a section with the given name, protection flags, and alignment.
@@ -1031,6 +1068,20 @@ public:
                        AlignmentOffset);
   }
 
+  /// Create a content block with initially mutable data of the given size.
+  /// Content will be allocated via the LinkGraph's allocateBuffer method.
+  /// By default the memory will be zero-initialized. Passing false for
+  /// ZeroInitialize will prevent this.
+  Block &createMutableContentBlock(Section &Parent, size_t ContentSize,
+                                   orc::ExecutorAddr Address,
+                                   uint64_t Alignment, uint64_t AlignmentOffset,
+                                   bool ZeroInitialize = true) {
+    auto Content = allocateContent(ContentSize);
+    if (ZeroInitialize)
+      memset(Content.data(), 0, Content.size());
+    return createBlock(Parent, Content, Address, Alignment, AlignmentOffset);
+  }
+
   /// Create a zero-fill block.
   Block &createZeroFillBlock(Section &Parent, orc::ExecutorAddrDiff Size,
                              orc::ExecutorAddr Address, uint64_t Alignment,
@@ -1038,8 +1089,24 @@ public:
     return createBlock(Parent, Size, Address, Alignment, AlignmentOffset);
   }
 
+  /// Returns a BinaryStreamReader for the given block.
+  BinaryStreamReader getBlockContentReader(Block &B) {
+    ArrayRef<uint8_t> C(
+        reinterpret_cast<const uint8_t *>(B.getContent().data()), B.getSize());
+    return BinaryStreamReader(C, getEndianness());
+  }
+
+  /// Returns a BinaryStreamWriter for the given block.
+  /// This will call getMutableContent to obtain mutable content for the block.
+  BinaryStreamWriter getBlockContentWriter(Block &B) {
+    MutableArrayRef<uint8_t> C(
+        reinterpret_cast<uint8_t *>(B.getMutableContent(*this).data()),
+        B.getSize());
+    return BinaryStreamWriter(C, getEndianness());
+  }
+
   /// Cache type for the splitBlock function.
-  using SplitBlockCache = Optional<SmallVector<Symbol *, 8>>;
+  using SplitBlockCache = std::optional<SmallVector<Symbol *, 8>>;
 
   /// Splits block B at the given index which must be greater than zero.
   /// If SplitIndex == B.getSize() then this function is a no-op and returns B.
@@ -1270,9 +1337,10 @@ public:
   /// given offset) of the size of the new block.
   ///
   /// All other symbol attributes are unchanged.
-  void transferDefinedSymbol(Symbol &Sym, Block &DestBlock,
-                             orc::ExecutorAddrDiff NewOffset,
-                             Optional<orc::ExecutorAddrDiff> ExplicitNewSize) {
+  void
+  transferDefinedSymbol(Symbol &Sym, Block &DestBlock,
+                        orc::ExecutorAddrDiff NewOffset,
+                        std::optional<orc::ExecutorAddrDiff> ExplicitNewSize) {
     auto &OldSection = Sym.getBlock().getSection();
     Sym.setBlock(DestBlock);
     Sym.setOffset(NewOffset);
@@ -1559,7 +1627,7 @@ private:
 };
 
 /// A function for mutating LinkGraphs.
-using LinkGraphPassFunction = std::function<Error(LinkGraph &)>;
+using LinkGraphPassFunction = unique_function<Error(LinkGraph &)>;
 
 /// A list of LinkGraph passes.
 using LinkGraphPassList = std::vector<LinkGraphPassFunction>;

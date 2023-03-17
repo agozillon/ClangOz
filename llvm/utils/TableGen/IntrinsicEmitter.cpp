@@ -11,18 +11,32 @@
 //===----------------------------------------------------------------------===//
 
 #include "CodeGenIntrinsics.h"
-#include "CodeGenTarget.h"
 #include "SequenceToOffsetTable.h"
 #include "TableGenBackends.h"
-#include "llvm/ADT/Optional.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MachineValueType.h"
+#include "llvm/Support/ModRef.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/StringToOffsetTable.h"
 #include "llvm/TableGen/TableGenBackend.h"
 #include <algorithm>
+#include <cassert>
+#include <map>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 using namespace llvm;
+using namespace llvm::tmp;
 
 cl::OptionCategory GenIntrinsicCat("Options for -gen-intrinsic-enums");
 cl::opt<std::string>
@@ -602,8 +616,8 @@ void IntrinsicEmitter::EmitGenerator(const CodeGenIntrinsicTable &Ints,
 }
 
 namespace {
-Optional<bool> compareFnAttributes(const CodeGenIntrinsic *L,
-                                   const CodeGenIntrinsic *R) {
+std::optional<bool> compareFnAttributes(const CodeGenIntrinsic *L,
+                                        const CodeGenIntrinsic *R) {
   // Sort throwing intrinsics after non-throwing intrinsics.
   if (L->canThrow != R->canThrow)
     return R->canThrow;
@@ -642,11 +656,11 @@ Optional<bool> compareFnAttributes(const CodeGenIntrinsic *L,
     return R->hasSideEffects;
 
   // Try to order by readonly/readnone attribute.
-  CodeGenIntrinsic::ModRefBehavior LK = L->ModRef;
-  CodeGenIntrinsic::ModRefBehavior RK = R->ModRef;
+  uint32_t LK = L->ME.toIntValue();
+  uint32_t RK = R->ME.toIntValue();
   if (LK != RK) return (LK > RK);
 
-  return None;
+  return std::nullopt;
 }
 
 struct FnAttributeComparator {
@@ -657,7 +671,7 @@ struct FnAttributeComparator {
 
 struct AttributeComparator {
   bool operator()(const CodeGenIntrinsic *L, const CodeGenIntrinsic *R) const {
-    if (Optional<bool> Res = compareFnAttributes(L, R))
+    if (std::optional<bool> Res = compareFnAttributes(L, R))
       return *Res;
 
     // Order by argument attributes.
@@ -772,56 +786,13 @@ void IntrinsicEmitter::EmitAttributes(const CodeGenIntrinsicTable &Ints,
     if (Intrinsic.isSpeculatable)
       OS << "      Attribute::get(C, Attribute::Speculatable),\n";
 
-    switch (Intrinsic.ModRef) {
-    case CodeGenIntrinsic::NoMem:
-      if (Intrinsic.hasSideEffects)
-        break;
-      OS << "      Attribute::get(C, Attribute::ReadNone),\n";
-      break;
-    case CodeGenIntrinsic::ReadArgMem:
-      OS << "      Attribute::get(C, Attribute::ReadOnly),\n";
-      OS << "      Attribute::get(C, Attribute::ArgMemOnly),\n";
-      break;
-    case CodeGenIntrinsic::ReadMem:
-      OS << "      Attribute::get(C, Attribute::ReadOnly),\n";
-      break;
-    case CodeGenIntrinsic::ReadInaccessibleMem:
-      OS << "      Attribute::get(C, Attribute::ReadOnly),\n";
-      OS << "      Attribute::get(C, Attribute::InaccessibleMemOnly),\n";
-      break;
-    case CodeGenIntrinsic::ReadInaccessibleMemOrArgMem:
-      OS << "      Attribute::get(C, Attribute::ReadOnly),\n";
-      OS << "      Attribute::get(C, "
-         << "Attribute::InaccessibleMemOrArgMemOnly),\n";
-      break;
-    case CodeGenIntrinsic::WriteArgMem:
-      OS << "      Attribute::get(C, Attribute::WriteOnly),\n";
-      OS << "      Attribute::get(C, Attribute::ArgMemOnly),\n";
-      break;
-    case CodeGenIntrinsic::WriteMem:
-      OS << "      Attribute::get(C, Attribute::WriteOnly),\n";
-      break;
-    case CodeGenIntrinsic::WriteInaccessibleMem:
-      OS << "      Attribute::get(C, Attribute::WriteOnly),\n";
-      OS << "      Attribute::get(C, Attribute::InaccessibleMemOnly),\n";
-      break;
-    case CodeGenIntrinsic::WriteInaccessibleMemOrArgMem:
-      OS << "      Attribute::get(C, Attribute::WriteOnly),\n";
-      OS << "      Attribute::get(C, "
-         << "Attribute::InaccessibleMemOrArgMemOnly),\n";
-      break;
-    case CodeGenIntrinsic::ReadWriteArgMem:
-      OS << "      Attribute::get(C, Attribute::ArgMemOnly),\n";
-      break;
-    case CodeGenIntrinsic::ReadWriteInaccessibleMem:
-      OS << "      Attribute::get(C, Attribute::InaccessibleMemOnly),\n";
-      break;
-    case CodeGenIntrinsic::ReadWriteInaccessibleMemOrArgMem:
-      OS << "      Attribute::get(C, "
-         << "Attribute::InaccessibleMemOrArgMemOnly),\n";
-      break;
-    case CodeGenIntrinsic::ReadWriteMem:
-      break;
+    MemoryEffects ME = Intrinsic.ME;
+    // TODO: IntrHasSideEffects should affect not only readnone intrinsics.
+    if (ME.doesNotAccessMemory() && Intrinsic.hasSideEffects)
+      ME = MemoryEffects::unknown();
+    if (ME != MemoryEffects::unknown()) {
+      OS << "      Attribute::getWithMemoryEffects(C, "
+         << "MemoryEffects::createFromIntValue(" << ME.toIntValue() << ")),\n";
     }
     OS << "    });\n";
   }
@@ -881,7 +852,7 @@ void IntrinsicEmitter::EmitAttributes(const CodeGenIntrinsicTable &Ints,
     }
 
     if (!Intrinsic.canThrow ||
-        (Intrinsic.ModRef != CodeGenIntrinsic::ReadWriteMem &&
+        (Intrinsic.ME != MemoryEffects::unknown() &&
          !Intrinsic.hasSideEffects) ||
         Intrinsic.isNoReturn || Intrinsic.isNoCallback || Intrinsic.isNoSync ||
         Intrinsic.isNoFree || Intrinsic.isWillReturn || Intrinsic.isCold ||
@@ -904,7 +875,7 @@ void IntrinsicEmitter::EmitAttributes(const CodeGenIntrinsicTable &Ints,
 
   OS << "    }\n";
   OS << "  }\n";
-  OS << "  return AttributeList::get(C, makeArrayRef(AS, NumAttrs));\n";
+  OS << "  return AttributeList::get(C, ArrayRef(AS, NumAttrs));\n";
   OS << "}\n";
   OS << "#endif // GET_INTRINSIC_ATTRIBUTES\n\n";
 }

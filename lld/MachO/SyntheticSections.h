@@ -19,10 +19,8 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/BinaryFormat/MachO.h"
-#include "llvm/MC/StringTableBuilder.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -164,7 +162,7 @@ public:
 
   void addEntry(const InputSection *isec, uint64_t offset) {
     if (config->isPic)
-      locations.push_back({isec, offset});
+      locations.emplace_back(isec, offset);
   }
 
 private:
@@ -176,7 +174,7 @@ struct BindingEntry {
   int64_t addend;
   Location target;
   BindingEntry(int64_t addend, Location target)
-      : addend(addend), target(std::move(target)) {}
+      : addend(addend), target(target) {}
 };
 
 template <class Sym>

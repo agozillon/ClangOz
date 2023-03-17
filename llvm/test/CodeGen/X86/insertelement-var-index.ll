@@ -187,7 +187,7 @@ define <4 x float> @arg_f32_v4f32_undef(float %x, i32 %y) nounwind {
 ;
 ; AVX1-LABEL: arg_f32_v4f32_undef:
 ; AVX1:       # %bb.0:
-; AVX1-NEXT:    vpermilps {{.*#+}} xmm0 = xmm0[0,0,0,0]
+; AVX1-NEXT:    vshufps {{.*#+}} xmm0 = xmm0[0,0,0,0]
 ; AVX1-NEXT:    retq
 ;
 ; AVX2-LABEL: arg_f32_v4f32_undef:
@@ -578,7 +578,7 @@ define <8 x float> @arg_f32_v8f32_undef(float %x, i32 %y) nounwind {
 ;
 ; AVX1-LABEL: arg_f32_v8f32_undef:
 ; AVX1:       # %bb.0:
-; AVX1-NEXT:    vpermilps {{.*#+}} xmm0 = xmm0[0,0,0,0]
+; AVX1-NEXT:    vshufps {{.*#+}} xmm0 = xmm0[0,0,0,0]
 ; AVX1-NEXT:    vinsertf128 $1, %xmm0, %ymm0, %ymm0
 ; AVX1-NEXT:    retq
 ;
@@ -1053,7 +1053,7 @@ define <4 x float> @arg_f32_v4f32(<4 x float> %v, float %x, i32 %y) nounwind {
 ;
 ; AVX1-LABEL: arg_f32_v4f32:
 ; AVX1:       # %bb.0:
-; AVX1-NEXT:    vpermilps {{.*#+}} xmm1 = xmm1[0,0,0,0]
+; AVX1-NEXT:    vshufps {{.*#+}} xmm1 = xmm1[0,0,0,0]
 ; AVX1-NEXT:    vmovd %edi, %xmm2
 ; AVX1-NEXT:    vpshufd {{.*#+}} xmm2 = xmm2[0,0,0,0]
 ; AVX1-NEXT:    vpcmpeqd {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm2, %xmm2
@@ -1101,8 +1101,7 @@ define <2 x double> @arg_f64_v2f64(<2 x double> %v, double %x, i32 %y) nounwind 
 ; SSE41:       # %bb.0:
 ; SSE41-NEXT:    movapd %xmm0, %xmm2
 ; SSE41-NEXT:    movddup {{.*#+}} xmm1 = xmm1[0,0]
-; SSE41-NEXT:    movl %edi, %eax
-; SSE41-NEXT:    movq %rax, %xmm0
+; SSE41-NEXT:    movd %edi, %xmm0
 ; SSE41-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[0,1,0,1]
 ; SSE41-NEXT:    pcmpeqq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0
 ; SSE41-NEXT:    blendvpd %xmm0, %xmm1, %xmm2
@@ -1112,8 +1111,7 @@ define <2 x double> @arg_f64_v2f64(<2 x double> %v, double %x, i32 %y) nounwind 
 ; AVX1-LABEL: arg_f64_v2f64:
 ; AVX1:       # %bb.0:
 ; AVX1-NEXT:    vmovddup {{.*#+}} xmm1 = xmm1[0,0]
-; AVX1-NEXT:    movl %edi, %eax
-; AVX1-NEXT:    vmovq %rax, %xmm2
+; AVX1-NEXT:    vmovd %edi, %xmm2
 ; AVX1-NEXT:    vpshufd {{.*#+}} xmm2 = xmm2[0,1,0,1]
 ; AVX1-NEXT:    vpcmpeqq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm2, %xmm2
 ; AVX1-NEXT:    vblendvpd %xmm2, %xmm1, %xmm0, %xmm0
@@ -1458,8 +1456,7 @@ define <2 x double> @load_f64_v2f64(<2 x double> %v, ptr %p, i32 %y) nounwind {
 ; SSE41:       # %bb.0:
 ; SSE41-NEXT:    movapd %xmm0, %xmm1
 ; SSE41-NEXT:    movddup {{.*#+}} xmm2 = mem[0,0]
-; SSE41-NEXT:    movl %esi, %eax
-; SSE41-NEXT:    movq %rax, %xmm0
+; SSE41-NEXT:    movd %esi, %xmm0
 ; SSE41-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[0,1,0,1]
 ; SSE41-NEXT:    pcmpeqq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0
 ; SSE41-NEXT:    blendvpd %xmm0, %xmm2, %xmm1
@@ -1469,8 +1466,7 @@ define <2 x double> @load_f64_v2f64(<2 x double> %v, ptr %p, i32 %y) nounwind {
 ; AVX1-LABEL: load_f64_v2f64:
 ; AVX1:       # %bb.0:
 ; AVX1-NEXT:    vmovddup {{.*#+}} xmm1 = mem[0,0]
-; AVX1-NEXT:    movl %esi, %eax
-; AVX1-NEXT:    vmovq %rax, %xmm2
+; AVX1-NEXT:    vmovd %esi, %xmm2
 ; AVX1-NEXT:    vpshufd {{.*#+}} xmm2 = xmm2[0,1,0,1]
 ; AVX1-NEXT:    vpcmpeqq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm2, %xmm2
 ; AVX1-NEXT:    vblendvpd %xmm2, %xmm1, %xmm0, %xmm0
@@ -1781,7 +1777,7 @@ define <8 x float> @arg_f32_v8f32(<8 x float> %v, float %x, i32 %y) nounwind {
 ;
 ; AVX1-LABEL: arg_f32_v8f32:
 ; AVX1:       # %bb.0:
-; AVX1-NEXT:    vpermilps {{.*#+}} xmm1 = xmm1[0,0,0,0]
+; AVX1-NEXT:    vshufps {{.*#+}} xmm1 = xmm1[0,0,0,0]
 ; AVX1-NEXT:    vinsertf128 $1, %xmm1, %ymm1, %ymm1
 ; AVX1-NEXT:    vmovd %edi, %xmm2
 ; AVX1-NEXT:    vpshufd {{.*#+}} xmm2 = xmm2[0,0,0,0]

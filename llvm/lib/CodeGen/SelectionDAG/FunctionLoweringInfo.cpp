@@ -13,7 +13,7 @@
 
 #include "llvm/CodeGen/FunctionLoweringInfo.h"
 #include "llvm/ADT/APInt.h"
-#include "llvm/Analysis/LegacyDivergenceAnalysis.h"
+#include "llvm/Analysis/UniformityAnalysis.h"
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -83,7 +83,7 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
   TLI = MF->getSubtarget().getTargetLowering();
   RegInfo = &MF->getRegInfo();
   const TargetFrameLowering *TFI = MF->getSubtarget().getFrameLowering();
-  DA = DAG->getDivergenceAnalysis();
+  UA = DAG->getUniformityInfo();
 
   // Check whether the function can return without sret-demotion.
   SmallVector<ISD::OutputArg, 4> Outs;
@@ -119,10 +119,6 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
       }
     }
   }
-  if (Personality == EHPersonality::Wasm_CXX) {
-    WasmEHFuncInfo &EHInfo = *MF->getWasmEHFuncInfo();
-    calculateWasmEHInfo(&fn, EHInfo);
-  }
 
   // Initialize the mapping of values to registers.  This is only set up for
   // instruction values that are used outside of the block that defines
@@ -132,20 +128,7 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
     for (const Instruction &I : BB) {
       if (const AllocaInst *AI = dyn_cast<AllocaInst>(&I)) {
         Type *Ty = AI->getAllocatedType();
-        Align TyPrefAlign = MF->getDataLayout().getPrefTypeAlign(Ty);
-        // The "specified" alignment is the alignment written on the alloca,
-        // or the preferred alignment of the type if none is specified.
-        //
-        // (Unspecified alignment on allocas will be going away soon.)
-        Align SpecifiedAlign = AI->getAlign();
-
-        // If the preferred alignment of the type is higher than the specified
-        // alignment of the alloca, promote the alignment, as long as it doesn't
-        // require realigning the stack.
-        //
-        // FIXME: Do we really want to second-guess the IR in isel?
-        Align Alignment =
-            std::max(std::min(TyPrefAlign, StackAlign), SpecifiedAlign);
+        Align Alignment = AI->getAlign();
 
         // Static allocas can be folded into the initial stack frame
         // adjustment. For targets that don't realign the stack, don't
@@ -154,7 +137,7 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
             (TFI->isStackRealignable() || (Alignment <= StackAlign))) {
           const ConstantInt *CUI = cast<ConstantInt>(AI->getArraySize());
           uint64_t TySize =
-              MF->getDataLayout().getTypeAllocSize(Ty).getKnownMinSize();
+              MF->getDataLayout().getTypeAllocSize(Ty).getKnownMinValue();
 
           TySize *= CUI->getZExtValue();   // Get total allocated size.
           if (TySize == 0) TySize = 1; // Don't create zero-sized stack objects.
@@ -323,10 +306,10 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
       const auto *BB = CME.Handler.get<const BasicBlock *>();
       CME.Handler = MBBMap[BB];
     }
-  }
-
-  else if (Personality == EHPersonality::Wasm_CXX) {
+  } else if (Personality == EHPersonality::Wasm_CXX) {
     WasmEHFuncInfo &EHInfo = *MF->getWasmEHFuncInfo();
+    calculateWasmEHInfo(&fn, EHInfo);
+
     // Map all BB references in the Wasm EH data to MBBs.
     DenseMap<BBOrMBB, BBOrMBB> SrcToUnwindDest;
     for (auto &KV : EHInfo.SrcToUnwindDest) {
@@ -369,8 +352,7 @@ void FunctionLoweringInfo::clear() {
 
 /// CreateReg - Allocate a single virtual register for the given type.
 Register FunctionLoweringInfo::CreateReg(MVT VT, bool isDivergent) {
-  return RegInfo->createVirtualRegister(
-      MF->getSubtarget().getTargetLowering()->getRegClassFor(VT, isDivergent));
+  return RegInfo->createVirtualRegister(TLI->getRegClassFor(VT, isDivergent));
 }
 
 /// CreateRegs - Allocate the appropriate number of virtual registers of
@@ -381,8 +363,6 @@ Register FunctionLoweringInfo::CreateReg(MVT VT, bool isDivergent) {
 /// will assign registers for each member or element.
 ///
 Register FunctionLoweringInfo::CreateRegs(Type *Ty, bool isDivergent) {
-  const TargetLowering *TLI = MF->getSubtarget().getTargetLowering();
-
   SmallVector<EVT, 4> ValueVTs;
   ComputeValueVTs(*TLI, MF->getDataLayout(), Ty, ValueVTs);
 
@@ -401,8 +381,8 @@ Register FunctionLoweringInfo::CreateRegs(Type *Ty, bool isDivergent) {
 }
 
 Register FunctionLoweringInfo::CreateRegs(const Value *V) {
-  return CreateRegs(V->getType(), DA && DA->isDivergent(V) &&
-                    !TLI->requiresUniformRegister(*MF, V));
+  return CreateRegs(V->getType(), UA && UA->isDivergent(V) &&
+                                      !TLI->requiresUniformRegister(*MF, V));
 }
 
 /// GetLiveOutRegInfo - Gets LiveOutInfo for a register, returning NULL if the
@@ -451,8 +431,8 @@ void FunctionLoweringInfo::ComputePHILiveOutRegInfo(const PHINode *PN) {
 
   Register DestReg = It->second;
   if (DestReg == 0)
-    return
-  assert(Register::isVirtualRegister(DestReg) && "Expected a virtual reg");
+    return;
+  assert(DestReg.isVirtual() && "Expected a virtual reg");
   LiveOutRegInfo.grow(DestReg);
   LiveOutInfo &DestLOI = LiveOutRegInfo[DestReg];
 
@@ -475,7 +455,7 @@ void FunctionLoweringInfo::ComputePHILiveOutRegInfo(const PHINode *PN) {
     assert(ValueMap.count(V) && "V should have been placed in ValueMap when its"
                                 "CopyToReg node was created.");
     Register SrcReg = ValueMap[V];
-    if (!Register::isVirtualRegister(SrcReg)) {
+    if (!SrcReg.isVirtual()) {
       DestLOI.IsValid = false;
       return;
     }
