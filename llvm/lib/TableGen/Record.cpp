@@ -151,12 +151,6 @@ bool BitsRecTy::typeIsConvertibleTo(const RecTy *RHS) const {
   return (kind == BitRecTyKind && Size == 1) || (kind == IntRecTyKind);
 }
 
-bool BitsRecTy::typeIsA(const RecTy *RHS) const {
-  if (const BitsRecTy *RHSb = dyn_cast<BitsRecTy>(RHS))
-    return RHSb->Size == Size;
-  return false;
-}
-
 IntRecTy *IntRecTy::get(RecordKeeper &RK) {
   return &RK.getImpl().SharedIntRecTy;
 }
@@ -1206,6 +1200,25 @@ std::optional<bool> BinOpInit::CompareInit(unsigned Opc, Init *LHS, Init *RHS) c
     }
     break;
   }
+  case RANGE: {
+    auto *LHSi = dyn_cast<IntInit>(LHS);
+    auto *RHSi = dyn_cast<IntInit>(RHS);
+    if (!LHSi || !RHSi)
+      break;
+
+    auto Start = LHSi->getValue();
+    auto End = RHSi->getValue();
+    SmallVector<Init *, 8> Args;
+    if (Start < End) {
+      // Half-open interval (excludes `End`)
+      Args.reserve(End - Start);
+      for (auto i = Start; i < End; ++i)
+        Args.push_back(IntInit::get(getRecordKeeper(), i));
+    } else {
+      // Empty set
+    }
+    return ListInit::get(Args, LHSi->getType());
+  }
   case STRCONCAT: {
     StringInit *LHSs = dyn_cast<StringInit>(LHS);
     StringInit *RHSs = dyn_cast<StringInit>(RHS);
@@ -1331,6 +1344,7 @@ std::string BinOpInit::getAsString() const {
   case LISTCONCAT: Result = "!listconcat"; break;
   case LISTSPLAT: Result = "!listsplat"; break;
   case LISTREMOVE: Result = "!listremove"; break;
+  case RANGE: Result = "!range"; break;
   case STRCONCAT: Result = "!strconcat"; break;
   case INTERLEAVE: Result = "!interleave"; break;
   case SETDAGOP: Result = "!setdagop"; break;
@@ -3005,6 +3019,10 @@ std::vector<Record *> RecordKeeper::getAllDerivedDefinitions(
                           }))
       Defs.push_back(OneDef.second.get());
   }
+
+  llvm::sort(Defs, [](Record *LHS, Record *RHS) {
+    return LHS->getName().compare_numeric(RHS->getName()) < 0;
+  });
 
   return Defs;
 }

@@ -42,8 +42,7 @@ struct VPlanTransforms {
   /// region block and remove the mask operand. Optimize the created regions by
   /// iteratively sinking scalar operands into the region, followed by merging
   /// regions until no improvements are remaining.
-  static void createAndOptimizeReplicateRegions(VPlan &Plan,
-                                                VPRecipeBuilder &Builder);
+  static void createAndOptimizeReplicateRegions(VPlan &Plan);
 
   /// Remove redundant VPBasicBlocks by merging them into their predecessor if
   /// the predecessor has a single successor.
@@ -78,7 +77,10 @@ struct VPlanTransforms {
   /// to combine the value from the recurrence phis and previous values. The
   /// current implementation assumes all users can be sunk after the previous
   /// value, which is enforced by earlier legality checks.
-  static void adjustFixedOrderRecurrences(VPlan &Plan, VPBuilder &Builder);
+  /// \returns true if all users of fixed-order recurrences could be re-arranged
+  /// as needed or false if it is not possible. In the latter case, \p Plan is
+  /// not valid.
+  static bool adjustFixedOrderRecurrences(VPlan &Plan, VPBuilder &Builder);
 
   /// Optimize \p Plan based on \p BestVF and \p BestUF. This may restrict the
   /// resulting plan to \p BestVF and \p BestUF.

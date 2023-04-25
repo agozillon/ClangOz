@@ -216,10 +216,12 @@ fir::ExtendedValue Fortran::lower::genCallOpAndResult(
       auto *bldr = &converter.getFirOpBuilder();
       auto stackSaveFn = fir::factory::getLlvmStackSave(builder);
       auto stackSaveSymbol = bldr->getSymbolRefAttr(stackSaveFn.getName());
-      mlir::Value sp = bldr->create<fir::CallOp>(
-                               loc, stackSaveFn.getFunctionType().getResults(),
-                               stackSaveSymbol, mlir::ValueRange{})
-                           .getResult(0);
+      mlir::Value sp;
+      fir::CallOp call = bldr->create<fir::CallOp>(
+          loc, stackSaveFn.getFunctionType().getResults(), stackSaveSymbol,
+          mlir::ValueRange{});
+      if (call.getNumResults() != 0)
+        sp = call.getResult(0);
       stmtCtx.attachCleanup([bldr, loc, sp]() {
         auto stackRestoreFn = fir::factory::getLlvmStackRestore(*bldr);
         auto stackRestoreSymbol =
@@ -396,21 +398,21 @@ fir::ExtendedValue Fortran::lower::genCallOpAndResult(
           component->GetFirstSymbol(), &symMap);
       mlir::Value passObject = fir::getBase(pass);
       if (fir::isa_ref_type(passObject.getType()))
-        passObject = builder.create<fir::ConvertOp>(
-            loc, passObject.getType().dyn_cast<fir::ReferenceType>().getEleTy(),
-            passObject);
+        passObject = builder.create<fir::LoadOp>(loc, passObject);
       dispatch = builder.create<fir::DispatchOp>(
           loc, funcType.getResults(), builder.getStringAttr(procName),
           passObject, operands, nullptr);
     }
-    callResult = dispatch.getResult(0);
     callNumResults = dispatch.getNumResults();
+    if (callNumResults != 0)
+      callResult = dispatch.getResult(0);
   } else {
     // Standard procedure call with fir.call.
     auto call = builder.create<fir::CallOp>(loc, funcType.getResults(),
                                             funcSymbolAttr, operands);
-    callResult = call.getResult(0);
     callNumResults = call.getNumResults();
+    if (callNumResults != 0)
+      callResult = call.getResult(0);
   }
 
   if (caller.mustSaveResult()) {
@@ -1190,12 +1192,16 @@ genIntrinsicRefCore(PreparedActualArguments &loweredActuals,
     // Helper to get the type of the Fortran expression in case it is a
     // computed value that must be placed in memory (logicals are computed as
     // i1, but must be placed in memory as fir.logical).
-    auto getActualFortranElementType = [&]() {
-      const Fortran::lower::SomeExpr *expr =
-          callContext.procRef.UnwrapArgExpr(arg.index());
-      assert(expr && "must be an expr");
-      mlir::Type type = converter.genType(*expr);
-      return hlfir::getFortranElementType(type);
+    auto getActualFortranElementType = [&]() -> mlir::Type {
+      if (const Fortran::lower::SomeExpr *expr =
+              callContext.procRef.UnwrapArgExpr(arg.index())) {
+
+        mlir::Type type = converter.genType(*expr);
+        return hlfir::getFortranElementType(type);
+      }
+      // TYPE(*): is already in memory anyway. Can return none
+      // here.
+      return builder.getNoneType();
     };
     // Ad-hoc argument lowering handling.
     fir::ArgLoweringRule argRules =
@@ -1241,8 +1247,10 @@ genIntrinsicRefCore(PreparedActualArguments &loweredActuals,
   hlfir::EntityWithAttributes resultEntity = extendedValueToHlfirEntity(
       loc, builder, resultExv, ".tmp.intrinsic_result");
   // Move result into memory into an hlfir.expr since they are immutable from
-  // that point, and the result storage is some temp.
-  if (resultEntity.isVariable()) {
+  // that point, and the result storage is some temp. "Null" is special: it
+  // returns a null pointer variable that should not be transformed into a value
+  // (what matters is the memory address).
+  if (resultEntity.isVariable() && intrinsicName != "null") {
     hlfir::AsExprOp asExpr;
     // Character/Derived MERGE lowering returns one of its argument address
     // (this is the only intrinsic implemented in that way so far). The
@@ -1619,11 +1627,33 @@ genIntrinsicRef(const Fortran::evaluate::SpecificIntrinsic *intrinsic,
   const fir::IntrinsicArgumentLoweringRules *argLowering =
       fir::getIntrinsicArgumentLowering(callContext.getProcedureName());
   for (const auto &arg : llvm::enumerate(callContext.procRef.arguments())) {
+
+    if (!arg.value()) {
+      // Absent optional.
+      loweredActuals.push_back(std::nullopt);
+      continue;
+    }
     auto *expr =
         Fortran::evaluate::UnwrapExpr<Fortran::lower::SomeExpr>(arg.value());
     if (!expr) {
-      // Absent optional.
-      loweredActuals.push_back(std::nullopt);
+      // TYPE(*) dummy. They are only allowed as argument of a few intrinsics
+      // that do not take optional arguments: see Fortran 2018 standard C710.
+      const Fortran::evaluate::Symbol *assumedTypeSym =
+          arg.value()->GetAssumedTypeDummy();
+      if (!assumedTypeSym)
+        fir::emitFatalError(loc,
+                            "expected assumed-type symbol as actual argument");
+      std::optional<fir::FortranVariableOpInterface> var =
+          callContext.symMap.lookupVariableDefinition(*assumedTypeSym);
+      if (!var)
+        fir::emitFatalError(loc, "assumed-type symbol was not lowered");
+      assert(
+          (!argLowering ||
+           !fir::lowerIntrinsicArgumentAs(*argLowering, arg.index())
+                .handleDynamicOptional) &&
+          "TYPE(*) are not expected to appear as optional intrinsic arguments");
+      loweredActuals.push_back(PreparedActualArgument{
+          hlfir::Entity{*var}, /*isPresent=*/std::nullopt});
       continue;
     }
     auto loweredActual = Fortran::lower::convertExprToHLFIR(

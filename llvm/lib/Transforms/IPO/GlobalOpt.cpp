@@ -53,8 +53,6 @@
 #include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/ValueHandle.h"
-#include "llvm/InitializePasses.h"
-#include "llvm/Pass.h"
 #include "llvm/Support/AtomicOrdering.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
@@ -237,19 +235,8 @@ CleanupPointerRootUsers(GlobalVariable *GV,
           Dead.push_back(std::make_pair(I, MTI));
       }
     } else if (ConstantExpr *CE = dyn_cast<ConstantExpr>(U)) {
-      if (CE->use_empty()) {
-        CE->destroyConstant();
-        Changed = true;
-      } else if (isa<GEPOperator>(CE))
+      if (isa<GEPOperator>(CE))
         append_range(Worklist, CE->users());
-    } else if (Constant *C = dyn_cast<Constant>(U)) {
-      if (isSafeToDestroyConstant(C)) {
-        C->destroyConstant();
-        // This could have invalidated UI, start over from scratch.
-        Dead.clear();
-        CleanupPointerRootUsers(GV, GetTLI);
-        return true;
-      }
     }
   }
 
@@ -271,6 +258,7 @@ CleanupPointerRootUsers(GlobalVariable *GV,
     }
   }
 
+  GV->removeDeadConstantUsers();
   return Changed;
 }
 
@@ -342,6 +330,7 @@ static bool CleanupConstantGlobalUsers(GlobalVariable *GV,
 /// loads and stores with the given type.
 struct GlobalPart {
   Type *Ty;
+  Constant *Initializer = nullptr;
   bool IsLoaded = false;
   bool IsStored = false;
 };
@@ -384,15 +373,27 @@ static bool collectSRATypes(DenseMap<uint64_t, GlobalPart> &Parts,
       // TODO: We currently require that all accesses at a given offset must
       // use the same type. This could be relaxed.
       Type *Ty = getLoadStoreType(V);
-      auto It = Parts.try_emplace(Offset.getZExtValue(), GlobalPart{Ty}).first;
+      const auto &[It, Inserted] =
+          Parts.try_emplace(Offset.getZExtValue(), GlobalPart{Ty});
       if (Ty != It->second.Ty)
         return false;
+
+      if (Inserted) {
+        It->second.Initializer =
+            ConstantFoldLoadFromConst(GV->getInitializer(), Ty, Offset, DL);
+        if (!It->second.Initializer) {
+          LLVM_DEBUG(dbgs() << "Global SRA: Failed to evaluate initializer of "
+                            << *GV << " with type " << *Ty << " at offset "
+                            << Offset.getZExtValue());
+          return false;
+        }
+      }
 
       // Scalable types not currently supported.
       if (isa<ScalableVectorType>(Ty))
         return false;
 
-      auto IsStored = [GV, &DL, &Offset](Value *V) {
+      auto IsStored = [](Value *V, Constant *Initializer) {
         auto *SI = dyn_cast<StoreInst>(V);
         if (!SI)
           return false;
@@ -402,15 +403,11 @@ static bool collectSRATypes(DenseMap<uint64_t, GlobalPart> &Parts,
           return true;
 
         // Don't consider stores that only write the initializer value.
-        if (Constant *Result = ConstantFoldLoadFromConst(
-                GV->getInitializer(), StoredConst->getType(), Offset, DL))
-          return Result != StoredConst;
-
-        return true;
+        return Initializer != StoredConst;
       };
 
       It->second.IsLoaded |= isa<LoadInst>(V);
-      It->second.IsStored |= IsStored(V);
+      It->second.IsStored |= IsStored(V, It->second.Initializer);
       continue;
     }
 
@@ -531,14 +528,16 @@ static GlobalVariable *SRAGlobal(GlobalVariable *GV, const DataLayout &DL) {
     return nullptr;
 
   // Sort by offset.
-  SmallVector<std::pair<uint64_t, Type *>, 16> TypesVector;
-  for (const auto &Pair : Parts)
-    TypesVector.push_back({Pair.first, Pair.second.Ty});
+  SmallVector<std::tuple<uint64_t, Type *, Constant *>, 16> TypesVector;
+  for (const auto &Pair : Parts) {
+    TypesVector.push_back(
+        {Pair.first, Pair.second.Ty, Pair.second.Initializer});
+  }
   sort(TypesVector, llvm::less_first());
 
   // Check that the types are non-overlapping.
   uint64_t Offset = 0;
-  for (const auto &[OffsetForTy, Ty] : TypesVector) {
+  for (const auto &[OffsetForTy, Ty, _] : TypesVector) {
     // Overlaps with previous type.
     if (OffsetForTy < Offset)
       return nullptr;
@@ -550,21 +549,6 @@ static GlobalVariable *SRAGlobal(GlobalVariable *GV, const DataLayout &DL) {
   if (Offset > DL.getTypeAllocSize(GV->getValueType()))
     return nullptr;
 
-  // Collect initializers for new globals.
-  Constant *OrigInit = GV->getInitializer();
-  DenseMap<uint64_t, Constant *> Initializers;
-  for (const auto &[OffsetForTy, Ty] : TypesVector) {
-    Constant *NewInit =
-        ConstantFoldLoadFromConst(OrigInit, Ty, APInt(64, OffsetForTy), DL);
-    if (!NewInit) {
-      LLVM_DEBUG(dbgs() << "Global SRA: Failed to evaluate initializer of "
-                        << *GV << " with type " << *Ty << " at offset "
-                        << OffsetForTy << "\n");
-      return nullptr;
-    }
-    Initializers.insert({OffsetForTy, NewInit});
-  }
-
   LLVM_DEBUG(dbgs() << "PERFORMING GLOBAL SRA ON: " << *GV << "\n");
 
   // Get the alignment of the global, either explicit or target-specific.
@@ -575,11 +559,11 @@ static GlobalVariable *SRAGlobal(GlobalVariable *GV, const DataLayout &DL) {
   // Create replacement globals.
   DenseMap<uint64_t, GlobalVariable *> NewGlobals;
   unsigned NameSuffix = 0;
-  for (auto &[OffsetForTy, Ty] : TypesVector) {
+  for (auto &[OffsetForTy, Ty, Initializer] : TypesVector) {
     GlobalVariable *NGV = new GlobalVariable(
         *GV->getParent(), Ty, false, GlobalVariable::InternalLinkage,
-        Initializers[OffsetForTy], GV->getName() + "." + Twine(NameSuffix++),
-        GV, GV->getThreadLocalMode(), GV->getAddressSpace());
+        Initializer, GV->getName() + "." + Twine(NameSuffix++), GV,
+        GV->getThreadLocalMode(), GV->getAddressSpace());
     NGV->copyAttributesFrom(GV);
     NewGlobals.insert({OffsetForTy, NGV});
 

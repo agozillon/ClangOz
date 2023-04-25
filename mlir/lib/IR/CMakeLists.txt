@@ -32,6 +32,7 @@ add_mlir_library(MLIRIR
   Types.cpp
   TypeRange.cpp
   TypeUtilities.cpp
+  Unit.cpp
   Value.cpp
   ValueRange.cpp
   Verifier.cpp
@@ -43,6 +44,7 @@ add_mlir_library(MLIRIR
   DEPENDS
   MLIRBuiltinAttributesIncGen
   MLIRBuiltinAttributeInterfacesIncGen
+  MLIRBuiltinDialectBytecodeIncGen
   MLIRBuiltinDialectIncGen
   MLIRBuiltinLocationAttributesIncGen
   MLIRBuiltinOpsIncGen

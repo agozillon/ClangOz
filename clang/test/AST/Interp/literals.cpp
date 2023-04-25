@@ -101,6 +101,19 @@ constexpr int gimme(int k) {
 }
 static_assert(gimme(5) == 5, "");
 
+namespace PointerToBool {
+
+  constexpr void *N = nullptr;
+  constexpr bool B = N;
+  static_assert(!B, "");
+  static_assert(!N, "");
+
+  constexpr float F = 1.0;
+  constexpr const float *FP = &F;
+  static_assert(FP, "");
+  static_assert(!!FP, "");
+}
+
 namespace SizeOf {
   constexpr int soint = sizeof(int);
   constexpr int souint = sizeof(unsigned int);
@@ -743,3 +756,39 @@ namespace CompoundLiterals {
   static_assert(get3() == 3, "");
 #endif
 };
+
+namespace TypeTraits {
+  static_assert(__is_trivial(int), "");
+  static_assert(__is_trivial(float), "");
+  static_assert(__is_trivial(E), "");
+  struct S{};
+  static_assert(__is_trivial(S), "");
+  struct S2 {
+    S2() {}
+  };
+  static_assert(!__is_trivial(S2), "");
+
+  template <typename T>
+  struct S3 {
+    constexpr bool foo() const { return __is_trivial(T); }
+  };
+  struct T {
+    ~T() {}
+  };
+  struct U {};
+  static_assert(S3<U>{}.foo(), "");
+  static_assert(!S3<T>{}.foo(), "");
+}
+
+#if __cplusplus >= 201402L
+constexpr int ignoredDecls() {
+  static_assert(true, "");
+  struct F { int a; };
+  enum E { b };
+  using A = int;
+  typedef int Z;
+
+  return F{12}.a;
+}
+static_assert(ignoredDecls() == 12, "");
+#endif

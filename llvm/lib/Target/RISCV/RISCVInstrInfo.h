@@ -1,4 +1,4 @@
-//===-- RISCVInstrInfo.h - RISCV Instruction Information --------*- C++ -*-===//
+//===-- RISCVInstrInfo.h - RISC-V Instruction Information -------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains the RISCV implementation of the TargetInstrInfo class.
+// This file contains the RISC-V implementation of the TargetInstrInfo class.
 //
 //===----------------------------------------------------------------------===//
 
@@ -24,6 +24,11 @@
 namespace llvm {
 
 class RISCVSubtarget;
+
+static const MachineMemOperand::Flags MONontemporalBit0 =
+    MachineMemOperand::MOTargetFlag1;
+static const MachineMemOperand::Flags MONontemporalBit1 =
+    MachineMemOperand::MOTargetFlag2;
 
 namespace RISCVCC {
 
@@ -159,7 +164,7 @@ public:
   bool shouldOutlineFromFunctionByDefault(MachineFunction &MF) const override;
 
   // Calculate target-specific information for a set of outlining candidates.
-  outliner::OutlinedFunction getOutliningCandidateInfo(
+  std::optional<outliner::OutlinedFunction> getOutliningCandidateInfo(
       std::vector<outliner::Candidate> &RepeatedSequenceLocs) const override;
 
   // Return if/how a given MachineInstr should be outlined.
@@ -227,16 +232,8 @@ public:
 
   std::optional<unsigned> getInverseOpcode(unsigned Opcode) const override;
 
-  // Returns true if all uses of OrigMI only depend on the lower \p NBits bits
-  // of its output.
-  bool hasAllNBitUsers(const MachineInstr &MI, const MachineRegisterInfo &MRI,
-                       unsigned NBits) const;
-  // Returns true if all uses of OrigMI only depend on the lower word of its
-  // output, so we can transform OrigMI to the corresponding W-version.
-  bool hasAllWUsers(const MachineInstr &MI,
-                    const MachineRegisterInfo &MRI) const {
-    return hasAllNBitUsers(MI, MRI, 32);
-  }
+  ArrayRef<std::pair<MachineMemOperand::Flags, const char *>>
+  getSerializableMachineMemOperandTargetFlags() const override;
 
 protected:
   const RISCVSubtarget &STI;

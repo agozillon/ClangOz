@@ -654,6 +654,10 @@ static bool checkPreprocessorOptions(
   SmallVector<StringRef, 4> ExistingMacroNames;
   collectMacroDefinitions(ExistingPPOpts, ExistingMacros, &ExistingMacroNames);
 
+  // Use a line marker to enter the <command line> file, as the defines and
+  // undefines here will have come from the command line.
+  SuggestedPredefines += "# 1 \"<command line>\" 1\n";
+
   for (unsigned I = 0, N = ExistingMacroNames.size(); I != N; ++I) {
     // Dig out the macro definition in the existing preprocessor options.
     StringRef MacroName = ExistingMacroNames[I];
@@ -713,6 +717,10 @@ static bool checkPreprocessorOptions(
     }
     return true;
   }
+
+  // Leave the <command line> file and return to <built-in>.
+  SuggestedPredefines += "# 1 \"<built-in>\" 2\n";
+
   if (Validation == OptionValidateStrictMatches) {
     // If strict matches are requested, don't tolerate any extra defines in
     // the AST file that are missing on the command line.
@@ -1579,8 +1587,13 @@ bool ASTReader::ReadSLocEntry(int ID) {
     auto Buffer = ReadBuffer(SLocEntryCursor, Name);
     if (!Buffer)
       return true;
-    SourceMgr.createFileID(std::move(Buffer), FileCharacter, ID,
-                           BaseOffset + Offset, IncludeLoc);
+    FileID FID = SourceMgr.createFileID(std::move(Buffer), FileCharacter, ID,
+                                        BaseOffset + Offset, IncludeLoc);
+    if (Record[3]) {
+      auto &FileInfo =
+          const_cast<SrcMgr::FileInfo &>(SourceMgr.getSLocEntry(FID).getFile());
+      FileInfo.setHasLineDirectives();
+    }
     break;
   }
 
@@ -2510,7 +2523,8 @@ void ASTReader::ResolveImportedPath(ModuleFile &M, std::string &Filename) {
 }
 
 void ASTReader::ResolveImportedPath(std::string &Filename, StringRef Prefix) {
-  if (Filename.empty() || llvm::sys::path::is_absolute(Filename))
+  if (Filename.empty() || llvm::sys::path::is_absolute(Filename) ||
+      Filename == "<built-in>" || Filename == "<command line>")
     return;
 
   SmallString<128> Buffer;
@@ -3728,7 +3742,7 @@ llvm::Error ASTReader::ReadASTBlock(ModuleFile &F,
           unsigned GlobalID = getGlobalSubmoduleID(F, Record[I++]);
           SourceLocation Loc = ReadSourceLocation(F, Record, I);
           if (GlobalID) {
-            ImportedModules.push_back(ImportedSubmodule(GlobalID, Loc));
+            PendingImportedModules.push_back(ImportedSubmodule(GlobalID, Loc));
             if (DeserializationListener)
               DeserializationListener->ModuleImportRead(GlobalID, Loc);
           }
@@ -4445,8 +4459,8 @@ ASTReader::ASTReadResult ASTReader::ReadAST(StringRef FileName,
   UnresolvedModuleRefs.clear();
 
   if (Imported)
-    Imported->append(ImportedModules.begin(),
-                     ImportedModules.end());
+    Imported->append(PendingImportedModules.begin(),
+                     PendingImportedModules.end());
 
   // FIXME: How do we load the 'use'd modules? They may not be submodules.
   // Might be unnecessary as use declarations are only used to build the
@@ -5050,7 +5064,7 @@ void ASTReader::InitializeContext() {
 
   // Re-export any modules that were imported by a non-module AST file.
   // FIXME: This does not make macro-only imports visible again.
-  for (auto &Import : ImportedModules) {
+  for (auto &Import : PendingImportedModules) {
     if (Module *Imported = getSubmodule(Import.ID)) {
       makeModuleVisible(Imported, Module::AllVisible,
                         /*ImportLoc=*/Import.ImportLoc);
@@ -5060,6 +5074,10 @@ void ASTReader::InitializeContext() {
       // nullptr here, we do the same later, in UpdateSema().
     }
   }
+
+  // Hand off these modules to Sema.
+  PendingImportedModulesSema.append(PendingImportedModules);
+  PendingImportedModules.clear();
 }
 
 void ASTReader::finalizeForWriting() {
@@ -7367,6 +7385,7 @@ ASTReader::GetExternalCXXCtorInitializers(uint64_t Offset) {
     return nullptr;
   }
   ReadingKindTracker ReadingKind(Read_Decl, *this);
+  Deserializing D(this);
 
   Expected<unsigned> MaybeCode = Cursor.ReadCode();
   if (!MaybeCode) {
@@ -7401,6 +7420,7 @@ CXXBaseSpecifier *ASTReader::GetExternalCXXBaseSpecifiers(uint64_t Offset) {
     return nullptr;
   }
   ReadingKindTracker ReadingKind(Read_Decl, *this);
+  Deserializing D(this);
 
   Expected<unsigned> MaybeCode = Cursor.ReadCode();
   if (!MaybeCode) {
@@ -8103,13 +8123,14 @@ void ASTReader::UpdateSema() {
   }
 
   // For non-modular AST files, restore visiblity of modules.
-  for (auto &Import : ImportedModules) {
+  for (auto &Import : PendingImportedModulesSema) {
     if (Import.ImportLoc.isInvalid())
       continue;
     if (Module *Imported = getSubmodule(Import.ID)) {
       SemaObj->makeModuleVisible(Imported, Import.ImportLoc);
     }
   }
+  PendingImportedModulesSema.clear();
 }
 
 IdentifierInfo *ASTReader::get(StringRef Name) {
@@ -8566,6 +8587,17 @@ void ASTReader::ReadLateParsedTemplates(
   }
 
   LateParsedTemplates.clear();
+}
+
+void ASTReader::AssignedLambdaNumbering(const CXXRecordDecl *Lambda) {
+  if (Lambda->getLambdaContextDecl()) {
+    // Keep track of this lambda so it can be merged with another lambda that
+    // is loaded later.
+    LambdaDeclarationsForMerging.insert(
+        {{Lambda->getLambdaContextDecl()->getCanonicalDecl(),
+          Lambda->getLambdaIndexInContext()},
+         const_cast<CXXRecordDecl *>(Lambda)});
+  }
 }
 
 void ASTReader::LoadSelector(Selector Sel) {
@@ -9278,11 +9310,12 @@ void ASTReader::visitTopLevelModuleMaps(
 }
 
 void ASTReader::finishPendingActions() {
-  while (!PendingIdentifierInfos.empty() || !PendingFunctionTypes.empty() ||
-         !PendingIncompleteDeclChains.empty() || !PendingDeclChains.empty() ||
-         !PendingMacroIDs.empty() || !PendingDeclContextInfos.empty() ||
-         !PendingUpdateRecords.empty() ||
-         !PendingObjCExtensionIvarRedeclarations.empty()) {
+  while (
+      !PendingIdentifierInfos.empty() || !PendingDeducedFunctionTypes.empty() ||
+      !PendingDeducedVarTypes.empty() || !PendingIncompleteDeclChains.empty() ||
+      !PendingDeclChains.empty() || !PendingMacroIDs.empty() ||
+      !PendingDeclContextInfos.empty() || !PendingUpdateRecords.empty() ||
+      !PendingObjCExtensionIvarRedeclarations.empty()) {
     // If any identifiers with corresponding top-level declarations have
     // been loaded, load those declarations now.
     using TopLevelDeclsMap =
@@ -9300,9 +9333,9 @@ void ASTReader::finishPendingActions() {
 
     // Load each function type that we deferred loading because it was a
     // deduced type that might refer to a local type declared within itself.
-    for (unsigned I = 0; I != PendingFunctionTypes.size(); ++I) {
-      auto *FD = PendingFunctionTypes[I].first;
-      FD->setType(GetType(PendingFunctionTypes[I].second));
+    for (unsigned I = 0; I != PendingDeducedFunctionTypes.size(); ++I) {
+      auto *FD = PendingDeducedFunctionTypes[I].first;
+      FD->setType(GetType(PendingDeducedFunctionTypes[I].second));
 
       // If we gave a function a deduced return type, remember that we need to
       // propagate that along the redeclaration chain.
@@ -9311,7 +9344,15 @@ void ASTReader::finishPendingActions() {
         PendingDeducedTypeUpdates.insert(
             {FD->getCanonicalDecl(), FD->getReturnType()});
     }
-    PendingFunctionTypes.clear();
+    PendingDeducedFunctionTypes.clear();
+
+    // Load each variable type that we deferred loading because it was a
+    // deduced type that might refer to a local type declared within itself.
+    for (unsigned I = 0; I != PendingDeducedVarTypes.size(); ++I) {
+      auto *VD = PendingDeducedVarTypes[I].first;
+      VD->setType(GetType(PendingDeducedVarTypes[I].second));
+    }
+    PendingDeducedVarTypes.clear();
 
     // For each decl chain that we wanted to complete while deserializing, mark
     // it as "still needs to be completed".
@@ -9487,7 +9528,6 @@ void ASTReader::finishPendingActions() {
           continue;
 
       // FIXME: Check for =delete/=default?
-      // FIXME: Complain about ODR violations here?
       const FunctionDecl *Defn = nullptr;
       if (!getContext().getLangOpts().Modules || !FD->hasBody(Defn)) {
         FD->setLazyBody(PB->second);
@@ -9517,6 +9557,12 @@ void ASTReader::finishPendingActions() {
       MD->setLazyBody(PB->second);
   }
   PendingBodies.clear();
+
+  // Inform any classes that had members added that they now have more members.
+  for (auto [RD, MD] : PendingAddedClassMembers) {
+    RD->addedMember(MD);
+  }
+  PendingAddedClassMembers.clear();
 
   // Do some cleanup.
   for (auto *ND : PendingMergedDefinitionsToDeduplicate)
@@ -9694,9 +9740,6 @@ void ASTReader::diagnoseOdrViolations() {
       ObjCProtocolOdrMergeFailures.empty())
     return;
 
-  // Ensure we don't accidentally recursively enter deserialization while
-  // we're producing our diagnostics.
-  Deserializing RecursionGuard(this);
   ODRDiagsEmitter DiagsEmitter(Diags, getContext(),
                                getPreprocessor().getLangOpts());
 

@@ -42,6 +42,10 @@ DebugVariable::DebugVariable(const DbgVariableIntrinsic *DII)
       Fragment(DII->getExpression()->getFragmentInfo()),
       InlinedAt(DII->getDebugLoc().getInlinedAt()) {}
 
+DebugVariableAggregate::DebugVariableAggregate(const DbgVariableIntrinsic *DVI)
+    : DebugVariable(DVI->getVariable(), std::nullopt,
+                    DVI->getDebugLoc()->getInlinedAt()) {}
+
 DILocation::DILocation(LLVMContext &C, StorageType Storage, unsigned Line,
                        unsigned Column, ArrayRef<Metadata *> MDs,
                        bool ImplicitCode)
@@ -2089,7 +2093,7 @@ void DIArgList::handleChangedOperand(void *Ref, Metadata *New) {
       if (NewVM)
         VM = NewVM;
       else
-        VM = ValueAsMetadata::get(UndefValue::get(VM->getValue()->getType()));
+        VM = ValueAsMetadata::get(PoisonValue::get(VM->getValue()->getType()));
     }
   }
   if (Uniq) {

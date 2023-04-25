@@ -17,7 +17,11 @@
 #include "flang/Parser/parse-tree.h"
 #include "flang/Parser/parsing.h"
 
-#include <map>
+#include <algorithm>
+#include <cstring>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 using namespace Fortran::frontend;
 using namespace Fortran::parser;
@@ -34,17 +38,17 @@ using namespace Fortran;
 
 struct NodeVisitor {
 private:
-  std::map<const char *, unsigned int> frequencies;
+  std::unordered_map<const char *, unsigned int> frequencies;
 
   void record(const char *name) {
-    const auto [it, ins] = frequencies.insert({name, 1});
+    auto [it, ins] = frequencies.insert({name, 1});
     if (!ins) {
-      frequencies[name] = it->second + 1;
+      it->second++;
     }
   }
 
 public:
-  const std::map<const char *, unsigned int> &getFrequencies() const {
+  const std::unordered_map<const char *, unsigned int> &getFrequencies() const {
     return frequencies;
   }
 
@@ -744,12 +748,22 @@ public:
   template <typename... A> void Post(const std::variant<A...> &) {}
 };
 
+bool sortNodes(std::pair<const char *, int> a, std::pair<const char *, int> b) {
+  return (a.second == b.second) ? (std::strcmp(a.first, b.first) < 0)
+                                : a.second > b.second;
+}
+
 class FeatureListAction : public PluginParseTreeAction {
   void executeAction() override {
     NodeVisitor visitor;
     Fortran::parser::Walk(getParsing().parseTree(), visitor);
 
-    for (auto const &[feature, frequency] : visitor.getFrequencies()) {
+    const auto &frequencyMap = visitor.getFrequencies();
+    std::vector<std::pair<const char *, int>> frequencies(
+        frequencyMap.begin(), frequencyMap.end());
+
+    std::sort(frequencies.begin(), frequencies.end(), sortNodes);
+    for (auto const &[feature, frequency] : frequencies) {
       llvm::outs() << feature << ": " << frequency << "\n";
     }
   }
