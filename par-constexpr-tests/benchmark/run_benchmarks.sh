@@ -232,7 +232,6 @@ function execute_sycl_edge_detection_par {
 # because the text modification is slightly wrong, but currently not using the 
 # size in any graphs.... so leaving it buggy for now.
 function print_binary_sets_size {
-echo $1
   local -n binary_arr=$1
   
   declare -a kbs
@@ -273,13 +272,21 @@ unset bins
 mkdir blackscholes_results
 pushd blackscholes_results
 
+mand_sizes=(4 16 1K 4K 16K 64K)
+num_mand_sizes=6 # Could be made less than the size of mand_sizes.
+
  # Used this for final data set
-execute_blackscholes_lin 4 1 "TIME"
-execute_blackscholes_lin 16 1 "TIME"
-execute_blackscholes_lin 1K 1 "TIME"
-execute_blackscholes_lin 4K 1 "TIME"
-execute_blackscholes_lin 16K 1 "TIME"
-execute_blackscholes_lin 64K 1 "TIME"
+for (( i=0; i< ${num_mand_sizes}; i++ ));
+do
+  execute_blackscholes_lin "${mand_sizes[$i]}" 1 "TIME"
+done
+exit
+#execute_blackscholes_lin 4 1 "TIME"
+#execute_blackscholes_lin 16 1 "TIME"
+#execute_blackscholes_lin 1K 1 "TIME"
+#execute_blackscholes_lin 4K 1 "TIME"
+#execute_blackscholes_lin 16K 1 "TIME"
+#execute_blackscholes_lin 64K 1 "TIME"
 
 print_binary_sets_size bins "blackscholes_1_run_lin_memory"
 unset bins
