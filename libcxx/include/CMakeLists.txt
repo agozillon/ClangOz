@@ -222,10 +222,7 @@ set(files
   __bit/popcount.h
   __bit/rotate.h
   __bit_reference
-  __bsd_locale_defaults.h
-  __bsd_locale_fallbacks.h
   __cep_execution
-  __errc
   __charconv/chars_format.h
   __charconv/from_chars_integral.h
   __charconv/from_chars_result.h
