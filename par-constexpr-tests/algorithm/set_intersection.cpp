@@ -16,10 +16,10 @@ constexpr auto set_intersection_ov1(auto intersection_arr) {
   std::array<T, N> out {}; // would be better as a vector, but no constexpr 
                           // vector yet in the std library
   std::array<T, N> arr {};
-    
+
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i;
-    
+
   if constexpr (ForceRuntime) {
     std::cout << "is constant evaluated: " 
               << std::is_constant_evaluated() << "\n";
@@ -30,7 +30,7 @@ constexpr auto set_intersection_ov1(auto intersection_arr) {
                           intersection_arr.begin(), intersection_arr.end(), 
                           out.begin());
   }
-  
+
    return out; 
 }
 
@@ -56,17 +56,17 @@ constexpr bool compare_vals(auto arr, auto arr2) {
     if (tmp[i] != tmp2[i])
       return false;
   }
-  
+
   return true;
 }
 
 int main() {
   constexpr auto intersection_arr = rnd_arry<int, 16, 31>();
-  
+
 //  for (int i = 0; i < intersection_arr.size(); ++i) {
 //    std::cout << intersection_arr[i] << " ";
 //  }
-  
+
   constexpr auto output_ov1 = set_intersection_ov1<int, 32>(intersection_arr);
   auto runtime_ov1 = set_intersection_ov1<int, 32, true>(intersection_arr);
 
@@ -78,9 +78,9 @@ int main() {
   for (int i = 0; i < 32; ++i) {
     std::cout << output_ov1[i] << " ";
   }
-  
+
   std::cout << "\n\n\n";
-  
+
   for (int i = 0; i < 32; ++i) {
     std::cout << runtime_ov1[i] << " ";
   }
@@ -88,6 +88,6 @@ int main() {
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";
-  
+
   return 0;
 }

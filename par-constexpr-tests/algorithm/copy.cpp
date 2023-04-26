@@ -12,10 +12,10 @@ template <typename T, int N, bool ForceRuntime = false>
 constexpr auto copy_ov1() {
   std::array<T, N> arr {};
   std::array<T, N> arr_copy {};
-    
+
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i;
-  
+
   // this is just here to make sure the runtime iteration is actually executing
   // at runtime
   if constexpr (ForceRuntime) {
@@ -25,7 +25,7 @@ constexpr auto copy_ov1() {
   } else {
     std::copy(execution::ce_par, arr.begin(), arr.end(), arr_copy.begin());
   }
-  
+
   return arr_copy;
 }
 
@@ -35,12 +35,12 @@ int main() {
 
   for (auto r : runtime_ov1)
     std::cout << r << "\n";
-  
+
   std::cout << "\n\n\n";
-  
+
   for (auto r : output_ov1)
     std::cout << r << "\n";
-      
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";

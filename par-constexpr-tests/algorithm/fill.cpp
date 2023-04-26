@@ -18,7 +18,7 @@ using namespace __cep::experimental;
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto fill_ov1() {
   std::array<T, N> arr {};
-    
+
 
   if constexpr (ForceRuntime) { 
     std::cout << "is constant evaluated: " 
@@ -27,17 +27,17 @@ constexpr auto fill_ov1() {
   } else {
     std::fill(execution::ce_par, arr.begin(), arr.end(), -1);
   }
-  
+
   return arr;
 }
 
 int main() {
   constexpr auto output_ov1 = fill_ov1<int, 32>();
   auto runtime_ov1 = fill_ov1<int, 32, true>();
-  
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";
-    
+
   return 0;
 }

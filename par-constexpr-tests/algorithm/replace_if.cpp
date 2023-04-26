@@ -23,17 +23,17 @@ constexpr auto replace_if_ov1() {
     else 
       return false;
   };
-                                        
+
   if constexpr (ForceRuntime) {
     std::cout << "is constant evaluated: " 
               << std::is_constant_evaluated() << "\n";
-              
+
     std::replace_if(arr.begin(), arr.end(), less_than_15, 42);
   } else {
     std::replace_if(execution::ce_par, arr.begin(), arr.end(), less_than_15, 
                     42);
   }
-  
+
   return arr;
 }
 
@@ -48,7 +48,7 @@ int main() {
 //  
 //  for (auto r : output_ov1)
 //    std::cout << r << "\n";
-      
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";

@@ -16,24 +16,24 @@ template <typename T, int N, bool ForceRuntime = false>
 constexpr auto iter_swap_ov1() {
   std::array<T[N], N> arr_swap {};
   std::array<T[N], N> arr {};
-  
+
   for (int i = 0; i < N; ++i)
     for (int j = 0; j < N; ++j)
     arr[i][j] = j;
-    
+
   for (int i = 0; i < N; ++i)
     for (int j = 0; j < N; ++j)
     arr_swap[i][j] = N + j;
-    
+
   if constexpr (ForceRuntime) {
     std::cout << "is constant evaluated: " 
               << std::is_constant_evaluated() << "\n";
-              
+
     std::iter_swap(arr.begin(), arr_swap.begin());
   } else {
     std::iter_swap(execution::ce_par, arr.begin(), arr_swap.begin());
   }
-  
+
   return std::pair<std::array<T[N], N>,  
                    std::array<T[N], N>>(arr, arr_swap);
 }

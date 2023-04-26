@@ -27,7 +27,7 @@ template <typename T, int N, bool ForceRuntime = false>
 constexpr auto find_end_ov1() {
   std::array<T, N> arr {};
   std::array<T, 4> seq {0,1,2,3};
-    
+
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i % 4;
 
@@ -49,11 +49,11 @@ int main() {
   auto runtime_ov1 = find_end_ov1<int, 32, true>();
 
   std::cout << output_ov1 << "\n";
-  
+
   std::cout << "\n\n\n";
-  
+
   std::cout << runtime_ov1 << "\n";
-      
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";

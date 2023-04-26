@@ -49,7 +49,7 @@ int main() {
   // should be 31 is... 23?
   std::cout << output_unsorted_ov1 << " vs " << runtime_unsorted_ov1 << "\n";
   std::cout << output_ov1 << " vs " << runtime_ov1 << "\n";
-  
+
   std::cout << "Runtime == Compile Time: " 
     << (pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1) &&
        pce::utility::check_runtime_against_compile(output_unsorted_ov1, 

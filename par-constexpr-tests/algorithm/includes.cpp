@@ -12,7 +12,7 @@ template <typename T, int N, bool ForceRuntime = false>
 constexpr auto includes_ov1() {
   std::array<T, N> arr {};
   std::array<T, 4> arr_includes {2,3,4,5};
-    
+
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i;
 
@@ -33,7 +33,7 @@ int main() {
 
   std::cout << output_ov1 << "\n";
   std::cout << runtime_ov1 << "\n";
-  
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";

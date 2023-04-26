@@ -16,10 +16,10 @@ constexpr auto transform_ov1() {
   std::array<T, N> a = {0};
   std::array<T, N> b = {0};
   std::array<T, N> c = {0};
-  
+
   for (int i = 0; i < c.size(); ++i)
      a[i] = b[i] = (i + 1);
-    
+
   // this is just here to make sure the runtime iteration is actually executing
   // at runtime
   if constexpr (ForceRuntime) {
@@ -33,25 +33,25 @@ constexpr auto transform_ov1() {
                    std::begin(b), std::begin(c), 
                    std::plus<T>());
   }
-  
+
    return c; 
 }
 
 int main() {
   constexpr auto output_ov1 = transform_ov1<int, 32>();
   auto runtime_ov1 = transform_ov1<int, 32, true>();
-  
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";
 
   for (auto ov : runtime_ov1)
     std::cout << ov << "\n";
-        
+
   std::cout << "\n\n\n";
-  
+
   for (auto ov : output_ov1)
     std::cout << ov << "\n";
-  
+
   return 0;
 }

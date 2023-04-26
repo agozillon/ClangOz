@@ -26,18 +26,18 @@ constexpr auto fill_n_ov1() {
 int main() {
   constexpr auto output_ov1 = fill_n_ov1<int, 32>();
   auto runtime_ov1 = fill_n_ov1<int, 32, true>();
-  
+
     for (auto r : runtime_ov1)
     std::cout << r << "\n";
-  
+
   std::cout << "\n\n\n";
-  
+
   for (auto r : output_ov1)
     std::cout << r << "\n";
-    
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";
-    
+
   return 0;
 }

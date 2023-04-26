@@ -11,7 +11,7 @@ using namespace __cep::experimental;
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto find_ov1() {
   std::array<T, N> arr {};
-    
+
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i;
 
@@ -28,7 +28,7 @@ constexpr auto find_ov1() {
     // first pass that don't occur in the second.
     found = std::find(execution::ce_par, arr.begin(), arr.end(), 27);
   }
-  
+
   return *found;
 }
 
@@ -37,11 +37,11 @@ int main() {
   auto runtime_ov1 = find_ov1<int, 32, true>();
 
   std::cout << output_ov1 << "\n";
-  
+
   std::cout << "\n\n\n";
-  
+
   std::cout << runtime_ov1 << "\n";
-      
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";

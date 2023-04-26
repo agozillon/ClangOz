@@ -12,7 +12,7 @@ template <typename T, int N, bool ForceRuntime = false>
 constexpr auto mismatch_ov1() {
   std::array<T, N> arr {};
   std::array<T, N> arr2 {}; 
-  
+
   for (int i = 0; i < arr.size(); ++i)
    arr2[i] = arr[i] = i;
 
@@ -48,14 +48,14 @@ int main() {
 
   // maybe make an overloaded print function similar to the check function.. 
   std::cout << runtime_ov1.first << " " << runtime_ov1.second << "\n";
-  
+
   std::cout << "\n\n\n";
-  
+
   std::cout << output_ov1.first << " " << output_ov1.second << "\n";
-      
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";
- 
+
   return 0;
 }

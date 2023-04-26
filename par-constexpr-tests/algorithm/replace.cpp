@@ -20,12 +20,12 @@ constexpr auto replace_ov1() {
   if constexpr (ForceRuntime) {
     std::cout << "is constant evaluated: " 
               << std::is_constant_evaluated() << "\n";
-              
+
     std::replace(arr.begin(), arr.end(), 8, 88);
   } else {
     std::replace(execution::ce_par, arr.begin(), arr.end(), 8, 88);
   }
-  
+
   return arr;
 }
 

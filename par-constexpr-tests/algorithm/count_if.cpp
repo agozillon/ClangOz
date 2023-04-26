@@ -15,7 +15,7 @@ using namespace __cep::experimental;
 template <typename T, int N, bool ForceRuntime = false>
 constexpr auto count_if_ov1() {
   std::array<T, N> arr {};
-    
+
   for (int i = 0; i < arr.size(); ++i)
     arr[i] = i;
 
@@ -25,14 +25,14 @@ constexpr auto count_if_ov1() {
   if constexpr (ForceRuntime) {
     std::cout << "is constant evaluated: " 
               << std::is_constant_evaluated() << "\n";
-              
+
     ret = std::count_if(arr.begin(), arr.end(), 
                         [](auto i) { return i % 2 == 1; });
   } else {
     ret = std::count_if(execution::ce_par, arr.begin(), arr.end(), 
                         [](auto i) { return i % 2 == 1; });
   }
-  
+
   return ret;
 }
 
@@ -41,11 +41,11 @@ int main() {
   auto runtime_ov1 = count_if_ov1<int, 32, true>();
 
   std::cout << runtime_ov1 << "\n";
-  
+
   std::cout << "\n\n\n";
-  
+
   std::cout << output_ov1 << "\n";
-      
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";

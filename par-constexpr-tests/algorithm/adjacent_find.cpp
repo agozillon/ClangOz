@@ -46,9 +46,9 @@ constexpr auto adjacent_find_ov1() {
   // across threads
   arr[8] = 8;
   arr[9] = 8;
-  
+
   auto found = std::adjacent_find(arr.begin(), arr.end());
-  
+
   return std::distance(arr.begin(), found);
 }
 
@@ -57,11 +57,11 @@ int main() {
   auto runtime_ov1 = adjacent_find_ov1<int, 32, true>();
 
   std::cout << output_ov1 << "\n";
-  
+
   std::cout << "\n\n\n";
-  
+
   std::cout << runtime_ov1 << "\n";
-      
+
   std::cout << "Runtime == Compile Time: " 
     << pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
     << "\n";

@@ -25,16 +25,16 @@ constexpr auto move_backward_ov1(auto& arr) {
     std::move_backward(execution::ce_par, arr.begin(), arr.end(), 
                        arr_move.end());
   }
-                       
+
   return arr_move;
 }
 
 consteval auto arr_gen() {
   std::array<arr_t, arr_sz> arr {};
-  
+
   for (int i = 0; i < arr_sz; ++i)
     arr[i] = i;
-    
+
   return arr;
 }
 
@@ -63,7 +63,7 @@ int main() {
 //  
 //  for (auto r : arr2)
 //    std::cout << r << "\n";
-    
+
   std::cout << "Runtime == Compile Time: " 
     << (pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
      && pce::utility::check_runtime_against_compile(arr, arr2))

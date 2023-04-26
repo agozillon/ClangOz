@@ -19,7 +19,7 @@ constexpr auto lexicographical_compare_ov1() {
   } else {
     second_arr = {'a', 'b', 'e', 'c', 'd', 'f', 'h', 'g'};
   }
-  
+
   // this is just here to make sure the runtime iteration is actually executing
   // at runtime
   if constexpr (ForceRuntime) {
@@ -80,10 +80,10 @@ int main() {
   constexpr auto output_ov1_ordered 
       = lexicographical_compare_ov1<false, true>();
   auto runtime_ov1_ordered = lexicographical_compare_ov1<true, true>();
-  
+
   std::cout << "output_ov1_ordered: " << output_ov1_ordered << "\n";
   std::cout << "runtime_ov1_ordered: " << runtime_ov1_ordered << "\n";
-  
+
   std::cout << "Runtime == Compile Time: " 
     << (pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1) &&
        pce::utility::check_runtime_against_compile(output_ov1_ordered, 

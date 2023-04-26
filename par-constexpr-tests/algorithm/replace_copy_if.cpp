@@ -22,28 +22,28 @@ constexpr auto replace_copy_if_ov1(auto& arr) {
     else 
       return false;
   };
-     
-     
+
+
   if constexpr (ForceRuntime) {
     std::cout << "is constant evaluated: " 
               << std::is_constant_evaluated() << "\n";
-              
+
     std::replace_copy_if(arr.begin(), arr.end(), arr_copy.begin(), less_than_15, 
                          42);
   } else {
     std::replace_copy_if(execution::ce_par, arr.begin(), arr.end(), 
                          arr_copy.begin(), less_than_15, 42);
   }
-                       
+
   return arr_copy;
 }
 
 consteval auto arr_gen() {
   std::array<arr_t, arr_sz> arr {};
-  
+
   for (int i = 0; i < arr_sz; ++i)
     arr[i] = i;
-    
+
   return arr;
 }
 
@@ -56,22 +56,22 @@ int main() {
 
   for (auto r : runtime_ov1)
     std::cout << r << "\n";
-  
+
   std::cout << "\n\n\n";
-  
+
   for (auto r : output_ov1)
     std::cout << r << "\n";
-  
+
   std::cout << "\n\n\n";
-  
+
   for (auto r : arr)
     std::cout << r << "\n";
-  
+
   std::cout << "\n\n\n";
-  
+
   for (auto r : arr2)
     std::cout << r << "\n";
-    
+
   std::cout << "Runtime == Compile Time: " 
     << (pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1)
      && pce::utility::check_runtime_against_compile(arr, arr2))

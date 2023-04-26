@@ -11,7 +11,7 @@ using namespace __cep::experimental;
 template <typename T, int N, bool ForceRuntime = false, bool Unsorted = false>
 constexpr auto is_sorted_ov1() {
   std::array<T, N> arr {};
-  
+
   if constexpr (Unsorted) { // default uses < than, so it's "unsorted"
     for (int i = 0; i < arr.size(); ++i)
       arr[i] = arr.size() - i;
@@ -44,7 +44,7 @@ int main() {
 //  
 //  for (auto r : output_ov1)
 //    std::cout << r << "\n";
-      
+
   std::cout << "Runtime == Compile Time: " 
     << (pce::utility::check_runtime_against_compile(output_ov1, runtime_ov1) &&
        pce::utility::check_runtime_against_compile(output_unsorted_ov1, 
