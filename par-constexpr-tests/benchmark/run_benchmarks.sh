@@ -1,6 +1,15 @@
 #!/bin/bash
 
+if [[ -z "${CEST_INCLUDE}" ]]; then
+  printf "%s%s\n" "error: Please ensure CEST_INCLUDE is defined, " \
+         "and pointing at your install of https://github.com/SCT4SP/cest"
+  exit -1
+fi
 
+if [ ! -d "$CEST_INCLUDE" ]; then
+  echo "error: The directory named in CEST_INCLUDE ($CEST_INCLUDE) doesn't exist."
+  exit -1
+fi
 
 #* Look into Speedup graph:
 
@@ -223,6 +232,7 @@ function execute_sycl_edge_detection_par {
 # because the text modification is slightly wrong, but currently not using the 
 # size in any graphs.... so leaving it buggy for now.
 function print_binary_sets_size {
+echo $1
   local -n binary_arr=$1
   
   declare -a kbs
