@@ -316,12 +316,21 @@ popd
 mkdir mandelbrot_results
 pushd mandelbrot_results
 
+mand_sizes=(25 50 75 100 125)
+num_mand_sizes=3
+
 # Used this for final data set
-execute_mandelbrot_lin 25 128 "TIME"
-execute_mandelbrot_lin 50 128 "TIME" 
-execute_mandelbrot_lin 75 128 "TIME"
-execute_mandelbrot_lin 100 128 "TIME"
-execute_mandelbrot_lin 125 128 "TIME"
+for ((i = 0; i < num_mand_sizes; i++));
+do
+  execute_mandelbrot_lin "${mand_sizes[$i]}" 128 "TIME"
+done
+
+# Used this for final data set
+#execute_mandelbrot_lin 25 128 "TIME"
+#execute_mandelbrot_lin 50 128 "TIME" 
+#execute_mandelbrot_lin 75 128 "TIME"
+#execute_mandelbrot_lin 100 128 "TIME"
+#execute_mandelbrot_lin 125 128 "TIME"
 
 print_binary_sets_size bins "mandelbrot_128_iter_lin_memory"
 unset bins
