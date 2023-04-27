@@ -389,12 +389,6 @@ do
   execute_nbody_lin 32 "${nbody_sizes[$i]}" "TIME"
 done
 
-#execute_nbody_lin 32 16 "TIME"
-#execute_nbody_lin 32 32 "TIME"
-#execute_nbody_lin 32 64 "TIME"
-#execute_nbody_lin 32 128 "TIME"
-#execute_nbody_lin 32 256 "TIME"
-
 print_binary_sets_size bins "nbody_15_body_lin_memory"
 convert_time_files_to_csv_file $filenames "nbody_15_body_lin_timings"
 unset bins filenames
@@ -417,57 +411,35 @@ popd
 #                           SYCL EDGE DETECTION
 ################################################################################
 
-
-if [[ ! -z "$MOTORSYCL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
+if [[ ! -z "$MOTORSYCL_INCLUDE" ]]; then
   mkdir sycl_edge_detection_results
   pushd sycl_edge_detection_results
 
   compile_image_to_text_file
 
-  execute_sycl_edge_detection_lin 64 "TIME"
-  execute_sycl_edge_detection_lin 128 "TIME"
-  execute_sycl_edge_detection_lin 256 "TIME"
-  execute_sycl_edge_detection_lin 512 "TIME"
+  edge_sizes=(64 128 256 512)
+  num_edge_sizes=2
+
+  for ((i = 0; i < num_edge_sizes; i++));
+  do
+    execute_sycl_edge_detection_lin "${edge_sizes[$i]}" "TIME"
+  done
 
   print_binary_sets_size bins "sycl_edge_detection_lin_memory"
   convert_time_files_to_csv_file $filenames "sycl_edge_detection_lin_timings"
   unset bins filenames
 
-  execute_sycl_edge_detection_par 64 2 "TIME"
-  execute_sycl_edge_detection_par 128 2 "TIME"
-  execute_sycl_edge_detection_par 256 2 "TIME"
-  execute_sycl_edge_detection_par 512 2 "TIME"
+  for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
-  print_binary_sets_size bins "sycl_edge_detection_2_core_par_memory"
-  convert_time_files_to_csv_file $filenames "sycl_edge_detection_2_core_par_timings"
-  unset bins filenames
+    for (( j = 0; j < num_edge_sizes; j++ )); do
+      execute_nbody_par 32 "${edge_sizes[$j]}" "${CORE_COUNTS[$i]}" "TIME"
+      prefix="sycl_edge_detection_"${CORE_COUNTS[$i]}"_core_par"
+      print_binary_sets_size bins ${prefix}"_memory"
+      convert_time_files_to_csv_file $filenames ${prefix}"_timings"
+      unset bins filenames
+    done
 
-  execute_sycl_edge_detection_par 64 4 "TIME"
-  execute_sycl_edge_detection_par 128 4 "TIME"
-  execute_sycl_edge_detection_par 256 4 "TIME"
-  execute_sycl_edge_detection_par 512 4 "TIME"
-
-  print_binary_sets_size bins "sycl_edge_detection_4_core_par_memory"
-  convert_time_files_to_csv_file $filenames "sycl_edge_detection_4_core_par_timings"
-  unset bins filenames
-
-  execute_sycl_edge_detection_par 64 6 "TIME"
-  execute_sycl_edge_detection_par 128 6 "TIME"
-  execute_sycl_edge_detection_par 256 6 "TIME"
-  execute_sycl_edge_detection_par 512 6 "TIME"
-
-  print_binary_sets_size bins "sycl_edge_detection_6_core_par_memory"
-  convert_time_files_to_csv_file $filenames "sycl_edge_detection_6_core_par_timings"
-  unset bins filenames
-
-  execute_sycl_edge_detection_par 64 8 "TIME"
-  execute_sycl_edge_detection_par 128 8 "TIME"
-  execute_sycl_edge_detection_par 256 8 "TIME"
-  execute_sycl_edge_detection_par 512 8 "TIME"
-
-  print_binary_sets_size bins "sycl_edge_detection_8_core_par_memory"
-  convert_time_files_to_csv_file $filenames "sycl_edge_detection_8_core_par_timings"
-  unset bins filenames
+  done
 
   popd
 fi
@@ -727,7 +699,7 @@ popd
 
   # Not sure how good this test is for calculating number of steps as it
   # encompases multiple launches of the parallel for_each for each kernel
-if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
+if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_INCLUDE" ]]; then
   mkdir sycl_edge_detection_results
   pushd sycl_edge_detection_results
 
