@@ -1,5 +1,8 @@
 #!/bin/bash
 
+CORE_COUNTS=(2 4 6 8)
+NUM_CORE_SIZES=2 # Could be made less than the size of CORE_COUNTS
+
 if [[ -z "${CEST_INCLUDE}" ]]; then
   printf "%s%s\n" "error: Please ensure CEST_INCLUDE is defined, " \
          "and pointing at your install of https://github.com/SCT4SP/cest"
@@ -257,7 +260,7 @@ function print_binary_sets_size {
 
 function execute_benchmarks {
 
-local i j
+local i j prefix
 
 mkdir $1
 pushd $1
@@ -291,14 +294,12 @@ unset bins
 convert_time_files_to_csv_file $filenames "blackscholes_1_run_lin_timings"
 unset filenames
 
-core_counts=(2 4 6 8)
-num_core_sizes=2 # Could be made less than the size of core_counts
-for (( i = 0; i < num_core_sizes; i++ )); do
+for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
   # Used this for final data set
   for (( j = 0; j < num_bs_sizes; j++ )); do
-    execute_blackscholes_par "${bs_sizes[$j]}" 1 "${core_counts[$i]}" "TIME"
-    local prefix="blackscholes_1_run_"${core_counts[$i]}"_core_par"
+    execute_blackscholes_par "${bs_sizes[$j]}" 1 "${CORE_COUNTS[$i]}" "TIME"
+    prefix="blackscholes_1_run_"${CORE_COUNTS[$i]}"_core_par"
     print_binary_sets_size bins ${prefix}"_memory"
     unset bins
     convert_time_files_to_csv_file $filenames ${prefix}"_timings"
@@ -317,7 +318,7 @@ mkdir mandelbrot_results
 pushd mandelbrot_results
 
 mand_sizes=(25 50 75 100 125)
-num_mand_sizes=3
+num_mand_sizes=2
 
 # Used this for final data set
 for ((i = 0; i < num_mand_sizes; i++));
@@ -325,65 +326,23 @@ do
   execute_mandelbrot_lin "${mand_sizes[$i]}" 128 "TIME"
 done
 
-# Used this for final data set
-#execute_mandelbrot_lin 25 128 "TIME"
-#execute_mandelbrot_lin 50 128 "TIME" 
-#execute_mandelbrot_lin 75 128 "TIME"
-#execute_mandelbrot_lin 100 128 "TIME"
-#execute_mandelbrot_lin 125 128 "TIME"
-
 print_binary_sets_size bins "mandelbrot_128_iter_lin_memory"
 unset bins
 convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_lin_timings"
 unset filenames
 
-# Used this for final data set
-execute_mandelbrot_par 25 128 2 "TIME"
-execute_mandelbrot_par 50 128 2 "TIME"
-execute_mandelbrot_par 75 128 2 "TIME"
-execute_mandelbrot_par 100 128 2 "TIME"
-execute_mandelbrot_par 125 128 2 "TIME"
+for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
-print_binary_sets_size bins "mandelbrot_128_iter_par_2_core_memory"
-unset bins
-convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_2_core_timings"
-unset filenames
+  for (( j = 0; j < num_mand_sizes; j++ )); do
+    execute_mandelbrot_par "${mand_sizes[$j]}" 1 "${CORE_COUNTS[$i]}" "TIME"
+    prefix="mandelbrot_128_iter_par_"${CORE_COUNTS[$i]}"_core"
+    print_binary_sets_size bins ${prefix}"_memory"
+    unset bins
+    convert_time_files_to_csv_file $filenames ${prefix}"_timings"
+    unset filenames
+  done
 
-# Used this for final data set
-execute_mandelbrot_par 25 128 4 "TIME"
-execute_mandelbrot_par 50 128 4 "TIME"
-execute_mandelbrot_par 75 128 4 "TIME"
-execute_mandelbrot_par 100 128 4 "TIME"
-execute_mandelbrot_par 125 128 4 "TIME"
-
-print_binary_sets_size bins "mandelbrot_128_iter_par_4_core_memory"
-unset bins
-convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_4_core_timings"
-unset filenames
-
-# Used this for final data set
-execute_mandelbrot_par 25 128 6 "TIME"
-execute_mandelbrot_par 50 128 6 "TIME"
-execute_mandelbrot_par 75 128 6 "TIME"
-execute_mandelbrot_par 100 128 6 "TIME"
-execute_mandelbrot_par 125 128 6 "TIME"
-
-print_binary_sets_size bins "mandelbrot_128_iter_par_6_core_memory"
-unset bins
-convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_6_core_timings"
-unset filenames
-
-# Used this for final data set
-execute_mandelbrot_par 25 128 8 "TIME"
-execute_mandelbrot_par 50 128 8 "TIME"
-execute_mandelbrot_par 75 128 8 "TIME"
-execute_mandelbrot_par 100 128 8 "TIME"
-execute_mandelbrot_par 125 128 8 "TIME"
-
-print_binary_sets_size bins "mandelbrot_128_iter_par_8_core_memory"
-unset bins
-convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_par_8_core_timings"
-unset filenames
+done
 
 popd
 
