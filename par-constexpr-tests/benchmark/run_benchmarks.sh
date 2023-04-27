@@ -167,7 +167,7 @@ function execute_nbody_par {
 
 function execute_mandelbrot_lin {
   echo "Executing mandelbrot: Linear, -DHXW_$1, -DMAXITERS_$2, -DCONSTEXPR_TRACK_$3"
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DHXW_$1 -DMAXITERS_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o lin_mandelbrot_hxw$1_maxiters$2.o &> lin_mandelbrot_hxw$1_maxiters$2_results_$3
+  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DHXW_$1 -DMAXITERS_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o lin_mandelbrot_hxw$1_maxiters$2_$3.o &> lin_mandelbrot_hxw$1_maxiters$2_results_$3
 
   filenames+=( "lin_mandelbrot_hxw$1_maxiters$2_results_$3" )
   bins+=( "lin_mandelbrot_hxw$1_maxiters$2_$3.o" )
