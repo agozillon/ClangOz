@@ -351,17 +351,10 @@ pushd swaptions_results
 swap_sizes=(2 4 6 8 10)
 num_swap_sizes=2
 
-# Used this for final data set
 for ((i = 0; i < num_swap_sizes; i++));
 do
   execute_swaptions_lin 2000 "${swap_sizes[$i]}" "TIME"
 done
-
-#execute_swaptions_lin 2000 2 "TIME"
-#execute_swaptions_lin 2000 4 "TIME"
-#execute_swaptions_lin 2000 6 "TIME"
-#execute_swaptions_lin 2000 8 "TIME"
-#execute_swaptions_lin 2000 10 "TIME"
 
 print_binary_sets_size bins "swaptions_2000_trials_lin_memory"
 convert_time_files_to_csv_file $filenames "swaptions_2000_trials_lin_timings"
@@ -379,46 +372,6 @@ for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
 done
 
-#execute_swaptions_par 2000 2 2 "TIME"
-#execute_swaptions_par 2000 4 2 "TIME"
-#execute_swaptions_par 2000 6 2 "TIME"
-#execute_swaptions_par 2000 8 2 "TIME"
-#execute_swaptions_par 2000 10 2 "TIME"
-
-#print_binary_sets_size bins "swaptions_2000_trials_par_2_core_memory"
-#convert_time_files_to_csv_file $filenames "swaptions_2000_trials_par_2_core_timings"
-#unset bins filenames
-
-#execute_swaptions_par 2000 2 4 "TIME"
-#execute_swaptions_par 2000 4 4 "TIME"
-#execute_swaptions_par 2000 6 4 "TIME"
-#execute_swaptions_par 2000 8 4 "TIME"
-#execute_swaptions_par 2000 10 4 "TIME"
-
-#print_binary_sets_size bins "swaptions_2000_trials_par_4_core_memory"
-#convert_time_files_to_csv_file $filenames "swaptions_2000_trials_par_4_core_timings"
-#unset bins filenames
-
-#execute_swaptions_par 2000 2 6 "TIME"
-#execute_swaptions_par 2000 4 6 "TIME"
-#execute_swaptions_par 2000 6 6 "TIME"
-#execute_swaptions_par 2000 8 6 "TIME"
-#execute_swaptions_par 2000 10 6 "TIME"
-
-#print_binary_sets_size bins "swaptions_2000_trials_par_6_core_memory"
-#convert_time_files_to_csv_file $filenames "swaptions_2000_trials_par_6_core_timings"
-#unset bins filenames
-
-#execute_swaptions_par 2000 2 8 "TIME"
-#execute_swaptions_par 2000 4 8 "TIME"
-#execute_swaptions_par 2000 6 8 "TIME"
-#execute_swaptions_par 2000 8 8 "TIME"
-#execute_swaptions_par 2000 10 8 "TIME"
-
-#print_binary_sets_size bins "swaptions_2000_trials_par_8_core_memory"
-#convert_time_files_to_csv_file $filenames "swaptions_2000_trials_par_8_core_timings"
-#unset bins filenames
-
 popd
 
 ################################################################################
@@ -428,55 +381,35 @@ popd
 mkdir nbody_results
 pushd nbody_results
 
-execute_nbody_lin 32 16 "TIME"
-execute_nbody_lin 32 32 "TIME"
-execute_nbody_lin 32 64 "TIME"
-execute_nbody_lin 32 128 "TIME"
-execute_nbody_lin 32 256 "TIME"
+nbody_sizes=(16 32 64 128 256)
+num_nbody_sizes=2
+
+for ((i = 0; i < num_nbody_sizes; i++));
+do
+  execute_nbody_lin 32 "${nbody_sizes[$i]}" "TIME"
+done
+
+#execute_nbody_lin 32 16 "TIME"
+#execute_nbody_lin 32 32 "TIME"
+#execute_nbody_lin 32 64 "TIME"
+#execute_nbody_lin 32 128 "TIME"
+#execute_nbody_lin 32 256 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_lin_memory"
 convert_time_files_to_csv_file $filenames "nbody_15_body_lin_timings"
 unset bins filenames
 
-execute_nbody_par 32 16 2 "TIME"
-execute_nbody_par 32 32 2 "TIME"
-execute_nbody_par 32 64 2 "TIME"
-execute_nbody_par 32 128 2 "TIME"
-execute_nbody_par 32 256 2 "TIME"
+for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
-print_binary_sets_size bins "nbody_15_body_2_core_par_memory"
-convert_time_files_to_csv_file $filenames "nbody_15_body_2_core_par_timings"
-unset bins filenames
+  for (( j = 0; j < num_nbody_sizes; j++ )); do
+    execute_nbody_par 32 "${nbody_sizes[$j]}" "${CORE_COUNTS[$i]}" "TIME"
+    prefix="nbody_15_body_"${CORE_COUNTS[$i]}"_core_par"
+    print_binary_sets_size bins ${prefix}"_memory"
+    convert_time_files_to_csv_file $filenames ${prefix}"_timings"
+    unset bins filenames
+  done
 
-execute_nbody_par 32 16 4 "TIME"
-execute_nbody_par 32 32 4 "TIME"
-execute_nbody_par 32 64 4 "TIME"
-execute_nbody_par 32 128 4 "TIME"
-execute_nbody_par 32 256 4 "TIME"
-
-print_binary_sets_size bins "nbody_15_body_4_core_par_memory"
-convert_time_files_to_csv_file $filenames "nbody_15_body_4_core_par_timings"
-unset bins filenames
-
-execute_nbody_par 32 16 6 "TIME"
-execute_nbody_par 32 32 6 "TIME"
-execute_nbody_par 32 64 6 "TIME"
-execute_nbody_par 32 128 6 "TIME"
-execute_nbody_par 32 256 6 "TIME"
-
-print_binary_sets_size bins "nbody_15_body_6_core_par_memory"
-convert_time_files_to_csv_file $filenames "nbody_15_body_6_core_par_timings"
-unset bins filenames
-
-execute_nbody_par 32 16 8 "TIME"
-execute_nbody_par 32 32 8 "TIME"
-execute_nbody_par 32 64 8 "TIME"
-execute_nbody_par 32 128 8 "TIME"
-execute_nbody_par 32 256 8 "TIME"
-
-print_binary_sets_size bins "nbody_15_body_8_core_par_memory"
-convert_time_files_to_csv_file $filenames "nbody_15_body_8_core_par_timings"
-unset bins filenames
+done
 
 popd
 
