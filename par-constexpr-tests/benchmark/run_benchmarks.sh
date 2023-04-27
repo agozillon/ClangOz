@@ -265,8 +265,7 @@ local i j prefix
 mkdir $1
 pushd $1
 
-unset filenames
-unset bins
+unset bins filenames
 
 ################################################################################
 #                                 Blackscholes
@@ -290,9 +289,8 @@ do
 done
 
 print_binary_sets_size bins "blackscholes_1_run_lin_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "blackscholes_1_run_lin_timings"
-unset filenames
+unset bins filenames
 
 for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
@@ -301,9 +299,8 @@ for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
     execute_blackscholes_par "${bs_sizes[$j]}" 1 "${CORE_COUNTS[$i]}" "TIME"
     prefix="blackscholes_1_run_"${CORE_COUNTS[$i]}"_core_par"
     print_binary_sets_size bins ${prefix}"_memory"
-    unset bins
     convert_time_files_to_csv_file $filenames ${prefix}"_timings"
-    unset filenames
+    unset bins filenames
   done
 
 done
@@ -327,9 +324,8 @@ do
 done
 
 print_binary_sets_size bins "mandelbrot_128_iter_lin_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_lin_timings"
-unset filenames
+unset bins filenames
 
 for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
@@ -337,9 +333,8 @@ for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
     execute_mandelbrot_par "${mand_sizes[$j]}" 1 "${CORE_COUNTS[$i]}" "TIME"
     prefix="mandelbrot_128_iter_par_"${CORE_COUNTS[$i]}"_core"
     print_binary_sets_size bins ${prefix}"_memory"
-    unset bins
     convert_time_files_to_csv_file $filenames ${prefix}"_timings"
-    unset filenames
+    unset bins filenames
   done
 
 done
@@ -360,9 +355,8 @@ execute_swaptions_lin 2000 8 "TIME"
 execute_swaptions_lin 2000 10 "TIME"
 
 print_binary_sets_size bins "swaptions_2000_trials_lin_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "swaptions_2000_trials_lin_timings"
-unset filenames
+unset bins filenames
 
 execute_swaptions_par 2000 2 2 "TIME"
 execute_swaptions_par 2000 4 2 "TIME"
@@ -371,9 +365,8 @@ execute_swaptions_par 2000 8 2 "TIME"
 execute_swaptions_par 2000 10 2 "TIME" 
 
 print_binary_sets_size bins "swaptions_2000_trials_par_2_core_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "swaptions_2000_trials_par_2_core_timings"
-unset filenames
+unset bins filenames
 
 execute_swaptions_par 2000 2 4 "TIME"
 execute_swaptions_par 2000 4 4 "TIME"
@@ -382,9 +375,8 @@ execute_swaptions_par 2000 8 4 "TIME"
 execute_swaptions_par 2000 10 4 "TIME"
 
 print_binary_sets_size bins "swaptions_2000_trials_par_4_core_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "swaptions_2000_trials_par_4_core_timings"
-unset filenames
+unset bins filenames
 
 execute_swaptions_par 2000 2 6 "TIME"
 execute_swaptions_par 2000 4 6 "TIME"
@@ -393,9 +385,8 @@ execute_swaptions_par 2000 8 6 "TIME"
 execute_swaptions_par 2000 10 6 "TIME"
 
 print_binary_sets_size bins "swaptions_2000_trials_par_6_core_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "swaptions_2000_trials_par_6_core_timings"
-unset filenames
+unset bins filenames
 
 execute_swaptions_par 2000 2 8 "TIME"
 execute_swaptions_par 2000 4 8 "TIME"
@@ -404,9 +395,8 @@ execute_swaptions_par 2000 8 8 "TIME"
 execute_swaptions_par 2000 10 8 "TIME"
 
 print_binary_sets_size bins "swaptions_2000_trials_par_8_core_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "swaptions_2000_trials_par_8_core_timings"
-unset filenames
+unset bins filenames
 
 popd
 
@@ -424,9 +414,8 @@ execute_nbody_lin 32 128 "TIME"
 execute_nbody_lin 32 256 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_lin_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "nbody_15_body_lin_timings"
-unset filenames
+unset bins filenames
 
 execute_nbody_par 32 16 2 "TIME"
 execute_nbody_par 32 32 2 "TIME"
@@ -435,9 +424,8 @@ execute_nbody_par 32 128 2 "TIME"
 execute_nbody_par 32 256 2 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_2_core_par_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "nbody_15_body_2_core_par_timings"
-unset filenames
+unset bins filenames
 
 execute_nbody_par 32 16 4 "TIME"
 execute_nbody_par 32 32 4 "TIME"
@@ -446,9 +434,8 @@ execute_nbody_par 32 128 4 "TIME"
 execute_nbody_par 32 256 4 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_4_core_par_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "nbody_15_body_4_core_par_timings"
-unset filenames
+unset bins filenames
 
 execute_nbody_par 32 16 6 "TIME"
 execute_nbody_par 32 32 6 "TIME"
@@ -457,9 +444,8 @@ execute_nbody_par 32 128 6 "TIME"
 execute_nbody_par 32 256 6 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_6_core_par_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "nbody_15_body_6_core_par_timings"
-unset filenames
+unset bins filenames
 
 execute_nbody_par 32 16 8 "TIME"
 execute_nbody_par 32 32 8 "TIME"
@@ -468,9 +454,8 @@ execute_nbody_par 32 128 8 "TIME"
 execute_nbody_par 32 256 8 "TIME"
 
 print_binary_sets_size bins "nbody_15_body_8_core_par_memory"
-unset bins
 convert_time_files_to_csv_file $filenames "nbody_15_body_8_core_par_timings"
-unset filenames
+unset bins filenames
 
 popd
 
@@ -491,9 +476,8 @@ if [[ ! -z "$MOTORSYCL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
   execute_sycl_edge_detection_lin 512 "TIME"
 
   print_binary_sets_size bins "sycl_edge_detection_lin_memory"
-  unset bins
   convert_time_files_to_csv_file $filenames "sycl_edge_detection_lin_timings"
-  unset filenames
+  unset bins filenames
 
   execute_sycl_edge_detection_par 64 2 "TIME"
   execute_sycl_edge_detection_par 128 2 "TIME"
@@ -501,9 +485,8 @@ if [[ ! -z "$MOTORSYCL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
   execute_sycl_edge_detection_par 512 2 "TIME"
 
   print_binary_sets_size bins "sycl_edge_detection_2_core_par_memory"
-  unset bins
   convert_time_files_to_csv_file $filenames "sycl_edge_detection_2_core_par_timings"
-  unset filenames
+  unset bins filenames
 
   execute_sycl_edge_detection_par 64 4 "TIME"
   execute_sycl_edge_detection_par 128 4 "TIME"
@@ -511,9 +494,8 @@ if [[ ! -z "$MOTORSYCL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
   execute_sycl_edge_detection_par 512 4 "TIME"
 
   print_binary_sets_size bins "sycl_edge_detection_4_core_par_memory"
-  unset bins
   convert_time_files_to_csv_file $filenames "sycl_edge_detection_4_core_par_timings"
-  unset filenames
+  unset bins filenames
   
   execute_sycl_edge_detection_par 64 6 "TIME"
   execute_sycl_edge_detection_par 128 6 "TIME"
@@ -521,9 +503,8 @@ if [[ ! -z "$MOTORSYCL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
   execute_sycl_edge_detection_par 512 6 "TIME"
 
   print_binary_sets_size bins "sycl_edge_detection_6_core_par_memory"
-  unset bins
   convert_time_files_to_csv_file $filenames "sycl_edge_detection_6_core_par_timings"
-  unset filenames
+  unset bins filenames
 
   execute_sycl_edge_detection_par 64 8 "TIME"
   execute_sycl_edge_detection_par 128 8 "TIME"
@@ -531,9 +512,8 @@ if [[ ! -z "$MOTORSYCL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
   execute_sycl_edge_detection_par 512 8 "TIME"
 
   print_binary_sets_size bins "sycl_edge_detection_8_core_par_memory"
-  unset bins
   convert_time_files_to_csv_file $filenames "sycl_edge_detection_8_core_par_timings"
-  unset filenames
+  unset bins filenames
   
   popd
 fi
@@ -547,8 +527,7 @@ function execute_benchmarks_for_steps {
 mkdir $1
 pushd $1
 
-unset filenames
-unset bins
+unset bins filenames
 
 ################################################################################
 #                                 Blackscholes
@@ -571,8 +550,7 @@ execute_blackscholes_lin 16K 1 "STEPS"
 execute_blackscholes_lin 64K 1 "STEPS"
 
 convert_step_files_to_csv_file $filenames "blackscholes_1_run_lin_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 # Used this for final data set
 execute_blackscholes_par 4 1 2 "STEPS"
@@ -583,8 +561,7 @@ execute_blackscholes_par 16K 1 2 "STEPS"
 execute_blackscholes_par 64K 1 2 "STEPS"
 
 convert_step_files_to_csv_file $filenames "blackscholes_1_run_2_core_par_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 # Used this for final data set
 execute_blackscholes_par 4 1 4 "STEPS"
@@ -595,8 +572,7 @@ execute_blackscholes_par 16K 1 4 "STEPS"
 execute_blackscholes_par 64K 1 4 "STEPS"
 
 convert_step_files_to_csv_file $filenames "blackscholes_1_run_4_core_par_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 # Used this for final data set
 execute_blackscholes_par 4 1 6 "STEPS"
@@ -607,8 +583,7 @@ execute_blackscholes_par 16K 1 6 "STEPS"
 execute_blackscholes_par 64K 1 6 "STEPS"
 
 convert_step_files_to_csv_file $filenames "blackscholes_1_run_6_core_par_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 # Used this for final data set
 execute_blackscholes_par 4 1 8 "STEPS"
@@ -619,8 +594,7 @@ execute_blackscholes_par 16K 1 8 "STEPS"
 execute_blackscholes_par 64K 1 8 "STEPS"
 
 convert_step_files_to_csv_file $filenames "blackscholes_1_run_8_core_par_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 popd
 
@@ -639,8 +613,7 @@ execute_mandelbrot_lin 100 128 "STEPS"
 execute_mandelbrot_lin 125 128 "STEPS"
 
 convert_step_files_to_csv_file $filenames "mandelbrot_128_iter_lin_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 # Used this for final data set
 execute_mandelbrot_par 25 128 2 "STEPS"
@@ -650,8 +623,7 @@ execute_mandelbrot_par 100 128 2 "STEPS"
 execute_mandelbrot_par 125 128 2 "STEPS"
 
 convert_step_files_to_csv_file $filenames "mandelbrot_128_iter_par_2_core_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 ## Used this for final data set
 execute_mandelbrot_par 25 128 4 "STEPS"
@@ -661,8 +633,7 @@ execute_mandelbrot_par 100 128 4 "STEPS"
 execute_mandelbrot_par 125 128 4 "STEPS"
 
 convert_step_files_to_csv_file $filenames "mandelbrot_128_iter_par_4_core_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 ## Used this for final data set
 execute_mandelbrot_par 25 128 6 "STEPS"
@@ -672,8 +643,7 @@ execute_mandelbrot_par 100 128 6 "STEPS"
 execute_mandelbrot_par 125 128 6 "STEPS"
 
 convert_step_files_to_csv_file $filenames "mandelbrot_128_iter_par_6_core_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 # Used this for final data set
 execute_mandelbrot_par 25 128 8 "STEPS"
@@ -683,8 +653,7 @@ execute_mandelbrot_par 100 128 8 "STEPS"
 execute_mandelbrot_par 125 128 8 "STEPS"
 
 convert_step_files_to_csv_file $filenames "mandelbrot_128_iter_par_8_core_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 popd
 
@@ -702,8 +671,7 @@ execute_swaptions_lin 2000 8 "STEPS"
 execute_swaptions_lin 2000 10 "STEPS"
 
 convert_step_files_to_csv_file $filenames "swaptions_2000_trials_lin_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 execute_swaptions_par 2000 2 2 "STEPS"
 execute_swaptions_par 2000 4 2 "STEPS"
@@ -712,8 +680,7 @@ execute_swaptions_par 2000 8 2 "STEPS"
 execute_swaptions_par 2000 10 2 "STEPS" 
 
 convert_step_files_to_csv_file $filenames "swaptions_2000_trials_par_2_core_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 execute_swaptions_par 2000 2 4 "STEPS"
 execute_swaptions_par 2000 4 4 "STEPS"
@@ -722,8 +689,7 @@ execute_swaptions_par 2000 8 4 "STEPS"
 execute_swaptions_par 2000 10 4 "STEPS"
 
 convert_step_files_to_csv_file $filenames "swaptions_2000_trials_par_4_core_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 execute_swaptions_par 2000 2 6 "STEPS"
 execute_swaptions_par 2000 4 6 "STEPS"
@@ -732,8 +698,7 @@ execute_swaptions_par 2000 8 6 "STEPS"
 execute_swaptions_par 2000 10 6 "STEPS"
 
 convert_step_files_to_csv_file $filenames "swaptions_2000_trials_par_6_core_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 execute_swaptions_par 2000 2 8 "STEPS"
 execute_swaptions_par 2000 4 8 "STEPS"
@@ -742,8 +707,7 @@ execute_swaptions_par 2000 8 8 "STEPS"
 execute_swaptions_par 2000 10 8 "STEPS"
 
 convert_step_files_to_csv_file $filenames "swaptions_2000_trials_par_8_core_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 popd
 
@@ -761,8 +725,7 @@ execute_nbody_lin 32 128 "STEPS"
 execute_nbody_lin 32 256 "STEPS"
 
 convert_step_files_to_csv_file $filenames "nbody_15_body_lin_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 execute_nbody_par 32 16 2 "STEPS"
 execute_nbody_par 32 32 2 "STEPS"
@@ -771,8 +734,7 @@ execute_nbody_par 32 128 2 "STEPS"
 execute_nbody_par 32 256 2 "STEPS"
 
 convert_step_files_to_csv_file $filenames "nbody_15_body_2_core_par_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 execute_nbody_par 32 16 4 "STEPS"
 execute_nbody_par 32 32 4 "STEPS"
@@ -781,8 +743,7 @@ execute_nbody_par 32 128 4 "STEPS"
 execute_nbody_par 32 256 4 "STEPS"
 
 convert_step_files_to_csv_file $filenames "nbody_15_body_4_core_par_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 execute_nbody_par 32 16 6 "STEPS"
 execute_nbody_par 32 32 6 "STEPS"
@@ -791,8 +752,7 @@ execute_nbody_par 32 128 6 "STEPS"
 execute_nbody_par 32 256 6 "STEPS"
 
 convert_step_files_to_csv_file $filenames "nbody_15_body_6_core_par_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 execute_nbody_par 32 16 8 "STEPS"
 execute_nbody_par 32 32 8 "STEPS"
@@ -801,8 +761,7 @@ execute_nbody_par 32 128 8 "STEPS"
 execute_nbody_par 32 256 8 "STEPS"
 
 convert_step_files_to_csv_file $filenames "nbody_15_body_8_core_par_steps"
-unset filenames
-unset bins
+unset bins filenames
 
 popd
 
@@ -826,8 +785,7 @@ if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_
   execute_sycl_edge_detection_lin 512 "STEPS"
   
   convert_step_files_to_csv_file $filenames "sycl_edge_detect_lin_steps"
-  unset filenames
-  unset bins
+  unset bins filenames
 
   execute_sycl_edge_detection_par 64 2 "STEPS"
   execute_sycl_edge_detection_par 128 2 "STEPS"
@@ -835,8 +793,7 @@ if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_
   execute_sycl_edge_detection_par 512 2 "STEPS"
 
   convert_step_files_to_csv_file $filenames "sycl_edge_detect_2_core_par_steps"
-  unset filenames
-  unset bins
+  unset bins filenames
   
   execute_sycl_edge_detection_par 64 4 "STEPS"
   execute_sycl_edge_detection_par 128 4 "STEPS"
@@ -844,8 +801,7 @@ if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_
   execute_sycl_edge_detection_par 512 4 "STEPS"
   
   convert_step_files_to_csv_file $filenames "sycl_edge_detect_4_core_par_steps"
-  unset filenames
-  unset bins
+  unset bins filenames
   
   execute_sycl_edge_detection_par 64 6 "STEPS"
   execute_sycl_edge_detection_par 128 6 "STEPS"
@@ -853,8 +809,7 @@ if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_
   execute_sycl_edge_detection_par 512 6 "STEPS"
   
   convert_step_files_to_csv_file $filenames "sycl_edge_detect_6_core_par_steps"
-  unset filenames
-  unset bins
+  unset bins filenames
   
   execute_sycl_edge_detection_par 64 8 "STEPS"
   execute_sycl_edge_detection_par 128 8 "STEPS"
@@ -862,8 +817,7 @@ if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_
   execute_sycl_edge_detection_par 512 8 "STEPS"
   
   convert_step_files_to_csv_file $filenames "sycl_edge_detect_8_core_par_steps"
-  unset filenames
-  unset bins
+  unset bins filenames
   
   popd
 fi
