@@ -71,6 +71,7 @@ function convert_step_files_to_csv_file {
 
   echo ${filenames[*]}
 
+  local i
   for i in "${filenames[@]}"
   do
     FILE_COUNTER="$FILE_COUNTER + 1"
@@ -97,8 +98,9 @@ function convert_time_files_to_csv_file {
   NEXT_VAL=true
   NUM_FILES=${#filenames[@]}
 
- echo ${filenames[*]}
+  echo ${filenames[*]}
 
+  local i
   for i in "${filenames[@]}"
   do
     FILE_COUNTER="$FILE_COUNTER + 1"
@@ -237,6 +239,7 @@ function print_binary_sets_size {
   declare -a kbs
   declare -a bytes
 
+  local i
   for i in "${binary_arr[@]}"
   do
     echo $i
@@ -254,6 +257,8 @@ function print_binary_sets_size {
 
 function execute_benchmarks {
 
+local i j
+
 mkdir $1
 pushd $1
 
@@ -269,84 +274,40 @@ unset bins
 # data set to calculate the same result. Verification of the results is done 
 # inside the program. Runs of the max size can take up to 2-3 minutes.
 
-mkdir blackscholes_results
-pushd blackscholes_results
+#mkdir blackscholes_results
+#pushd blackscholes_results
 
-mand_sizes=(4 16 1K 4K 16K 64K)
-num_mand_sizes=6 # Could be made less than the size of mand_sizes.
+#mand_sizes=(4 16 1K 4K 16K 64K)
+#num_mand_sizes=3 # Could be made less than the size of mand_sizes.
 
- # Used this for final data set
-for (( i=0; i< ${num_mand_sizes}; i++ ));
-do
-  execute_blackscholes_lin "${mand_sizes[$i]}" 1 "TIME"
-done
-exit
-#execute_blackscholes_lin 4 1 "TIME"
-#execute_blackscholes_lin 16 1 "TIME"
-#execute_blackscholes_lin 1K 1 "TIME"
-#execute_blackscholes_lin 4K 1 "TIME"
-#execute_blackscholes_lin 16K 1 "TIME"
-#execute_blackscholes_lin 64K 1 "TIME"
-
-print_binary_sets_size bins "blackscholes_1_run_lin_memory"
-unset bins
-convert_time_files_to_csv_file $filenames "blackscholes_1_run_lin_timings"
-unset filenames
-
-# Used this for final data set
-execute_blackscholes_par 4 1 2 "TIME"
-execute_blackscholes_par 16 1 2 "TIME"
-execute_blackscholes_par 1K 1 2 "TIME"
-execute_blackscholes_par 4K 1 2 "TIME"
-execute_blackscholes_par 16K 1 2 "TIME"
-execute_blackscholes_par 64K 1 2 "TIME"
-
-print_binary_sets_size bins "blackscholes_1_run_2_core_par_memory"
-unset bins
-convert_time_files_to_csv_file $filenames "blackscholes_1_run_2_core_par_timings"
-unset filenames
-
-# Used this for final data set
-execute_blackscholes_par 4 1 4 "TIME"
-execute_blackscholes_par 16 1 4 "TIME"
-execute_blackscholes_par 1K 1 4 "TIME"
-execute_blackscholes_par 4K 1 4 "TIME"
-execute_blackscholes_par 16K 1 4 "TIME"
-execute_blackscholes_par 64K 1 4 "TIME"
-
-print_binary_sets_size bins "blackscholes_1_run_4_core_par_memory"
-unset bins
-convert_time_files_to_csv_file $filenames "blackscholes_1_run_4_core_par_timings"
-unset filenames
-
-# Used this for final data set
-execute_blackscholes_par 4 1 6 "TIME"
-execute_blackscholes_par 16 1 6 "TIME"
-execute_blackscholes_par 1K 1 6 "TIME"
-execute_blackscholes_par 4K 1 6 "TIME"
-execute_blackscholes_par 16K 1 6 "TIME"
-execute_blackscholes_par 64K 1 6 "TIME"
-
-print_binary_sets_size bins "blackscholes_1_run_6_core_par_memory"
-unset bins
-convert_time_files_to_csv_file $filenames "blackscholes_1_run_6_core_par_timings"
-unset filenames
-
-
-# Used this for final data set
-execute_blackscholes_par 4 1 8 "TIME"
-execute_blackscholes_par 16 1 8 "TIME"
-execute_blackscholes_par 1K 1 8 "TIME"
-execute_blackscholes_par 4K 1 8 "TIME"
-execute_blackscholes_par 16K 1 8 "TIME"
-execute_blackscholes_par 64K 1 8 "TIME"
-
-print_binary_sets_size bins "blackscholes_1_run_8_core_par_memory"
-unset bins
-convert_time_files_to_csv_file $filenames "blackscholes_1_run_8_core_par_timings"
-unset filenames
-
-popd
+## Used this for final data set
+#for (( i = 0; i < num_mand_sizes; i++ ));
+#do
+#  execute_blackscholes_lin "${mand_sizes[$i]}" 1 "TIME"
+#done
+#
+#print_binary_sets_size bins "blackscholes_1_run_lin_memory"
+#unset bins
+#convert_time_files_to_csv_file $filenames "blackscholes_1_run_lin_timings"
+#unset filenames
+#
+#core_counts=(2 4 6 8)
+#num_core_sizes=2 # Could be made less than the size of core_counts
+#for (( i = 0; i < num_core_sizes; i++ )); do
+#
+#  # Used this for final data set
+#  for (( j = 0; j < num_mand_sizes; j++ )); do
+#    execute_blackscholes_par "${mand_sizes[$j]}" 1 "${core_counts[$i]}" "TIME"
+#    local prefix="blackscholes_1_run_"${core_counts[$i]}"_core_par"
+#    print_binary_sets_size bins ${prefix}"_memory"
+#    unset bins
+#    convert_time_files_to_csv_file $filenames ${prefix}"_timings"
+#    unset filenames
+#  done
+#
+#done
+#
+#popd
 
 ################################################################################
 #                                 Mandelbrot
@@ -366,6 +327,7 @@ print_binary_sets_size bins "mandelbrot_128_iter_lin_memory"
 unset bins
 convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_lin_timings"
 unset filenames
+exit
 
 # Used this for final data set
 execute_mandelbrot_par 25 128 2 "TIME"
