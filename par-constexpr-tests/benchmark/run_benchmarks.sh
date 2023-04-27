@@ -26,8 +26,8 @@ fi
 
 
 
-# 1) I might need to make sure none of the math functions can divide by 0, as 
-#   it's not neccessarily undefined behaviour at compile time but an error. 
+# 1) I might need to make sure none of the math functions can divide by 0, as
+#   it's not neccessarily undefined behaviour at compile time but an error.
 #     - Only seems to be a problem in swaptions
 # 2) work out a way to do step limits, technically can just use the par step limit
 #   to work it out as I know they're the same. However a similar function to the timer
@@ -39,29 +39,29 @@ fi
 
 # blackscholes works: x
 # mandelbrot: x
-# par_nbody: 
+# par_nbody:
 # swaptions: X
 
-# NOTE: You can always ignore the first Print Time Stamp in the output, it 
+# NOTE: You can always ignore the first Print Time Stamp in the output, it
 # appears to be an unfortunate side affect of initilization or inclusion...
 
-# NOTE: It will be worth mentioning in the paper that I had to remove a lot of 
-# the NAN checks etc from the math functions to allow swaptions to run, as 
+# NOTE: It will be worth mentioning in the paper that I had to remove a lot of
+# the NAN checks etc from the math functions to allow swaptions to run, as
 # compile time computation is a lot more stringent on this and errors out
 
-# NOTE: Can I concatanate all the results into 1 .csv file? To do this I need to 
+# NOTE: Can I concatanate all the results into 1 .csv file? To do this I need to
 # work out how to cut out the first "fake" print statement, a very cheap hack is
-# to just count that we've entered the if statement more than once before 
-# printing. Might not work though some tests seem to have more than 1 warmup 
+# to just count that we've entered the if statement more than once before
+# printing. Might not work though some tests seem to have more than 1 warmup
 # pass... mandelbrot for example
 
 # NOTE: It may be possible to do the constexpr steps similarly to the timer, it
 # depends on if the steps are carried over to the next call location, otherwise
-# it becomes a little bit difficult to get an accurate number of steps. Needs 
+# it becomes a little bit difficult to get an accurate number of steps. Needs
 # some looking into.
 
 declare -a filenames
-declare -a bins 
+declare -a bins
 
 # Translates all the little constexpr step files into one big file
 function convert_step_files_to_csv_file {
@@ -87,7 +87,7 @@ function convert_step_files_to_csv_file {
       fi
     done < "$i"
   done
-  
+
   echo ${steps[*]} > $2_cexpr_step.csv
 }
 
@@ -95,7 +95,7 @@ function convert_step_files_to_csv_file {
 function convert_time_files_to_csv_file {
   declare -a floatingsecond
   declare -a miliseconds
-  
+
   VALUE_COUNTER=0
   FILE_COUNTER=0
   NEXT_VAL=true
@@ -122,13 +122,13 @@ function convert_time_files_to_csv_file {
           miliseconds+="$line"
         else
           miliseconds+="$line,"
-        fi        
+        fi
         NEXT_VAL=true
       fi
 
     done < "$i"
   done
-  
+
 #  echo "$2 ?"
   echo ${floatingsecond[*]} > $2_floatingsec.csv
   echo ${miliseconds[*]} > $2_milisecond.csv
@@ -138,7 +138,7 @@ function execute_blackscholes_lin {
   echo "Executing Blackscholes: Linear, -DBLACKSCHOLES_$1, -DNRUN_$2, -DCONSTEXPR_TRACK_$3"
 
   time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DBLACKSCHOLES_$1 -DNRUN_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_blackscholes.cpp -o lin_blackscholes$1_run$2_$3.o &> lin_blackscholes$1_run$2_result_$3
-  
+
   filenames+=( "lin_blackscholes$1_run$2_result_$3" )
   bins+=( "lin_blackscholes$1_run$2_$3.o" )
 }
@@ -155,7 +155,7 @@ function execute_blackscholes_par {
 function execute_nbody_lin {
   echo "Executing nbody: Linear, -DNITERS_$1, -DNBODIES_$2, -DCONSTEXPR_TRACK_$3"
   time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DNITERS_$1 -DNBODIES_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_nbody.cpp -o lin_nbody_niters$1_nbodies$2_$3.o &> lin_nbody_niters$1_nbodies$2_results_$3
-  
+
   filenames+=( "lin_nbody_niters$1_nbodies$2_results_$3" )
   bins+=( "lin_nbody_niters$1_nbodies$2_$3.o" )
 }
@@ -163,7 +163,7 @@ function execute_nbody_lin {
 function execute_nbody_par {
   echo "Executing nbody: Parallel, -DNITERS_$1, -DNBODIES_$2, Number of Cores $3, -DCONSTEXPR_TRACK_$4"
   time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DNITERS_$1 -DNBODIES_$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_nbody.cpp -o par_nbody_niters$1_nbodies$2_cores$3_$4.o &> par_nbody_niters$1_nbodies$2_cores$3_results_$4
-  
+
   filenames+=( "par_nbody_niters$1_nbodies$2_cores$3_results_$4" )
   bins+=( "par_nbody_niters$1_nbodies$2_cores$3_$4.o" )
 }
@@ -179,7 +179,7 @@ function execute_mandelbrot_lin {
 function execute_mandelbrot_par {
   echo "Executing mandelbrot: Parallel, -DHXW_$1, -DMAXITERS_$2, Number of Cores $3, -DCONSTEXPR_TRACK_$4"
   time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DHXW_$1 -DMAXITERS_$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o par_mandelbrot_hxw$1_maxiters$2_cores$3_$4.o &> par_mandelbrot_hxw$1_maxiters$2_cores$3_results_$4
-  
+
   filenames+=( "par_mandelbrot_hxw$1_maxiters$2_cores$3_results_$4" )
   bins+=( "par_mandelbrot_hxw$1_maxiters$2_cores$3_$4.o" )
 }
@@ -187,7 +187,7 @@ function execute_mandelbrot_par {
 function execute_swaptions_lin {
   echo "Executing swaptions: Linear, -DNTRIALS_$1, -DNSWAPTIONS_$2, -DCONSTEXPR_TRACK_$3"
   time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DNTRIALS_$1 -DNSWAPTIONS_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_swaptions.cpp -o lin_swaptions_ntrials$1_nswaptions$2_$3.o &> lin_swaptions_ntrials$1_nswaptions$2_results_$3
-  
+
   filenames+=( "lin_swaptions_ntrials$1_nswaptions$2_results_$3" )
   bins+=( "lin_swaptions_ntrials$1_nswaptions$2_$3.o" )
 }
@@ -195,7 +195,7 @@ function execute_swaptions_lin {
 function execute_swaptions_par {
   echo "Executing swaptions: Parallel, -DNTRIALS_$1, -DNSWAPTIONS_$2, Number of Cores $3, -DCONSTEXPR_TRACK_$4"
   time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DNTRIALS_$1 -DNSWAPTIONS_$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_swaptions.cpp -o par_swaptions_ntrials$1_nswaptions$2_cores$3_$4.o &> par_swaptions_ntrials$1_nswaptions$2_cores$3_results_$4
-  
+
   filenames+=( "par_swaptions_ntrials$1_nswaptions$2_cores$3_results_$4" )
   bins+=( "par_swaptions_ntrials$1_nswaptions$2_cores$3_$4.o" )
 }
@@ -209,7 +209,7 @@ function execute_sycl_edge_detection_lin {
   echo "Executing SYCL Edge Detection: Linear, Image HxW: $1 -DCONSTEXPR_TRACK_$2"
 
   # Generating header containing image data
-  pushd ../../sycl/ 
+  pushd ../../sycl/
   ./image_to_text_file image_data/$1.png
   popd
 
@@ -221,24 +221,24 @@ function execute_sycl_edge_detection_lin {
 
 function execute_sycl_edge_detection_par {
   echo "Executing SYCL Edge Detection: Parallel, Image HxW: $1, Number of Cores $2, -DCONSTEXPR_TRACK_$3"
-  
+
   # Generating header containing image data
-  pushd ../../sycl/ 
+  pushd ../../sycl/
   ./image_to_text_file image_data/$1.png
   popd
-    
+
   time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_SYCL -DCONSTEXPR_PARALLEL -DCONSTEXPR_TRACK_$3 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$2 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o par_cexpr_sycl_edge_detection_hxw$1_cores$2.o &> par_cexpr_sycl_edge_detection_hxw$1_cores$2_results_$3
 
   filenames+=( "par_cexpr_sycl_edge_detection_hxw$1_cores$2_results_$3" )
   bins+=( "par_cexpr_sycl_edge_detection_hxw$1_cores$2.o" )
 }
 
-# TODO: currently a bit buggy for the serial binaries size comparison using stat, 
-# because the text modification is slightly wrong, but currently not using the 
+# TODO: currently a bit buggy for the serial binaries size comparison using stat,
+# because the text modification is slightly wrong, but currently not using the
 # size in any graphs.... so leaving it buggy for now.
 function print_binary_sets_size {
   local -n binary_arr=$1
-  
+
   declare -a kbs
   declare -a bytes
 
@@ -271,9 +271,9 @@ unset bins filenames
 #                                 Blackscholes
 ################################################################################
 
-# Blackscholes can have the number of runs varied and the data set increased in 
-# size. The number of runs doesn't alter the results, it simply uses the same 
-# data set to calculate the same result. Verification of the results is done 
+# Blackscholes can have the number of runs varied and the data set increased in
+# size. The number of runs doesn't alter the results, it simply uses the same
+# data set to calculate the same result. Verification of the results is done
 # inside the program. Runs of the max size can take up to 2-3 minutes.
 
 mkdir blackscholes_results
@@ -362,7 +362,7 @@ execute_swaptions_par 2000 2 2 "TIME"
 execute_swaptions_par 2000 4 2 "TIME"
 execute_swaptions_par 2000 6 2 "TIME"
 execute_swaptions_par 2000 8 2 "TIME"
-execute_swaptions_par 2000 10 2 "TIME" 
+execute_swaptions_par 2000 10 2 "TIME"
 
 print_binary_sets_size bins "swaptions_2000_trials_par_2_core_memory"
 convert_time_files_to_csv_file $filenames "swaptions_2000_trials_par_2_core_timings"
@@ -496,7 +496,7 @@ if [[ ! -z "$MOTORSYCL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
   print_binary_sets_size bins "sycl_edge_detection_4_core_par_memory"
   convert_time_files_to_csv_file $filenames "sycl_edge_detection_4_core_par_timings"
   unset bins filenames
-  
+
   execute_sycl_edge_detection_par 64 6 "TIME"
   execute_sycl_edge_detection_par 128 6 "TIME"
   execute_sycl_edge_detection_par 256 6 "TIME"
@@ -514,12 +514,12 @@ if [[ ! -z "$MOTORSYCL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
   print_binary_sets_size bins "sycl_edge_detection_8_core_par_memory"
   convert_time_files_to_csv_file $filenames "sycl_edge_detection_8_core_par_timings"
   unset bins filenames
-  
+
   popd
 fi
 
 popd
- 
+
 }
 
 function execute_benchmarks_for_steps {
@@ -533,9 +533,9 @@ unset bins filenames
 #                                 Blackscholes
 ################################################################################
 
-# Blackscholes can have the number of runs varied and the data set increased in 
-# size. The number of runs doesn't alter the results, it simply uses the same 
-# data set to calculate the same result. Verification of the results is done 
+# Blackscholes can have the number of runs varied and the data set increased in
+# size. The number of runs doesn't alter the results, it simply uses the same
+# data set to calculate the same result. Verification of the results is done
 # inside the program. Runs of the max size can take up to 2-3 minutes.
 
 mkdir blackscholes_results
@@ -607,7 +607,7 @@ pushd mandelbrot_results
 
 # Used this for final data set
 execute_mandelbrot_lin 25 128 "STEPS"
-execute_mandelbrot_lin 50 128 "STEPS" 
+execute_mandelbrot_lin 50 128 "STEPS"
 execute_mandelbrot_lin 75 128 "STEPS"
 execute_mandelbrot_lin 100 128 "STEPS"
 execute_mandelbrot_lin 125 128 "STEPS"
@@ -677,7 +677,7 @@ execute_swaptions_par 2000 2 2 "STEPS"
 execute_swaptions_par 2000 4 2 "STEPS"
 execute_swaptions_par 2000 6 2 "STEPS"
 execute_swaptions_par 2000 8 2 "STEPS"
-execute_swaptions_par 2000 10 2 "STEPS" 
+execute_swaptions_par 2000 10 2 "STEPS"
 
 convert_step_files_to_csv_file $filenames "swaptions_2000_trials_par_2_core_steps"
 unset bins filenames
@@ -771,19 +771,19 @@ popd
 ################################################################################
 
 
-  # Not sure how good this test is for calculating number of steps as it 
+  # Not sure how good this test is for calculating number of steps as it
   # encompases multiple launches of the parallel for_each for each kernel
 if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_INCLUDE" && ! -z "$CEST_INCLUDE" ]]; then
   mkdir sycl_edge_detection_results
   pushd sycl_edge_detection_results
 
   compile_image_to_text_file
-  
+
   execute_sycl_edge_detection_lin 64 "STEPS"
   execute_sycl_edge_detection_lin 128 "STEPS"
   execute_sycl_edge_detection_lin 256 "STEPS"
   execute_sycl_edge_detection_lin 512 "STEPS"
-  
+
   convert_step_files_to_csv_file $filenames "sycl_edge_detect_lin_steps"
   unset bins filenames
 
@@ -794,31 +794,31 @@ if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_
 
   convert_step_files_to_csv_file $filenames "sycl_edge_detect_2_core_par_steps"
   unset bins filenames
-  
+
   execute_sycl_edge_detection_par 64 4 "STEPS"
   execute_sycl_edge_detection_par 128 4 "STEPS"
   execute_sycl_edge_detection_par 256 4 "STEPS"
   execute_sycl_edge_detection_par 512 4 "STEPS"
-  
+
   convert_step_files_to_csv_file $filenames "sycl_edge_detect_4_core_par_steps"
   unset bins filenames
-  
+
   execute_sycl_edge_detection_par 64 6 "STEPS"
   execute_sycl_edge_detection_par 128 6 "STEPS"
   execute_sycl_edge_detection_par 256 6 "STEPS"
   execute_sycl_edge_detection_par 512 6 "STEPS"
-  
+
   convert_step_files_to_csv_file $filenames "sycl_edge_detect_6_core_par_steps"
   unset bins filenames
-  
+
   execute_sycl_edge_detection_par 64 8 "STEPS"
   execute_sycl_edge_detection_par 128 8 "STEPS"
   execute_sycl_edge_detection_par 256 8 "STEPS"
   execute_sycl_edge_detection_par 512 8 "STEPS"
-  
+
   convert_step_files_to_csv_file $filenames "sycl_edge_detect_8_core_par_steps"
   unset bins filenames
-  
+
   popd
 fi
 
@@ -838,5 +838,5 @@ done
 
 # this could be done cleaner, but I feel it's fine the way it is for times sake
 #execute_benchmarks_for_steps benchmark_step_data
-  
+
 
