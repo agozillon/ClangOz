@@ -274,40 +274,40 @@ unset bins
 # data set to calculate the same result. Verification of the results is done 
 # inside the program. Runs of the max size can take up to 2-3 minutes.
 
-#mkdir blackscholes_results
-#pushd blackscholes_results
+mkdir blackscholes_results
+pushd blackscholes_results
 
-#mand_sizes=(4 16 1K 4K 16K 64K)
-#num_mand_sizes=3 # Could be made less than the size of mand_sizes.
+bs_sizes=(4 16 1K 4K 16K 64K)
+num_bs_sizes=3 # Could be made less than the size of bs_sizes.
 
-## Used this for final data set
-#for (( i = 0; i < num_mand_sizes; i++ ));
-#do
-#  execute_blackscholes_lin "${mand_sizes[$i]}" 1 "TIME"
-#done
-#
-#print_binary_sets_size bins "blackscholes_1_run_lin_memory"
-#unset bins
-#convert_time_files_to_csv_file $filenames "blackscholes_1_run_lin_timings"
-#unset filenames
-#
-#core_counts=(2 4 6 8)
-#num_core_sizes=2 # Could be made less than the size of core_counts
-#for (( i = 0; i < num_core_sizes; i++ )); do
-#
-#  # Used this for final data set
-#  for (( j = 0; j < num_mand_sizes; j++ )); do
-#    execute_blackscholes_par "${mand_sizes[$j]}" 1 "${core_counts[$i]}" "TIME"
-#    local prefix="blackscholes_1_run_"${core_counts[$i]}"_core_par"
-#    print_binary_sets_size bins ${prefix}"_memory"
-#    unset bins
-#    convert_time_files_to_csv_file $filenames ${prefix}"_timings"
-#    unset filenames
-#  done
-#
-#done
-#
-#popd
+# Used this for final data set
+for (( i = 0; i < num_bs_sizes; i++ ));
+do
+  execute_blackscholes_lin "${bs_sizes[$i]}" 1 "TIME"
+done
+
+print_binary_sets_size bins "blackscholes_1_run_lin_memory"
+unset bins
+convert_time_files_to_csv_file $filenames "blackscholes_1_run_lin_timings"
+unset filenames
+
+core_counts=(2 4 6 8)
+num_core_sizes=2 # Could be made less than the size of core_counts
+for (( i = 0; i < num_core_sizes; i++ )); do
+
+  # Used this for final data set
+  for (( j = 0; j < num_bs_sizes; j++ )); do
+    execute_blackscholes_par "${bs_sizes[$j]}" 1 "${core_counts[$i]}" "TIME"
+    local prefix="blackscholes_1_run_"${core_counts[$i]}"_core_par"
+    print_binary_sets_size bins ${prefix}"_memory"
+    unset bins
+    convert_time_files_to_csv_file $filenames ${prefix}"_timings"
+    unset filenames
+  done
+
+done
+
+popd
 
 ################################################################################
 #                                 Mandelbrot
@@ -327,7 +327,6 @@ print_binary_sets_size bins "mandelbrot_128_iter_lin_memory"
 unset bins
 convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_lin_timings"
 unset filenames
-exit
 
 # Used this for final data set
 execute_mandelbrot_par 25 128 2 "TIME"
