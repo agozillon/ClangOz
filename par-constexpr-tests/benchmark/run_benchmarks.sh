@@ -14,6 +14,13 @@ if [ ! -d "$CEST_INCLUDE" ]; then
   exit -1
 fi
 
+if [[ "$MOTORSYCL_INCLUDE" == *"motorsycl"* ]]; then
+  echo "Warning: \$MOTORSYCL_INCLUDE must not point to the MotorSYCL repo "
+  echo "when running the SYCL edge detection benchmark (it will fail). "
+  echo "Instead, set \$MOTORSYCL_INCLUDE to the sycl/include subdirectory in the "
+  echo "par-constexpr-sycl branch of https://github.com/pkeir/cpp-std-parallel."
+fi
+
 #* Look into Speedup graph:
 
 #  http://selkie.macalester.edu/csinparallel/modules/IntermediateIntroduction/build/html/ParallelSpeedup/ParallelSpeedup.html
