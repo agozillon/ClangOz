@@ -171,8 +171,8 @@ namespace mandelbrot {
 
 #ifdef CONSTEXPR_TRACK_STEPS
     __TrackConstExprStepsStart();
-#endif CONSTEXPR_TRACK_STEPS
-    
+#endif
+
 #ifdef CONSTEXPR_PARALLEL
     std::array<int, width> id_range{};
     std::iota(execution::ce_par, id_range.begin(), id_range.end(), 0);
@@ -184,8 +184,8 @@ namespace mandelbrot {
 #endif
 
 #ifdef CONSTEXPR_TRACK_STEPS
-    __PrintConstExprSteps(); 
-#endif CONSTEXPR_TRACK_STEPS
+    __PrintConstExprSteps();
+#endif
 
 #ifdef CONSTEXPR_TRACK_TIME
     __GetTimeStampEnd();

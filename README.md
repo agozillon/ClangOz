@@ -1,6 +1,5 @@
+# The LLVM Compiler Infrastructure
 
-<<<<<<< HEAD
-=======
 Welcome to the LLVM project!
 
 This repository contains the source code for LLVM, a toolkit for the
@@ -38,4 +37,3 @@ chat](https://discord.gg/xS7Z362), or #llvm IRC channel on
 
 The LLVM project has adopted a [code of conduct](https://llvm.org/docs/CodeOfConduct.html) for
 participants to all modes of communication within the project.
->>>>>>> 0eac3c500406ad3a18a8c2829f71403056c6042f
