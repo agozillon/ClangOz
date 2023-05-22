@@ -131,7 +131,7 @@ function convert_time_files_to_csv_file {
 function execute_blackscholes_lin {
   echo "Executing Blackscholes: Linear, -DBLACKSCHOLES_$1, -DNRUN_$2, -DCONSTEXPR_TRACK_$3"
 
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DBLACKSCHOLES_$1 -DNRUN_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_blackscholes.cpp -o lin_blackscholes$1_run$2_$3.o &> lin_blackscholes$1_run$2_result_$3
+  $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DBLACKSCHOLES_$1 -DNRUN_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_blackscholes.cpp -o lin_blackscholes$1_run$2_$3.o &> lin_blackscholes$1_run$2_result_$3
 
   filenames+=( "lin_blackscholes$1_run$2_result_$3" )
   bins+=( "lin_blackscholes$1_run$2_$3.o" )
@@ -140,7 +140,7 @@ function execute_blackscholes_lin {
 function execute_blackscholes_par {
   echo "Executing Blackscholes: Parallel, -DBLACKSCHOLES_$1, -DNRUN_$2, Number of Cores $3, -DCONSTEXPR_TRACK_$4"
 
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DBLACKSCHOLES_$1 -DNRUN_$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_blackscholes.cpp -o par_blackscholes$1_run$2_cores$3_$4.o &> par_blackscholes$1_run$2_cores$3_result_$4
+  $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DBLACKSCHOLES_$1 -DNRUN_$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_blackscholes.cpp -o par_blackscholes$1_run$2_cores$3_$4.o &> par_blackscholes$1_run$2_cores$3_result_$4
 
   filenames+=( "par_blackscholes$1_run$2_cores$3_result_$4" )
   bins+=( "par_blackscholes$1_run$2_cores$3_$4.o" )
@@ -148,7 +148,7 @@ function execute_blackscholes_par {
 
 function execute_nbody_lin {
   echo "Executing nbody: Linear, -DNITERS_$1, -DNBODIES_$2, -DCONSTEXPR_TRACK_$3"
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DNITERS_$1 -DNBODIES_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_nbody.cpp -o lin_nbody_niters$1_nbodies$2_$3.o &> lin_nbody_niters$1_nbodies$2_results_$3
+  $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DNITERS_$1 -DNBODIES_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_nbody.cpp -o lin_nbody_niters$1_nbodies$2_$3.o &> lin_nbody_niters$1_nbodies$2_results_$3
 
   filenames+=( "lin_nbody_niters$1_nbodies$2_results_$3" )
   bins+=( "lin_nbody_niters$1_nbodies$2_$3.o" )
@@ -156,7 +156,7 @@ function execute_nbody_lin {
 
 function execute_nbody_par {
   echo "Executing nbody: Parallel, -DNITERS_$1, -DNBODIES_$2, Number of Cores $3, -DCONSTEXPR_TRACK_$4"
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DNITERS_$1 -DNBODIES_$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_nbody.cpp -o par_nbody_niters$1_nbodies$2_cores$3_$4.o &> par_nbody_niters$1_nbodies$2_cores$3_results_$4
+  $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DNITERS_$1 -DNBODIES_$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_nbody.cpp -o par_nbody_niters$1_nbodies$2_cores$3_$4.o &> par_nbody_niters$1_nbodies$2_cores$3_results_$4
 
   filenames+=( "par_nbody_niters$1_nbodies$2_cores$3_results_$4" )
   bins+=( "par_nbody_niters$1_nbodies$2_cores$3_$4.o" )
@@ -164,7 +164,7 @@ function execute_nbody_par {
 
 function execute_mandelbrot_lin {
   echo "Executing mandelbrot: Linear, -DSZ=$1, -DMAXITERS=$2, -DCONSTEXPR_TRACK_$3"
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DSZ=$1 -DMAXITERS=$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o lin_mandelbrot_hxw$1_maxiters$2_$3.o &> lin_mandelbrot_hxw$1_maxiters$2_results_$3
+  $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DSZ=$1 -DMAXITERS=$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o lin_mandelbrot_hxw$1_maxiters$2_$3.o &> lin_mandelbrot_hxw$1_maxiters$2_results_$3
 
   filenames+=( "lin_mandelbrot_hxw$1_maxiters$2_results_$3" )
   bins+=( "lin_mandelbrot_hxw$1_maxiters$2_$3.o" )
@@ -172,7 +172,7 @@ function execute_mandelbrot_lin {
 
 function execute_mandelbrot_par {
   echo "Executing mandelbrot: Parallel, -DSZ=$1, -DMAXITERS=$2, Number of Cores $3, -DCONSTEXPR_TRACK_$4"
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DSZ=$1 -DMAXITERS=$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o par_mandelbrot_hxw$1_maxiters$2_cores$3_$4.o &> par_mandelbrot_hxw$1_maxiters$2_cores$3_results_$4
+  $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DSZ=$1 -DMAXITERS=$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o par_mandelbrot_hxw$1_maxiters$2_cores$3_$4.o &> par_mandelbrot_hxw$1_maxiters$2_cores$3_results_$4
 
   filenames+=( "par_mandelbrot_hxw$1_maxiters$2_cores$3_results_$4" )
   bins+=( "par_mandelbrot_hxw$1_maxiters$2_cores$3_$4.o" )
@@ -180,7 +180,7 @@ function execute_mandelbrot_par {
 
 function execute_swaptions_lin {
   echo "Executing swaptions: Linear, -DNTRIALS_$1, -DNSWAPTIONS_$2, -DCONSTEXPR_TRACK_$3"
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DNTRIALS_$1 -DNSWAPTIONS_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_swaptions.cpp -o lin_swaptions_ntrials$1_nswaptions$2_$3.o &> lin_swaptions_ntrials$1_nswaptions$2_results_$3
+  $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DNTRIALS_$1 -DNSWAPTIONS_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_swaptions.cpp -o lin_swaptions_ntrials$1_nswaptions$2_$3.o &> lin_swaptions_ntrials$1_nswaptions$2_results_$3
 
   filenames+=( "lin_swaptions_ntrials$1_nswaptions$2_results_$3" )
   bins+=( "lin_swaptions_ntrials$1_nswaptions$2_$3.o" )
@@ -188,7 +188,7 @@ function execute_swaptions_lin {
 
 function execute_swaptions_par {
   echo "Executing swaptions: Parallel, -DNTRIALS_$1, -DNSWAPTIONS_$2, Number of Cores $3, -DCONSTEXPR_TRACK_$4"
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DNTRIALS_$1 -DNSWAPTIONS_$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_swaptions.cpp -o par_swaptions_ntrials$1_nswaptions$2_cores$3_$4.o &> par_swaptions_ntrials$1_nswaptions$2_cores$3_results_$4
+  $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DNTRIALS_$1 -DNSWAPTIONS_$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_swaptions.cpp -o par_swaptions_ntrials$1_nswaptions$2_cores$3_$4.o &> par_swaptions_ntrials$1_nswaptions$2_cores$3_results_$4
 
   filenames+=( "par_swaptions_ntrials$1_nswaptions$2_cores$3_results_$4" )
   bins+=( "par_swaptions_ntrials$1_nswaptions$2_cores$3_$4.o" )
@@ -203,11 +203,11 @@ function execute_sycl_edge_detection_lin {
   echo "Executing SYCL Edge Detection: Linear, Image HxW: $1 -DCONSTEXPR_TRACK_$2"
 
   # Generating header containing image data
-  pushd ../../sycl/
+  cd ../../sycl/
   ./image_to_text_file image_data/$1.png
-  popd
+  cd - > /dev/null
 
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_SYCL -DCONSTEXPR_TRACK_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o lin_cexpr_sycl_edge_detection_hxw$1_results.o &> lin_cexpr_sycl_edge_detection_hxw$1_results_$2
+  $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_SYCL -DCONSTEXPR_TRACK_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o lin_cexpr_sycl_edge_detection_hxw$1_results.o &> lin_cexpr_sycl_edge_detection_hxw$1_results_$2
 
   filenames+=( "lin_cexpr_sycl_edge_detection_hxw$1_results_$2" )
   bins+=( "lin_cexpr_sycl_edge_detection_hxw$1_results.o" )
@@ -217,11 +217,11 @@ function execute_sycl_edge_detection_par {
   echo "Executing SYCL Edge Detection: Parallel, Image HxW: $1, Number of Cores $2, -DCONSTEXPR_TRACK_$3"
 
   # Generating header containing image data
-  pushd ../../sycl/
+  cd ../../sycl/
   ./image_to_text_file image_data/$1.png
-  popd
+  cd - > /dev/null
 
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_SYCL -DCONSTEXPR_PARALLEL -DCONSTEXPR_TRACK_$3 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$2 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o par_cexpr_sycl_edge_detection_hxw$1_cores$2.o &> par_cexpr_sycl_edge_detection_hxw$1_cores$2_results_$3
+  $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_SYCL -DCONSTEXPR_PARALLEL -DCONSTEXPR_TRACK_$3 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$2 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -I$MOTORSYCL_INCLUDE -std=c++2a -stdlib=libc++ ../../sycl/cexpr_sycl_edge_detection.cpp -o par_cexpr_sycl_edge_detection_hxw$1_cores$2.o &> par_cexpr_sycl_edge_detection_hxw$1_cores$2_results_$3
 
   filenames+=( "par_cexpr_sycl_edge_detection_hxw$1_cores$2_results_$3" )
   bins+=( "par_cexpr_sycl_edge_detection_hxw$1_cores$2.o" )
@@ -257,7 +257,7 @@ function execute_benchmarks {
 local i j prefix
 
 mkdir $1
-pushd $1
+cd $1
 
 unset bins filenames
 
@@ -271,7 +271,7 @@ unset bins filenames
 # inside the program. Runs of the max size can take up to 2-3 minutes.
 
 mkdir blackscholes_results
-pushd blackscholes_results
+cd blackscholes_results
 
 # Used this for final data set
 for (( i = 0; i < num_bs_sizes; i++ ));
@@ -296,14 +296,14 @@ for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
 done
 
-popd
+cd - > /dev/null
 
 ################################################################################
 #                                 Mandelbrot
 ################################################################################
 
 mkdir mandelbrot_results
-pushd mandelbrot_results
+cd mandelbrot_results
 
 # Used this for final data set
 for ((i = 0; i < num_mand_sizes; i++));
@@ -327,14 +327,14 @@ for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
 done
 
-popd
+cd - > /dev/null
 
 ################################################################################
 #                                 Swaptions
 ################################################################################
 
 mkdir swaptions_results
-pushd swaptions_results
+cd swaptions_results
 
 for ((i = 0; i < num_swap_sizes; i++));
 do
@@ -357,14 +357,14 @@ for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
 done
 
-popd
+cd - > /dev/null
 
 ################################################################################
 #                                 nbody
 ################################################################################
 
 mkdir nbody_results
-pushd nbody_results
+cd nbody_results
 
 for ((i = 0; i < num_nbody_sizes; i++));
 do
@@ -387,7 +387,7 @@ for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
 done
 
-popd
+cd - > /dev/null
 
 ################################################################################
 #                           SYCL EDGE DETECTION
@@ -395,7 +395,7 @@ popd
 
 if [[ ! -z "$MOTORSYCL_INCLUDE" ]]; then
   mkdir sycl_edge_detection_results
-  pushd sycl_edge_detection_results
+  cd sycl_edge_detection_results
 
   compile_image_to_text_file
 
@@ -420,10 +420,10 @@ if [[ ! -z "$MOTORSYCL_INCLUDE" ]]; then
 
   done
 
-  popd
+  cd - > /dev/null
 fi
 
-popd
+cd - > /dev/null
 
 }
 
