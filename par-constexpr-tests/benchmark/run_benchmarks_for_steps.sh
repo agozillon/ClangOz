@@ -1,20 +1,8 @@
 #!/bin/bash
 
-CORE_COUNTS=(2 4 6 8)
-NUM_CORE_SIZES=2 # 4 # Could be made less than the size of CORE_COUNTS
-
-num_sizes=4
-bs_sizes=(4 16 1K 4K 16K 64K)
-num_bs_sizes=2 #$num_sizes # Could be made less than the size of bs_sizes.
-#mand_sizes=(25 50 75 100 125)
-mand_sizes=(32 64 128 256 512)
-num_mand_sizes=2 # 5 # $num_sizes
-swap_sizes=(2 4 6 8 10)
-num_swap_sizes=2 #2 #$num_sizes
-nbody_sizes=(16 32 64 128 256)
-num_nbody_sizes=2 #$num_sizes
-edge_sizes=(64 128 256 512)
-num_edge_sizes=2 #$num_sizes
+# This was extracted from run_benchmarks.sh. It is untested, and (at least)
+# mandelbrot would fail as it no longer uses a HXW_25, HXW_50 (etc.) variable
+# (it now uses SZ)
 
 if [[ -z "${CEST_INCLUDE}" ]]; then
   printf "%s%s\n" "error: Please ensure CEST_INCLUDE is defined, " \
@@ -85,6 +73,34 @@ fi
 declare -a filenames
 declare -a bins
 
+# Translates all the little constexpr step files into one big file
+function convert_step_files_to_csv_file {
+  declare -a steps
+
+  VALUE_COUNTER=0
+  FILE_COUNTER=0
+  NEXT_VAL=true
+  NUM_FILES=${#filenames[@]}
+
+  echo ${filenames[*]}
+
+  local i
+  for i in "${filenames[@]}"
+  do
+    FILE_COUNTER="$FILE_COUNTER + 1"
+    echo "$i"
+    while read line; do
+      if (("$FILE_COUNTER" == "$NUM_FILES")); then
+        steps+="$line"
+      else
+        steps+="$line,"
+      fi
+    done < "$i"
+  done
+
+  echo ${steps[*]} > $2_cexpr_step.csv
+}
+
 # Translates all the little time files into one big file
 function convert_time_files_to_csv_file {
   declare -a floatingsecond
@@ -95,13 +111,13 @@ function convert_time_files_to_csv_file {
   NEXT_VAL=true
   NUM_FILES=${#filenames[@]}
 
-#3  echo ${filenames[*]}
+  echo ${filenames[*]}
 
   local i
   for i in "${filenames[@]}"
   do
     FILE_COUNTER="$FILE_COUNTER + 1"
-#4    echo "$i"
+    echo "$i"
     NUM_LINES=$(wc -l < "$i")
     while read line; do
       if [ "$NEXT_VAL" = true ] ; then
@@ -163,16 +179,16 @@ function execute_nbody_par {
 }
 
 function execute_mandelbrot_lin {
-  echo "Executing mandelbrot: Linear, -DSZ=$1, -DMAXITERS=$2, -DCONSTEXPR_TRACK_$3"
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DSZ=$1 -DMAXITERS=$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o lin_mandelbrot_hxw$1_maxiters$2_$3.o &> lin_mandelbrot_hxw$1_maxiters$2_results_$3
+  echo "Executing mandelbrot: Linear, -DHXW_$1, -DMAXITERS_$2, -DCONSTEXPR_TRACK_$3"
+  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$3 -DHXW_$1 -DMAXITERS_$2 -fconstexpr-steps=4294967295 -w -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o lin_mandelbrot_hxw$1_maxiters$2_$3.o &> lin_mandelbrot_hxw$1_maxiters$2_results_$3
 
   filenames+=( "lin_mandelbrot_hxw$1_maxiters$2_results_$3" )
   bins+=( "lin_mandelbrot_hxw$1_maxiters$2_$3.o" )
 }
 
 function execute_mandelbrot_par {
-  echo "Executing mandelbrot: Parallel, -DSZ=$1, -DMAXITERS=$2, Number of Cores $3, -DCONSTEXPR_TRACK_$4"
-  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DSZ=$1 -DMAXITERS=$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o par_mandelbrot_hxw$1_maxiters$2_cores$3_$4.o &> par_mandelbrot_hxw$1_maxiters$2_cores$3_results_$4
+  echo "Executing mandelbrot: Parallel, -DHXW_$1, -DMAXITERS_$2, Number of Cores $3, -DCONSTEXPR_TRACK_$4"
+  time $CLANGOZ_ROOT/bin/clang++ -O3 -DCONSTEXPR_TRACK_$4 -DCONSTEXPR_PARALLEL -DHXW_$1 -DMAXITERS_$2 -fconstexpr-steps=4294967295 -w -fconstexpr-parallel-partition-size=$3 -fexperimental-constexpr-parallel -I$CEST_INCLUDE -std=c++2a -stdlib=libc++ ../../cexpr_mandelbrot.cpp -o par_mandelbrot_hxw$1_maxiters$2_cores$3_$4.o &> par_mandelbrot_hxw$1_maxiters$2_cores$3_results_$4
 
   filenames+=( "par_mandelbrot_hxw$1_maxiters$2_cores$3_results_$4" )
   bins+=( "par_mandelbrot_hxw$1_maxiters$2_cores$3_$4.o" )
@@ -239,12 +255,12 @@ function print_binary_sets_size {
   local i
   for i in "${binary_arr[@]}"
   do
-#5    echo $i
+    echo $i
     FILESIZE=$(stat -c%s "$i")
-#6    echo "FileSize in bytes: $FILESIZE"
+    echo "FileSize in bytes: $FILESIZE"
     bytes+="$FILESIZE,"
     KB=$(bc <<< "scale=2;$FILESIZE / 1000")
-#7    echo "FileSize in kB (bytes / 1000): $KB"
+    echo "FileSize in kB (bytes / 1000): $KB"
     kbs+="$KB,"
   done
 
@@ -252,9 +268,7 @@ function print_binary_sets_size {
   echo ${bytes[*]} > $2_bytes.csv
 }
 
-function execute_benchmarks {
-
-local i j prefix
+function execute_benchmarks_for_steps {
 
 mkdir $1
 pushd $1
@@ -273,28 +287,60 @@ unset bins filenames
 mkdir blackscholes_results
 pushd blackscholes_results
 
-# Used this for final data set
-for (( i = 0; i < num_bs_sizes; i++ ));
-do
-  execute_blackscholes_lin "${bs_sizes[$i]}" 1 "TIME"
-done
+ # Used this for final data set
+execute_blackscholes_lin 4 1 "STEPS"
+execute_blackscholes_lin 16 1 "STEPS"
+execute_blackscholes_lin 1K 1 "STEPS"
+execute_blackscholes_lin 4K 1 "STEPS"
+execute_blackscholes_lin 16K 1 "STEPS"
+execute_blackscholes_lin 64K 1 "STEPS"
 
-print_binary_sets_size bins "blackscholes_1_run_lin_memory"
-convert_time_files_to_csv_file $filenames "blackscholes_1_run_lin_timings"
+convert_step_files_to_csv_file $filenames "blackscholes_1_run_lin_steps"
 unset bins filenames
 
-for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
+# Used this for final data set
+execute_blackscholes_par 4 1 2 "STEPS"
+execute_blackscholes_par 16 1 2 "STEPS"
+execute_blackscholes_par 1K 1 2 "STEPS"
+execute_blackscholes_par 4K 1 2 "STEPS"
+execute_blackscholes_par 16K 1 2 "STEPS"
+execute_blackscholes_par 64K 1 2 "STEPS"
 
-  # Used this for final data set
-  for (( j = 0; j < num_bs_sizes; j++ )); do
-    execute_blackscholes_par "${bs_sizes[$j]}" 1 "${CORE_COUNTS[$i]}" "TIME"
-    prefix="blackscholes_1_run_"${CORE_COUNTS[$i]}"_core_par"
-    print_binary_sets_size bins ${prefix}"_memory"
-    convert_time_files_to_csv_file $filenames ${prefix}"_timings"
-    unset bins filenames
-  done
+convert_step_files_to_csv_file $filenames "blackscholes_1_run_2_core_par_steps"
+unset bins filenames
 
-done
+# Used this for final data set
+execute_blackscholes_par 4 1 4 "STEPS"
+execute_blackscholes_par 16 1 4 "STEPS"
+execute_blackscholes_par 1K 1 4 "STEPS"
+execute_blackscholes_par 4K 1 4 "STEPS"
+execute_blackscholes_par 16K 1 4 "STEPS"
+execute_blackscholes_par 64K 1 4 "STEPS"
+
+convert_step_files_to_csv_file $filenames "blackscholes_1_run_4_core_par_steps"
+unset bins filenames
+
+# Used this for final data set
+execute_blackscholes_par 4 1 6 "STEPS"
+execute_blackscholes_par 16 1 6 "STEPS"
+execute_blackscholes_par 1K 1 6 "STEPS"
+execute_blackscholes_par 4K 1 6 "STEPS"
+execute_blackscholes_par 16K 1 6 "STEPS"
+execute_blackscholes_par 64K 1 6 "STEPS"
+
+convert_step_files_to_csv_file $filenames "blackscholes_1_run_6_core_par_steps"
+unset bins filenames
+
+# Used this for final data set
+execute_blackscholes_par 4 1 8 "STEPS"
+execute_blackscholes_par 16 1 8 "STEPS"
+execute_blackscholes_par 1K 1 8 "STEPS"
+execute_blackscholes_par 4K 1 8 "STEPS"
+execute_blackscholes_par 16K 1 8 "STEPS"
+execute_blackscholes_par 64K 1 8 "STEPS"
+
+convert_step_files_to_csv_file $filenames "blackscholes_1_run_8_core_par_steps"
+unset bins filenames
 
 popd
 
@@ -306,26 +352,54 @@ mkdir mandelbrot_results
 pushd mandelbrot_results
 
 # Used this for final data set
-for ((i = 0; i < num_mand_sizes; i++));
-do
-  execute_mandelbrot_lin "${mand_sizes[$i]}" 128 "TIME"
-done
+execute_mandelbrot_lin 25 128 "STEPS"
+execute_mandelbrot_lin 50 128 "STEPS"
+execute_mandelbrot_lin 75 128 "STEPS"
+execute_mandelbrot_lin 100 128 "STEPS"
+execute_mandelbrot_lin 125 128 "STEPS"
 
-print_binary_sets_size bins "mandelbrot_128_iter_lin_memory"
-convert_time_files_to_csv_file $filenames "mandelbrot_128_iter_lin_timings"
+convert_step_files_to_csv_file $filenames "mandelbrot_128_iter_lin_steps"
 unset bins filenames
 
-for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
+# Used this for final data set
+execute_mandelbrot_par 25 128 2 "STEPS"
+execute_mandelbrot_par 50 128 2 "STEPS"
+execute_mandelbrot_par 75 128 2 "STEPS"
+execute_mandelbrot_par 100 128 2 "STEPS"
+execute_mandelbrot_par 125 128 2 "STEPS"
 
-  for (( j = 0; j < num_mand_sizes; j++ )); do
-    execute_mandelbrot_par "${mand_sizes[$j]}" 128 "${CORE_COUNTS[$i]}" "TIME"
-    prefix="mandelbrot_128_iter_par_"${CORE_COUNTS[$i]}"_core"
-    print_binary_sets_size bins ${prefix}"_memory"
-    convert_time_files_to_csv_file $filenames ${prefix}"_timings"
-    unset bins filenames
-  done
+convert_step_files_to_csv_file $filenames "mandelbrot_128_iter_par_2_core_steps"
+unset bins filenames
 
-done
+## Used this for final data set
+execute_mandelbrot_par 25 128 4 "STEPS"
+execute_mandelbrot_par 50 128 4 "STEPS"
+execute_mandelbrot_par 75 128 4 "STEPS"
+execute_mandelbrot_par 100 128 4 "STEPS"
+execute_mandelbrot_par 125 128 4 "STEPS"
+
+convert_step_files_to_csv_file $filenames "mandelbrot_128_iter_par_4_core_steps"
+unset bins filenames
+
+## Used this for final data set
+execute_mandelbrot_par 25 128 6 "STEPS"
+execute_mandelbrot_par 50 128 6 "STEPS"
+execute_mandelbrot_par 75 128 6 "STEPS"
+execute_mandelbrot_par 100 128 6 "STEPS"
+execute_mandelbrot_par 125 128 6 "STEPS"
+
+convert_step_files_to_csv_file $filenames "mandelbrot_128_iter_par_6_core_steps"
+unset bins filenames
+
+# Used this for final data set
+execute_mandelbrot_par 25 128 8 "STEPS"
+execute_mandelbrot_par 50 128 8 "STEPS"
+execute_mandelbrot_par 75 128 8 "STEPS"
+execute_mandelbrot_par 100 128 8 "STEPS"
+execute_mandelbrot_par 125 128 8 "STEPS"
+
+convert_step_files_to_csv_file $filenames "mandelbrot_128_iter_par_8_core_steps"
+unset bins filenames
 
 popd
 
@@ -336,26 +410,50 @@ popd
 mkdir swaptions_results
 pushd swaptions_results
 
-for ((i = 0; i < num_swap_sizes; i++));
-do
-  execute_swaptions_lin 2000 "${swap_sizes[$i]}" "TIME"
-done
+execute_swaptions_lin 2000 2 "STEPS"
+execute_swaptions_lin 2000 4 "STEPS"
+execute_swaptions_lin 2000 6 "STEPS"
+execute_swaptions_lin 2000 8 "STEPS"
+execute_swaptions_lin 2000 10 "STEPS"
 
-print_binary_sets_size bins "swaptions_2000_trials_lin_memory"
-convert_time_files_to_csv_file $filenames "swaptions_2000_trials_lin_timings"
+convert_step_files_to_csv_file $filenames "swaptions_2000_trials_lin_steps"
 unset bins filenames
 
-for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
+execute_swaptions_par 2000 2 2 "STEPS"
+execute_swaptions_par 2000 4 2 "STEPS"
+execute_swaptions_par 2000 6 2 "STEPS"
+execute_swaptions_par 2000 8 2 "STEPS"
+execute_swaptions_par 2000 10 2 "STEPS"
 
-  for (( j = 0; j < num_swap_sizes; j++ )); do
-    execute_swaptions_par 2000 "${swap_sizes[$j]}" "${CORE_COUNTS[$i]}" "TIME"
-    prefix="swaptions_2000_trials_par_"${CORE_COUNTS[$i]}"_core"
-    print_binary_sets_size bins ${prefix}"_memory"
-    convert_time_files_to_csv_file $filenames ${prefix}"_timings"
-    unset bins filenames
-  done
+convert_step_files_to_csv_file $filenames "swaptions_2000_trials_par_2_core_steps"
+unset bins filenames
 
-done
+execute_swaptions_par 2000 2 4 "STEPS"
+execute_swaptions_par 2000 4 4 "STEPS"
+execute_swaptions_par 2000 6 4 "STEPS"
+execute_swaptions_par 2000 8 4 "STEPS"
+execute_swaptions_par 2000 10 4 "STEPS"
+
+convert_step_files_to_csv_file $filenames "swaptions_2000_trials_par_4_core_steps"
+unset bins filenames
+
+execute_swaptions_par 2000 2 6 "STEPS"
+execute_swaptions_par 2000 4 6 "STEPS"
+execute_swaptions_par 2000 6 6 "STEPS"
+execute_swaptions_par 2000 8 6 "STEPS"
+execute_swaptions_par 2000 10 6 "STEPS"
+
+convert_step_files_to_csv_file $filenames "swaptions_2000_trials_par_6_core_steps"
+unset bins filenames
+
+execute_swaptions_par 2000 2 8 "STEPS"
+execute_swaptions_par 2000 4 8 "STEPS"
+execute_swaptions_par 2000 6 8 "STEPS"
+execute_swaptions_par 2000 8 8 "STEPS"
+execute_swaptions_par 2000 10 8 "STEPS"
+
+convert_step_files_to_csv_file $filenames "swaptions_2000_trials_par_8_core_steps"
+unset bins filenames
 
 popd
 
@@ -366,59 +464,106 @@ popd
 mkdir nbody_results
 pushd nbody_results
 
-for ((i = 0; i < num_nbody_sizes; i++));
-do
-  execute_nbody_lin 32 "${nbody_sizes[$i]}" "TIME"
-done
+execute_nbody_lin 32 16 "STEPS"
+execute_nbody_lin 32 32 "STEPS"
+execute_nbody_lin 32 64 "STEPS"
+execute_nbody_lin 32 128 "STEPS"
+execute_nbody_lin 32 256 "STEPS"
 
-print_binary_sets_size bins "nbody_15_body_lin_memory"
-convert_time_files_to_csv_file $filenames "nbody_15_body_lin_timings"
+convert_step_files_to_csv_file $filenames "nbody_15_body_lin_steps"
 unset bins filenames
 
-for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
+execute_nbody_par 32 16 2 "STEPS"
+execute_nbody_par 32 32 2 "STEPS"
+execute_nbody_par 32 64 2 "STEPS"
+execute_nbody_par 32 128 2 "STEPS"
+execute_nbody_par 32 256 2 "STEPS"
 
-  for (( j = 0; j < num_nbody_sizes; j++ )); do
-    execute_nbody_par 32 "${nbody_sizes[$j]}" "${CORE_COUNTS[$i]}" "TIME"
-    prefix="nbody_15_body_"${CORE_COUNTS[$i]}"_core_par"
-    print_binary_sets_size bins ${prefix}"_memory"
-    convert_time_files_to_csv_file $filenames ${prefix}"_timings"
-    unset bins filenames
-  done
+convert_step_files_to_csv_file $filenames "nbody_15_body_2_core_par_steps"
+unset bins filenames
 
-done
+execute_nbody_par 32 16 4 "STEPS"
+execute_nbody_par 32 32 4 "STEPS"
+execute_nbody_par 32 64 4 "STEPS"
+execute_nbody_par 32 128 4 "STEPS"
+execute_nbody_par 32 256 4 "STEPS"
+
+convert_step_files_to_csv_file $filenames "nbody_15_body_4_core_par_steps"
+unset bins filenames
+
+execute_nbody_par 32 16 6 "STEPS"
+execute_nbody_par 32 32 6 "STEPS"
+execute_nbody_par 32 64 6 "STEPS"
+execute_nbody_par 32 128 6 "STEPS"
+execute_nbody_par 32 256 6 "STEPS"
+
+convert_step_files_to_csv_file $filenames "nbody_15_body_6_core_par_steps"
+unset bins filenames
+
+execute_nbody_par 32 16 8 "STEPS"
+execute_nbody_par 32 32 8 "STEPS"
+execute_nbody_par 32 64 8 "STEPS"
+execute_nbody_par 32 128 8 "STEPS"
+execute_nbody_par 32 256 8 "STEPS"
+
+convert_step_files_to_csv_file $filenames "nbody_15_body_8_core_par_steps"
+unset bins filenames
 
 popd
+
 
 ################################################################################
 #                           SYCL EDGE DETECTION
 ################################################################################
 
-if [[ ! -z "$MOTORSYCL_INCLUDE" ]]; then
+
+  # Not sure how good this test is for calculating number of steps as it
+  # encompases multiple launches of the parallel for_each for each kernel
+if [[ ! -z "$PSTL_INCLUDE" && ! -z "$MOTORSYCL_INCLUDE" && ! -z "$PSTL_INTERNAL_INCLUDE" ]]; then
   mkdir sycl_edge_detection_results
   pushd sycl_edge_detection_results
 
   compile_image_to_text_file
 
-  for ((i = 0; i < num_edge_sizes; i++));
-  do
-    execute_sycl_edge_detection_lin "${edge_sizes[$i]}" "TIME"
-  done
+  execute_sycl_edge_detection_lin 64 "STEPS"
+  execute_sycl_edge_detection_lin 128 "STEPS"
+  execute_sycl_edge_detection_lin 256 "STEPS"
+  execute_sycl_edge_detection_lin 512 "STEPS"
 
-  print_binary_sets_size bins "sycl_edge_detection_lin_memory"
-  convert_time_files_to_csv_file $filenames "sycl_edge_detection_lin_timings"
+  convert_step_files_to_csv_file $filenames "sycl_edge_detect_lin_steps"
   unset bins filenames
 
-  for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
+  execute_sycl_edge_detection_par 64 2 "STEPS"
+  execute_sycl_edge_detection_par 128 2 "STEPS"
+  execute_sycl_edge_detection_par 256 2 "STEPS"
+  execute_sycl_edge_detection_par 512 2 "STEPS"
 
-    for (( j = 0; j < num_edge_sizes; j++ )); do
-      execute_nbody_par 32 "${edge_sizes[$j]}" "${CORE_COUNTS[$i]}" "TIME"
-      prefix="sycl_edge_detection_"${CORE_COUNTS[$i]}"_core_par"
-      print_binary_sets_size bins ${prefix}"_memory"
-      convert_time_files_to_csv_file $filenames ${prefix}"_timings"
-      unset bins filenames
-    done
+  convert_step_files_to_csv_file $filenames "sycl_edge_detect_2_core_par_steps"
+  unset bins filenames
 
-  done
+  execute_sycl_edge_detection_par 64 4 "STEPS"
+  execute_sycl_edge_detection_par 128 4 "STEPS"
+  execute_sycl_edge_detection_par 256 4 "STEPS"
+  execute_sycl_edge_detection_par 512 4 "STEPS"
+
+  convert_step_files_to_csv_file $filenames "sycl_edge_detect_4_core_par_steps"
+  unset bins filenames
+
+  execute_sycl_edge_detection_par 64 6 "STEPS"
+  execute_sycl_edge_detection_par 128 6 "STEPS"
+  execute_sycl_edge_detection_par 256 6 "STEPS"
+  execute_sycl_edge_detection_par 512 6 "STEPS"
+
+  convert_step_files_to_csv_file $filenames "sycl_edge_detect_6_core_par_steps"
+  unset bins filenames
+
+  execute_sycl_edge_detection_par 64 8 "STEPS"
+  execute_sycl_edge_detection_par 128 8 "STEPS"
+  execute_sycl_edge_detection_par 256 8 "STEPS"
+  execute_sycl_edge_detection_par 512 8 "STEPS"
+
+  convert_step_files_to_csv_file $filenames "sycl_edge_detect_8_core_par_steps"
+  unset bins filenames
 
   popd
 fi
@@ -427,13 +572,7 @@ popd
 
 }
 
-if [[ -z "$1" ]]; then
-  EXECUTE_COUNT=5
-else
-  EXECUTE_COUNT="$1"
-fi
+# this could be done cleaner, but I feel it's fine the way it is for times sake
+execute_benchmarks_for_steps benchmark_step_data
 
-for ((index=0; index<EXECUTE_COUNT; index++)); do
-  execute_benchmarks benchmark_run_$index
-done
 
