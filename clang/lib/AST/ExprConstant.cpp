@@ -9908,9 +9908,9 @@ public:
       // currently will double print/always print once
       if (Definition->getNameAsString() == "__PrintTimeStamp") {
           fsec fs = second_stamp - first_stamp;
-          ms d = std::chrono::duration_cast<ms>(fs);
-          std::cout << fs.count() << "\n";
-          std::cout << d.count() << "\n";
+//          ms d = std::chrono::duration_cast<ms>(fs);
+          std::cout << fs.count();
+//          std::cout << d.count() << "\n";
 //          std::cout << std::endl;
       }
 
