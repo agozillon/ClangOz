@@ -95,13 +95,10 @@ function convert_time_files_to_csv_file {
   NEXT_VAL=true
   NUM_FILES=${#filenames[@]}
 
-#3  echo ${filenames[*]}
-
   local i
   for i in "${filenames[@]}"
   do
     FILE_COUNTER="$FILE_COUNTER + 1"
-#4    echo "$i"
     NUM_LINES=$(wc -l < "$i")
     while read line; do
       if [ "$NEXT_VAL" = true ] ; then
@@ -123,7 +120,6 @@ function convert_time_files_to_csv_file {
     done < "$i"
   done
 
-#  echo "$2 ?"
   echo ${floatingsecond[*]} > $2_floatingsec.csv
   echo ${miliseconds[*]} > $2_milisecond.csv
 }
@@ -239,12 +235,9 @@ function print_binary_sets_size {
   local i
   for i in "${binary_arr[@]}"
   do
-#5    echo $i
     FILESIZE=$(stat -c%s "$i")
-#6    echo "FileSize in bytes: $FILESIZE"
     bytes+="$FILESIZE,"
     KB=$(bc <<< "scale=2;$FILESIZE / 1000")
-#7    echo "FileSize in kB (bytes / 1000): $KB"
     kbs+="$KB,"
   done
 
