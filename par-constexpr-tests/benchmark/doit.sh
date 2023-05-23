@@ -29,7 +29,7 @@ echo $@
   done
 
   for (( i = 0; i < num_core_sizes; i++ )); do
-    PARFLAGS="-DCONSTEXPR_PARALLEL -fconstexpr-parallel-partition-size=${cores[$i]}"
+    PARFLAGS="-DCONSTEXPR_PARALLEL -fexperimental-constexpr-parallel -fconstexpr-parallel-partition-size=${cores[$i]}"
     echo "#" ${cores[$i]} "Threads"
 
     for (( j = 0; j < num_sizes; j++ )); do
@@ -37,7 +37,7 @@ echo $@
       SZFLAG="-DSZ=${sizes[$j]}"
 
       for (( k = 0; k < nruns; k++ )); do
-        echo $CLANGOZ_ROOT/bin/clang++ ${CFLAGS} ${PARFLAGS} ${SZFLAG} ../../${basename}.cpp
+#        echo $CLANGOZ_ROOT/bin/clang++ ${CFLAGS} ${PARFLAGS} ${SZFLAG} ../../${basename}.cpp
         delta="$($CLANGOZ_ROOT/bin/clang++ ${CFLAGS} ${PARFLAGS} ${SZFLAG} ../../${basename}.cpp)"
         total=$(echo $total + $delta | bc)   # using bc for floating point
       done

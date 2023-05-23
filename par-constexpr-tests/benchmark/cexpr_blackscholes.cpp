@@ -19,7 +19,6 @@ using namespace __cep::experimental;
 #define inv_sqrt_2xPI 0.39894228040143270286
 
 #if   SZ==4
-#message 4
 #include "blackscholes-input/in_4.hpp"
 #elif SZ==16
 #include "blackscholes-input/in_16.hpp"
@@ -201,8 +200,8 @@ namespace blackscholes {
 
 #ifdef CONSTEXPR_TRACK_STEPS
     __TrackConstExprStepsStart();
-#endif CONSTEXPR_TRACK_STEPS
-    
+#endif
+
 #ifdef CONSTEXPR_PARALLEL
   // This top level loop really adds nothing to the calculation it just forces
   // an extra iteration of the same calculation, so I've chosen to leave it as
@@ -241,7 +240,7 @@ namespace blackscholes {
 
 #ifdef CONSTEXPR_TRACK_STEPS
     __PrintConstExprSteps(); 
-#endif CONSTEXPR_TRACK_STEPS
+#endif
 
 #ifdef CONSTEXPR_TRACK_TIME
     __GetTimeStampEnd();
