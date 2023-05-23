@@ -18,24 +18,17 @@ using namespace __cep::experimental;
 
 #define inv_sqrt_2xPI 0.39894228040143270286
 
-#define BS_4   1
-#define BS_16  2
-#define BS_1K  3
-#define BS_4K  4
-#define BS_16K 5
-#define BS_64K 6
-
-#if   SZ==BS_4
+#if   SZ==4
 #include "blackscholes-input/in_4.hpp"
-#elif SZ==BS_16
+#elif SZ==16
 #include "blackscholes-input/in_16.hpp"
-#elif SZ==BS_1K  // 1024 elements
+#elif SZ==1024  // 1024 elements
 #include "blackscholes-input/in_1k.hpp"
-#elif SZ==BS_4K  // its 4096 elements
+#elif SZ==4096  // 4096 elements
 #include "blackscholes-input/in_4k.hpp"
-#elif SZ==BS_16K // 16384 elements
+#elif SZ==16384 // 16384 elements
 #include "blackscholes-input/in_16k.hpp"
-#elif SZ==BS_64K // 65536 elements, the best option for testing, takes ~90secs
+#elif SZ==65536 // 65536 elements, the best option for testing, takes ~90secs
 #include "blackscholes-input/in_64k.hpp"
 #else // default to 4 element example so it will compile
 #error "Please define SZ to one of 6 options."
