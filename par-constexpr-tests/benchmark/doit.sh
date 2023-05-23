@@ -11,9 +11,11 @@ function runprog {
   local CFLAGS="-O3 -std=c++20 -stdlib=libc++ -DCONSTEXPR_TRACK_TIME -fconstexpr-steps=4294967295 --no-warnings -I$CEST_INCLUDE"
   local PARFLAGS SZFLAG
 
-echo $@
+pwd
 
-  echo "# Serial"
+  # echo $@
+
+  echo "# Serial" | tee -a ${basename}.dat    # tee -a: append, do not overwrite
   for (( j = 0; j < num_sizes; j++ )); do
     total=0
     SZFLAG="-DSZ=${sizes[$j]}"
@@ -24,13 +26,13 @@ echo $@
     done
 
     avg=$(echo "scale=5; $total / $nruns" | bc -l)  # 5 is the fp precision
-    echo $avg ${sizes[$j]}
+    echo $avg ${sizes[$j]} | tee -a ${basename}.dat
 
   done
 
   for (( i = 0; i < num_core_sizes; i++ )); do
     PARFLAGS="-DCONSTEXPR_PARALLEL -fexperimental-constexpr-parallel -fconstexpr-parallel-partition-size=${cores[$i]}"
-    echo "#" ${cores[$i]} "Threads"
+    echo "#" ${cores[$i]} "Threads" | tee -a ${basename}.dat
 
     for (( j = 0; j < num_sizes; j++ )); do
       total=0
@@ -43,15 +45,15 @@ echo $@
       done
 
       avg=$(echo "scale=5; $total / $nruns" | bc -l)  # 5 is the fp precision
-      echo $avg ${sizes[$j]}
+      echo $avg ${sizes[$j]} | tee -a ${basename}.dat
 
     done
   done
 }
 
-NUM_RUNS=4 # For averaging, stddev etc.
-CORE_COUNTS=(2 4 6 8)
-NUM_CORE_SIZES=2 # 4 # Could be made less than the size of CORE_COUNTS
+NUM_RUNS=3 # For averaging, stddev etc.
+CORE_COUNTS=(2 4 6 8 16)  # 16: Hyper-threading: 2 threads per core on i9-12900K (8 cores)
+NUM_CORE_SIZES=2 # 5 # Could be made less than the size of CORE_COUNTS
 MAND_SIZES=(32 64 128 256 512)
 NUM_MAND_SIZES=3
 BS_SIZES=(4 16 1024 4096 16384 65536)
@@ -66,5 +68,4 @@ cd $TMPDIR
 runprog cexpr_blackscholes $NUM_RUNS CORE_COUNTS $NUM_CORE_SIZES BS_SIZES    $NUM_BS_SIZES
 #runprog cexpr_nbody        $NUM_RUNS CORE_COUNTS $NUM_CORE_SIZES NBODY_SIZES $NUM_BS_SIZES
 
-# run_program cexpr_mandelbrot "${MAND_SIZES[@]}" ${NUM_SIZES}
 cd - > /dev/null
