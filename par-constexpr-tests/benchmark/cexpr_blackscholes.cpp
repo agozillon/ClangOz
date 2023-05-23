@@ -18,33 +18,31 @@ using namespace __cep::experimental;
 
 #define inv_sqrt_2xPI 0.39894228040143270286
 
-#ifdef BLACKSCHOLES_4
+#define BS_4   1
+#define BS_16  2
+#define BS_1K  3
+#define BS_4K  4
+#define BS_16K 5
+#define BS_64K 6
+
+#if   SZ==BS_4
 #include "blackscholes-input/in_4.hpp"
-#elif BLACKSCHOLES_16
+#elif SZ==BS_16
 #include "blackscholes-input/in_16.hpp"
-#elif BLACKSCHOLES_1K // technically 1024 elements
+#elif SZ==BS_1K  // 1024 elements
 #include "blackscholes-input/in_1k.hpp"
-#elif BLACKSCHOLES_4K // technically its 4096 elements
+#elif SZ==BS_4K  // its 4096 elements
 #include "blackscholes-input/in_4k.hpp"
-#elif BLACKSCHOLES_16K // technically its 16384 elements
+#elif SZ==BS_16K // 16384 elements
 #include "blackscholes-input/in_16k.hpp"
-#elif BLACKSCHOLES_64K // technically its 65536 elements, the best option for testing, takes 1 min 30 seconds~ 
+#elif SZ==BS_64K // 65536 elements, the best option for testing, takes ~90secs
 #include "blackscholes-input/in_64k.hpp"
 #else // default to 4 element example so it will compile
-#include "blackscholes-input/in_4.hpp"
+#error "Please define SZ to one of 6 options."
 #endif
 
-#ifdef NRUN_1
-  constexpr int nruns = 1;
-#elif NRUN_2
-  constexpr int nruns = 2;
-#elif NRUN_3
-  constexpr int nruns = 3;
-#elif NRUN_4
-  constexpr int nruns = 4;
-#else
-  constexpr int nruns = 1;
-#endif
+#define NRUNS 1
+constexpr int nruns = NRUNS;
 
 namespace blackscholes {  
   template <typename T = float/*fortran real*/> 
@@ -54,7 +52,7 @@ namespace blackscholes {
         error = false;
         price = 0;
       }
-      
+
       constexpr OptionData(const T& s, const T& strike, const T& r,
                         const T& v, const T& t, const char& optiontype) 
           : s(s), strike(strike), r(r), v(v), t(t), optiontype(optiontype) {
