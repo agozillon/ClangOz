@@ -15,35 +15,8 @@ using namespace __cep::experimental;
 namespace nbody {
   using type = double;
 
-#ifdef NITERS_32
-  constexpr int niters = 32;
-#elif NITERS_10000
-  constexpr int niters = 10000;
-#elif NITERS_20000
-  constexpr int niters = 20000;
-#elif NITERS_30000
-  constexpr int niters = 30000;
-#elif NITERS_40000
-  constexpr int niters = 40000;
-#elif NITERS_50000
-  constexpr int niters = 50000;
-#else
-  constexpr int niters = 50000; 
-#endif
-
-#ifdef NBODIES_16
-  constexpr int nbodies = 16;
-#elif NBODIES_32
-  constexpr int nbodies = 32;
-#elif NBODIES_64
-  constexpr int nbodies = 64;
-#elif NBODIES_128
-  constexpr int nbodies = 128;
-#elif NBODIES_256
-  constexpr int nbodies = 256;
-#else
-  constexpr int nbodies = 256;
-#endif
+  constexpr int niters  = 32; // 4096 (1<<12)
+  constexpr int nbodies = SZ;
 
   constexpr type pi = 3.141592653589793;
   constexpr type solar_mass = 4 * pi * pi;
