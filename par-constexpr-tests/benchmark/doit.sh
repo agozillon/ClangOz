@@ -11,8 +11,6 @@ function runprog {
   local CFLAGS="-O3 -std=c++20 -stdlib=libc++ -DCONSTEXPR_TRACK_TIME -fconstexpr-steps=4294967295 --no-warnings -I$CEST_INCLUDE"
   local PARFLAGS SZFLAG
 
-pwd
-
   # echo $@
 
   echo "# Serial" | tee -a ${basename}.dat    # tee -a: append, do not overwrite

@@ -406,7 +406,7 @@ if [[ ! -z "$MOTORSYCL_INCLUDE" ]]; then
   for (( i = 0; i < NUM_CORE_SIZES; i++ )); do
 
     for (( j = 0; j < num_edge_sizes; j++ )); do
-      execute_nbody_par 32 "${edge_sizes[$j]}" "${CORE_COUNTS[$i]}" "TIME"
+      execute_sycl_edge_detection_par "${edge_sizes[$j]}" "${CORE_COUNTS[$i]}" "TIME" # this is wrong
       prefix="sycl_edge_detection_"${CORE_COUNTS[$i]}"_core_par"
       print_binary_sets_size bins ${prefix}"_memory"
       convert_time_files_to_csv_file $filenames ${prefix}"_timings"
