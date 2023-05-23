@@ -27,7 +27,7 @@ function runprog {
     done
   done
 
-  TIME_DIFF="$($CLANGOZ_ROOT/bin/clang++ ${CFLAGS} -DSZ=32 -DMAXITERS=128 ../../${basename}.cpp)"
+  TIME_DIFF="$($CLANGOZ_ROOT/bin/clang++ ${CFLAGS} -DSZ=32 ../../${basename}.cpp)"
   echo $TIME_DIFF
 }
 
