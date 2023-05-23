@@ -19,6 +19,7 @@ using namespace __cep::experimental;
 #define inv_sqrt_2xPI 0.39894228040143270286
 
 #if   SZ==4
+#message 4
 #include "blackscholes-input/in_4.hpp"
 #elif SZ==16
 #include "blackscholes-input/in_16.hpp"
