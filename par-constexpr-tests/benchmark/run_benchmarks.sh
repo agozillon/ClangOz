@@ -1,5 +1,9 @@
 #!/bin/bash
 
+echo "Warning: This script is no longer supported."
+echo "The current benchmark script is within the repo for the paper."
+exit -1
+
 CORE_COUNTS=(2 4 6 8)
 NUM_CORE_SIZES=2 # 4 # Could be made less than the size of CORE_COUNTS
 
