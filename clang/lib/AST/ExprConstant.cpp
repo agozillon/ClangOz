@@ -7221,6 +7221,9 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
     static llvm::ThreadPool tp(
         llvm::hardware_concurrency(
           Info.getLangOpts().ConstexprParallelPartitionSize));
+    // llvm::hardware_concurrency(x) returns
+    // llvm::ThreadPoolStrategy{x,true,false},
+    // Which is {threads_requested, use_hyperthreads, limit}.
 
     // I also need to know the context it's in, not just that its named
     // transform e.g. I need to know its defined in the standard library and not
@@ -9887,13 +9890,13 @@ public:
       if (Info.getLangOpts().ExperimentalConstexprParallel  && 
           Definition->getNameAsString() == "__ThreadLock")
         eval_lock.lock();
-      
+
       if (Info.getLangOpts().ExperimentalConstexprParallel &&
           Definition->getNameAsString() == "__ThreadUnlock")
         eval_lock.unlock();
 
       typedef std::chrono::high_resolution_clock Time;
-      typedef std::chrono::milliseconds ms;
+//      typedef std::chrono::milliseconds ms;
       typedef std::chrono::duration<float> fsec;
 
       // trying a little trick to print times with minimum overhead...but this will
