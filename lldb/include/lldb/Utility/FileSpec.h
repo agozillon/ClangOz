@@ -329,8 +329,8 @@ public:
   /// filename has no extension, ConstString(nullptr) is returned. The dot
   /// ('.') character is the first character in the returned string.
   ///
-  /// \return Returns the extension of the file as a ConstString object.
-  ConstString GetFileNameExtension() const;
+  /// \return Returns the extension of the file as a StringRef.
+  llvm::StringRef GetFileNameExtension() const;
 
   /// Return the filename without the extension part
   ///
@@ -408,7 +408,17 @@ public:
   ///     A boolean value indicating whether the path was updated.
   bool RemoveLastPathComponent();
 
-  ConstString GetLastPathComponent() const;
+  /// Gets the components of the FileSpec's path.
+  /// For example, given the path:
+  ///   /System/Library/PrivateFrameworks/UIFoundation.framework/UIFoundation
+  ///
+  /// This function returns:
+  ///   {"System", "Library", "PrivateFrameworks", "UIFoundation.framework",
+  ///   "UIFoundation"}
+  /// \return
+  ///   A std::vector of llvm::StringRefs for each path component.
+  ///   The lifetime of the StringRefs is tied to the lifetime of the FileSpec.
+  std::vector<llvm::StringRef> GetComponents() const;
 
 protected:
   // Convenience method for setting the file without changing the style.
@@ -427,12 +437,20 @@ protected:
     No
   };
 
-  // Member variables
-  ConstString m_directory;            ///< The uniqued directory path
-  ConstString m_filename;             ///< The uniqued filename path
-  mutable bool m_is_resolved = false; ///< True if this path has been resolved.
-  mutable Absolute m_absolute = Absolute::Calculate; ///< Cache absoluteness.
-  Style m_style; ///< The syntax that this path uses (e.g. Windows / Posix)
+  /// The unique'd directory path.
+  ConstString m_directory;
+
+  /// The unique'd filename path.
+  ConstString m_filename;
+
+  /// True if this path has been resolved.
+  mutable bool m_is_resolved = false;
+
+  /// Cache whether this path is absolute.
+  mutable Absolute m_absolute = Absolute::Calculate;
+
+  /// The syntax that this path uses. (e.g. Windows / Posix)
+  Style m_style;
 };
 
 /// Dump a FileSpec object to a stream

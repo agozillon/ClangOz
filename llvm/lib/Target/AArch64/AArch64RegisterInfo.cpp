@@ -85,8 +85,16 @@ AArch64RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
 
   if (MF->getFunction().getCallingConv() == CallingConv::CFGuard_Check)
     return CSR_Win_AArch64_CFGuard_Check_SaveList;
-  if (MF->getSubtarget<AArch64Subtarget>().isTargetWindows())
+  if (MF->getSubtarget<AArch64Subtarget>().isTargetWindows()) {
+    if (MF->getSubtarget<AArch64Subtarget>().getTargetLowering()
+            ->supportSwiftError() &&
+        MF->getFunction().getAttributes().hasAttrSomewhere(
+            Attribute::SwiftError))
+      return CSR_Win_AArch64_AAPCS_SwiftError_SaveList;
+    if (MF->getFunction().getCallingConv() == CallingConv::SwiftTail)
+      return CSR_Win_AArch64_AAPCS_SwiftTail_SaveList;
     return CSR_Win_AArch64_AAPCS_SaveList;
+  }
   if (MF->getFunction().getCallingConv() == CallingConv::AArch64_VectorCall)
     return CSR_AArch64_AAVPCS_SaveList;
   if (MF->getFunction().getCallingConv() == CallingConv::AArch64_SVE_VectorCall)
@@ -112,6 +120,8 @@ AArch64RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     return CSR_AArch64_AAPCS_SwiftTail_SaveList;
   if (MF->getFunction().getCallingConv() == CallingConv::PreserveMost)
     return CSR_AArch64_RT_MostRegs_SaveList;
+  if (MF->getFunction().getCallingConv() == CallingConv::PreserveAll)
+    return CSR_AArch64_RT_AllRegs_SaveList;
   if (MF->getFunction().getCallingConv() == CallingConv::Win64)
     // This is for OSes other than Windows; Windows is a separate case further
     // above.
@@ -160,6 +170,8 @@ AArch64RegisterInfo::getDarwinCalleeSavedRegs(const MachineFunction *MF) const {
     return CSR_Darwin_AArch64_AAPCS_SwiftTail_SaveList;
   if (MF->getFunction().getCallingConv() == CallingConv::PreserveMost)
     return CSR_Darwin_AArch64_RT_MostRegs_SaveList;
+  if (MF->getFunction().getCallingConv() == CallingConv::PreserveAll)
+    return CSR_Darwin_AArch64_RT_AllRegs_SaveList;
   if (MF->getFunction().getCallingConv() == CallingConv::Win64)
     return CSR_Darwin_AArch64_AAPCS_Win64_SaveList;
   return CSR_Darwin_AArch64_AAPCS_SaveList;
@@ -237,6 +249,8 @@ AArch64RegisterInfo::getDarwinCallPreservedMask(const MachineFunction &MF,
     return CSR_Darwin_AArch64_AAPCS_SwiftTail_RegMask;
   if (CC == CallingConv::PreserveMost)
     return CSR_Darwin_AArch64_RT_MostRegs_RegMask;
+  if (CC == CallingConv::PreserveAll)
+    return CSR_Darwin_AArch64_RT_AllRegs_RegMask;
   return CSR_Darwin_AArch64_AAPCS_RegMask;
 }
 
@@ -281,6 +295,10 @@ AArch64RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
   if (CC == CallingConv::PreserveMost)
     return SCS ? CSR_AArch64_RT_MostRegs_SCS_RegMask
                : CSR_AArch64_RT_MostRegs_RegMask;
+  else if (CC == CallingConv::PreserveAll)
+    return SCS ? CSR_AArch64_RT_AllRegs_SCS_RegMask
+               : CSR_AArch64_RT_AllRegs_RegMask;
+
   else
     return SCS ? CSR_AArch64_AAPCS_SCS_RegMask : CSR_AArch64_AAPCS_RegMask;
 }
@@ -547,12 +565,23 @@ bool AArch64RegisterInfo::isArgumentRegister(const MachineFunction &MF,
   case CallingConv::C:
   case CallingConv::Fast:
   case CallingConv::PreserveMost:
+  case CallingConv::PreserveAll:
   case CallingConv::CXX_FAST_TLS:
   case CallingConv::Swift:
   case CallingConv::SwiftTail:
   case CallingConv::Tail:
-    if (STI.isTargetWindows() && IsVarArg)
-      return HasReg(CC_AArch64_Win64_VarArg_ArgRegs, Reg);
+    if (STI.isTargetWindows()) {
+      if (IsVarArg)
+        return HasReg(CC_AArch64_Win64_VarArg_ArgRegs, Reg);
+      switch (CC) {
+      default:
+        return HasReg(CC_AArch64_Win64PCS_ArgRegs, Reg);
+      case CallingConv::Swift:
+      case CallingConv::SwiftTail:
+        return HasReg(CC_AArch64_Win64PCS_Swift_ArgRegs, Reg) ||
+               HasReg(CC_AArch64_Win64PCS_ArgRegs, Reg);
+      }
+    }
     if (!STI.isTargetDarwin()) {
       switch (CC) {
       default:
@@ -579,13 +608,15 @@ bool AArch64RegisterInfo::isArgumentRegister(const MachineFunction &MF,
   case CallingConv::Win64:
     if (IsVarArg)
       HasReg(CC_AArch64_Win64_VarArg_ArgRegs, Reg);
-    return HasReg(CC_AArch64_AAPCS_ArgRegs, Reg);
+    return HasReg(CC_AArch64_Win64PCS_ArgRegs, Reg);
   case CallingConv::CFGuard_Check:
     return HasReg(CC_AArch64_Win64_CFGuard_Check_ArgRegs, Reg);
   case CallingConv::AArch64_VectorCall:
   case CallingConv::AArch64_SVE_VectorCall:
   case CallingConv::AArch64_SME_ABI_Support_Routines_PreserveMost_From_X0:
   case CallingConv::AArch64_SME_ABI_Support_Routines_PreserveMost_From_X2:
+    if (STI.isTargetWindows())
+      return HasReg(CC_AArch64_Win64PCS_ArgRegs, Reg);
     return HasReg(CC_AArch64_AAPCS_ArgRegs, Reg);
   }
 }
@@ -950,6 +981,8 @@ unsigned AArch64RegisterInfo::getRegPressureLimit(const TargetRegisterClass *RC,
   case AArch64::FPR64_loRegClassID:
   case AArch64::FPR16_loRegClassID:
     return 16;
+  case AArch64::FPR128_0to7RegClassID:
+    return 8;
   }
 }
 

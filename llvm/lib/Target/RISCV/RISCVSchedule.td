@@ -20,7 +20,6 @@ def WriteIMul32     : SchedWrite;    // 32-bit multiply on RV64I
 def WriteJmp        : SchedWrite;    // Jump
 def WriteJal        : SchedWrite;    // Jump and link
 def WriteJalr       : SchedWrite;    // Jump and link register
-def WriteJmpReg     : SchedWrite;    // Jump register
 def WriteNop        : SchedWrite;
 def WriteLDB        : SchedWrite;    // Load byte
 def WriteLDH        : SchedWrite;    // Load half-word
@@ -115,7 +114,8 @@ def WriteFST64        : SchedWrite;    // Floating point dp store
 
 // short forward branch for Bullet
 def WriteSFB        : SchedWrite;
-def ReadSFB         : SchedRead;
+def ReadSFBJmp      : SchedRead;
+def ReadSFBALU      : SchedRead;
 
 /// Define scheduler resources associated with use operands.
 def ReadJmp         : SchedRead;
@@ -150,8 +150,11 @@ def ReadFMul16      : SchedRead;    // 16-bit floating point multiply
 def ReadFMul32      : SchedRead;    // 32-bit floating point multiply
 def ReadFMul64      : SchedRead;    // 64-bit floating point multiply
 def ReadFMA16       : SchedRead;    // 16-bit floating point fused multiply-add
+def ReadFMA16Addend : SchedRead;    // 16-bit floating point fused multiply-add (addend)
 def ReadFMA32       : SchedRead;    // 32-bit floating point fused multiply-add
+def ReadFMA32Addend : SchedRead;    // 32-bit floating point fused multiply-add (addend)
 def ReadFMA64       : SchedRead;    // 64-bit floating point fused multiply-add
+def ReadFMA64Addend : SchedRead;    // 64-bit floating point fused multiply-add (addend)
 def ReadFDiv16      : SchedRead;    // 16-bit floating point divide
 def ReadFDiv32      : SchedRead;    // 32-bit floating point divide
 def ReadFDiv64      : SchedRead;    // 64-bit floating point divide
@@ -248,7 +251,8 @@ multiclass UnsupportedSchedSFB {
 let Unsupported = true in {
 def : WriteRes<WriteSFB, []>;
 
-def : ReadAdvance<ReadSFB, 0>;
+def : ReadAdvance<ReadSFBJmp, 0>;
+def : ReadAdvance<ReadSFBALU, 0>;
 } // Unsupported = true
 }
 

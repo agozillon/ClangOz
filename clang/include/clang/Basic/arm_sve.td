@@ -13,253 +13,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-//===----------------------------------------------------------------------===//
-// Instruction definitions
-//===----------------------------------------------------------------------===//
-// Every intrinsic subclasses "Inst". An intrinsic has a name, a prototype and
-// a sequence of typespecs.
-//
-// The name is the base name of the intrinsic, for example "svld1". This is
-// then mangled by the tblgen backend to add type information ("svld1_s16").
-//
-// A typespec is a sequence of uppercase characters (modifiers) followed by one
-// lowercase character. A typespec encodes a particular "base type" of the
-// intrinsic.
-//
-// An example typespec is "Us" - unsigned short - svuint16_t. The available
-// typespec codes are given below.
-//
-// The string given to an Inst class is a sequence of typespecs. The intrinsic
-// is instantiated for every typespec in the sequence. For example "sdUsUd".
-//
-// The prototype is a string that defines the return type of the intrinsic
-// and the type of each argument. The return type and every argument gets a
-// "modifier" that can change in some way the "base type" of the intrinsic.
-//
-// The modifier 'd' means "default" and does not modify the base type in any
-// way. The available modifiers are given below.
-//
-// Typespecs
-// ---------
-// c: char
-// s: short
-// i: int
-// l: long
-// f: float
-// h: half-float
-// d: double
-// b: bfloat
-
-// Typespec modifiers
-// ------------------
-// P: boolean
-// U: unsigned
-
-// Prototype modifiers
-// -------------------
-// prototype: return (arg, arg, ...)
-//
-// 2,3,4: array of default vectors
-// v: void
-// x: vector of signed integers
-// u: vector of unsigned integers
-// d: default
-// c: const pointer type
-// P: predicate type
-// s: scalar of element type
-// a: scalar of element type (splat to vector type)
-// R: scalar of 1/2 width element type (splat to vector type)
-// r: scalar of 1/4 width element type (splat to vector type)
-// @: unsigned scalar of 1/4 width element type (splat to vector type)
-// e: 1/2 width unsigned elements, 2x element count
-// b: 1/4 width unsigned elements, 4x element count
-// h: 1/2 width elements, 2x element count
-// q: 1/4 width elements, 4x element count
-// o: 4x width elements, 1/4 element count
-//
-// w: vector of element type promoted to 64bits, vector maintains
-//    signedness of its element type.
-// f: element type promoted to uint64_t (splat to vector type)
-// j: element type promoted to 64bits (splat to vector type)
-// K: element type bitcast to a signed integer (splat to vector type)
-// L: element type bitcast to an unsigned integer (splat to vector type)
-//
-// i: constant uint64_t
-// k: int32_t
-// l: int64_t
-// m: uint32_t
-// n: uint64_t
-
-// t: svint32_t
-// z: svuint32_t
-// g: svuint64_t
-// O: svfloat16_t
-// M: svfloat32_t
-// N: svfloat64_t
-
-// J: Prefetch type (sv_prfop)
-// A: pointer to int8_t
-// B: pointer to int16_t
-// C: pointer to int32_t
-// D: pointer to int64_t
-
-// E: pointer to uint8_t
-// F: pointer to uint16_t
-// G: pointer to uint32_t
-// H: pointer to uint64_t
-
-// Q: const pointer to void
-
-// S: const pointer to int8_t
-// T: const pointer to int16_t
-// U: const pointer to int32_t
-// V: const pointer to int64_t
-//
-// W: const pointer to uint8_t
-// X: const pointer to uint16_t
-// Y: const pointer to uint32_t
-// Z: const pointer to uint64_t
-
-class MergeType<int val, string suffix=""> {
-  int Value = val;
-  string Suffix = suffix;
-}
-def MergeNone    : MergeType<0>;
-def MergeAny     : MergeType<1, "_x">;
-def MergeOp1     : MergeType<2, "_m">;
-def MergeZero    : MergeType<3, "_z">;
-def MergeAnyExp  : MergeType<4, "_x">; // Use merged builtin with explicit
-def MergeZeroExp : MergeType<5, "_z">; // generation of its inactive argument.
-
-class EltType<int val> {
-  int Value = val;
-}
-def EltTyInvalid : EltType<0>;
-def EltTyInt8    : EltType<1>;
-def EltTyInt16   : EltType<2>;
-def EltTyInt32   : EltType<3>;
-def EltTyInt64   : EltType<4>;
-def EltTyFloat16 : EltType<5>;
-def EltTyFloat32 : EltType<6>;
-def EltTyFloat64 : EltType<7>;
-def EltTyBool8   : EltType<8>;
-def EltTyBool16  : EltType<9>;
-def EltTyBool32  : EltType<10>;
-def EltTyBool64  : EltType<11>;
-def EltTyBFloat16 : EltType<12>;
-
-class MemEltType<int val> {
-  int Value = val;
-}
-def MemEltTyDefault   : MemEltType<0>;
-def MemEltTyInt8      : MemEltType<1>;
-def MemEltTyInt16     : MemEltType<2>;
-def MemEltTyInt32     : MemEltType<3>;
-def MemEltTyInt64     : MemEltType<4>;
-
-class FlagType<int val> {
-  int Value = val;
-}
-
-// These must be kept in sync with the flags in utils/TableGen/SveEmitter.h
-// and include/clang/Basic/TargetBuiltins.h
-def NoFlags                   : FlagType<0x00000000>;
-def FirstEltType              : FlagType<0x00000001>;
-//      :                                     :
-//      :                                     :
-def EltTypeMask               : FlagType<0x0000000f>;
-def FirstMemEltType           : FlagType<0x00000010>;
-//      :                                     :
-//      :                                     :
-def MemEltTypeMask            : FlagType<0x00000070>;
-def FirstMergeTypeMask        : FlagType<0x00000080>;
-//      :                                     :
-//      :                                     :
-def MergeTypeMask             : FlagType<0x00000380>;
-def FirstSplatOperand         : FlagType<0x00000400>;
-//      :                                     :
-// These flags are used to specify which scalar operand
-// needs to be duplicated/splatted into a vector.
-//      :                                     :
-def SplatOperandMask          : FlagType<0x00001C00>;
-def IsLoad                    : FlagType<0x00002000>;
-def IsStore                   : FlagType<0x00004000>;
-def IsGatherLoad              : FlagType<0x00008000>;
-def IsScatterStore            : FlagType<0x00010000>;
-def IsStructLoad              : FlagType<0x00020000>;
-def IsStructStore             : FlagType<0x00040000>;
-def IsZExtReturn              : FlagType<0x00080000>; // Return value is sign-extend by default
-def IsOverloadNone            : FlagType<0x00100000>; // Intrinsic does not take any overloaded types.
-def IsOverloadWhile           : FlagType<0x00200000>; // Use {default type, typeof(operand1)} as overloaded types.
-def IsOverloadWhileRW         : FlagType<0x00400000>; // Use {pred(default type), typeof(operand0)} as overloaded types.
-def IsOverloadCvt             : FlagType<0x00800000>; // Use {typeof(operand0), typeof(last operand)} as overloaded types.
-def OverloadKindMask          : FlagType<0x00E00000>; // When the masked values are all '0', the default type is used as overload type.
-def IsByteIndexed             : FlagType<0x01000000>;
-def IsAppendSVALL             : FlagType<0x02000000>; // Appends SV_ALL as the last operand.
-def IsInsertOp1SVALL          : FlagType<0x04000000>; // Inserts SV_ALL as the second operand.
-def IsPrefetch                : FlagType<0x08000000>; // Contiguous prefetches.
-def IsGatherPrefetch          : FlagType<0x10000000>;
-def ReverseCompare            : FlagType<0x20000000>; // Compare operands must be swapped.
-def ReverseUSDOT              : FlagType<0x40000000>; // Unsigned/signed operands must be swapped.
-def IsUndef                   : FlagType<0x80000000>; // Codegen `undef` of given type.
-def IsTupleCreate             : FlagType<0x100000000>;
-def IsTupleGet                : FlagType<0x200000000>;
-def IsTupleSet                : FlagType<0x400000000>;
-def ReverseMergeAnyBinOp      : FlagType<0x800000000>; // e.g. Implement SUBR_X using SUB_X.
-def ReverseMergeAnyAccOp      : FlagType<0x1000000000>; // e.g. Implement MSB_X using MLS_X.
-
-// These must be kept in sync with the flags in include/clang/Basic/TargetBuiltins.h
-class ImmCheckType<int val> {
-  int Value = val;
-}
-def ImmCheck0_31                : ImmCheckType<0>;  // 0..31 (used for e.g. predicate patterns)
-def ImmCheck1_16                : ImmCheckType<1>;  // 1..16
-def ImmCheckExtract             : ImmCheckType<2>;  // 0..(2048/sizeinbits(elt) - 1)
-def ImmCheckShiftRight          : ImmCheckType<3>;  // 1..sizeinbits(elt)
-def ImmCheckShiftRightNarrow    : ImmCheckType<4>;  // 1..sizeinbits(elt)/2
-def ImmCheckShiftLeft           : ImmCheckType<5>;  // 0..(sizeinbits(elt) - 1)
-def ImmCheck0_7                 : ImmCheckType<6>;  // 0..7
-def ImmCheckLaneIndex           : ImmCheckType<7>;  // 0..(128/(1*sizeinbits(elt)) - 1)
-def ImmCheckLaneIndexCompRotate : ImmCheckType<8>;  // 0..(128/(2*sizeinbits(elt)) - 1)
-def ImmCheckLaneIndexDot        : ImmCheckType<9>;  // 0..(128/(4*sizeinbits(elt)) - 1)
-def ImmCheckComplexRot90_270    : ImmCheckType<10>; // [90,270]
-def ImmCheckComplexRotAll90     : ImmCheckType<11>; // [0, 90, 180,270]
-def ImmCheck0_13                : ImmCheckType<12>; // 0..13
-def ImmCheck0_1                 : ImmCheckType<13>; // 0..1
-def ImmCheck0_2                 : ImmCheckType<14>; // 0..2
-def ImmCheck0_3                 : ImmCheckType<15>; // 0..3
-
-class ImmCheck<int arg, ImmCheckType kind, int eltSizeArg = -1> {
-  int Arg = arg;
-  int EltSizeArg = eltSizeArg;
-  ImmCheckType Kind = kind;
-}
-
-class Inst<string n, string p, string t, MergeType mt, string i,
-           list<FlagType> ft, list<ImmCheck> ch, MemEltType met> {
-  string Name = n;
-  string Prototype = p;
-  string Types = t;
-  string TargetGuard = "sve";
-  int Merge = mt.Value;
-  string MergeSuffix = mt.Suffix;
-  string LLVMIntrinsic = i;
-  list<FlagType> Flags = ft;
-  list<ImmCheck> ImmChecks = ch;
-  int MemEltType = met.Value;
-}
-
-// SInst: Instruction with signed/unsigned suffix (e.g., "s8", "u8")
-class SInst<string n, string p, string t, MergeType mt, string i = "",
-            list<FlagType> ft = [], list<ImmCheck> ch = []>
-    : Inst<n, p, t, mt, i, ft, ch, MemEltTyDefault> {
-}
-
-// MInst: Instructions which access memory
-class MInst<string n, string p, string t, list<FlagType> f,
-            MemEltType met = MemEltTyDefault, string i = "">
-    : Inst<n, p, t, MergeNone, i, f, [], met> {
-}
+include "arm_sve_sme_incl.td"
 
 ////////////////////////////////////////////////////////////////////////////////
 // Loads
@@ -799,10 +553,10 @@ multiclass SInstZPZZZ<string name, string types, string m_intrinsic, string x_in
   def _N_Z : SInst<name # "[_n_{d}]", "dPdda", types, MergeZero, m_intrinsic, flags>;
 }
 
-defm SVMAD : SInstZPZZZ<"svmad", "csilUcUsUiUl", "aarch64_sve_mad", "aarch64_sve_mad">;
-defm SVMLA : SInstZPZZZ<"svmla", "csilUcUsUiUl", "aarch64_sve_mla", "aarch64_sve_mla">;
-defm SVMLS : SInstZPZZZ<"svmls", "csilUcUsUiUl", "aarch64_sve_mls", "aarch64_sve_mls">;
-defm SVMSB : SInstZPZZZ<"svmsb", "csilUcUsUiUl", "aarch64_sve_msb", "aarch64_sve_msb">;
+defm SVMAD : SInstZPZZZ<"svmad", "csilUcUsUiUl", "aarch64_sve_mad", "aarch64_sve_mla_u", [ReverseMergeAnyAccOp]>;
+defm SVMLA : SInstZPZZZ<"svmla", "csilUcUsUiUl", "aarch64_sve_mla", "aarch64_sve_mla_u">;
+defm SVMLS : SInstZPZZZ<"svmls", "csilUcUsUiUl", "aarch64_sve_mls", "aarch64_sve_mls_u">;
+defm SVMSB : SInstZPZZZ<"svmsb", "csilUcUsUiUl", "aarch64_sve_msb", "aarch64_sve_mls_u", [ReverseMergeAnyAccOp]>;
 
 //------------------------------------------------------------------------------
 
@@ -2103,4 +1857,138 @@ def SVBEXT   : SInst<"svbext[_{d}]",   "ddd", "UcUsUiUl", MergeNone, "aarch64_sv
 def SVBEXT_N : SInst<"svbext[_n_{d}]", "dda", "UcUsUiUl", MergeNone, "aarch64_sve_bext_x">;
 def SVBGRP   : SInst<"svbgrp[_{d}]",   "ddd", "UcUsUiUl", MergeNone, "aarch64_sve_bgrp_x">;
 def SVBGRP_N : SInst<"svbgrp[_n_{d}]", "dda", "UcUsUiUl", MergeNone, "aarch64_sve_bgrp_x">;
+}
+
+let TargetGuard = "sve2p1" in {
+def SVFCLAMP   : SInst<"svclamp[_{d}]", "dddd", "hfd", MergeNone, "aarch64_sve_fclamp", [], []>;
+def SVPTRUE_COUNT  : SInst<"svptrue_{d}", "}v", "QcQsQiQl", MergeNone, "aarch64_sve_ptrue_{d}", [IsOverloadNone], []>;
+def SVPFALSE_COUNT_ALIAS : SInst<"svpfalse_c", "}v", "", MergeNone, "", [IsOverloadNone]>;
+
+def SVPEXT_SINGLE : SInst<"svpext_lane_{d}", "P}i", "QcQsQiQl", MergeNone, "aarch64_sve_pext", [], [ImmCheck<1, ImmCheck0_3>]>;
+def SVPEXT_X2     : SInst<"svpext_lane_{d}_x2", "2.P}i", "QcQsQiQl", MergeNone, "aarch64_sve_pext_x2", [], [ImmCheck<1, ImmCheck0_1>]>;
+
+def SVPSEL_COUNT_ALIAS_B : SInst<"svpsel_lane_c8",  "}}Pm", "Pc", MergeNone, "", [], []>;
+def SVPSEL_COUNT_ALIAS_H : SInst<"svpsel_lane_c16", "}}Pm", "Ps", MergeNone, "", [], []>;
+def SVPSEL_COUNT_ALIAS_S : SInst<"svpsel_lane_c32", "}}Pm", "Pi", MergeNone, "", [], []>;
+def SVPSEL_COUNT_ALIAS_D : SInst<"svpsel_lane_c64", "}}Pm", "Pl", MergeNone, "", [], []>;
+
+def SVWHILEGE_COUNT  : SInst<"svwhilege_{d}",  "}lli", "QcQsQiQl", MergeNone, "aarch64_sve_whilege_{d}", [IsOverloadNone], [ImmCheck<2, ImmCheck2_4_Mul2>]>;
+def SVWHILEGT_COUNT  : SInst<"svwhilegt_{d}",  "}lli", "QcQsQiQl", MergeNone, "aarch64_sve_whilegt_{d}", [IsOverloadNone], [ImmCheck<2, ImmCheck2_4_Mul2>]>;
+def SVWHILELE_COUNT  : SInst<"svwhilele_{d}",  "}lli", "QcQsQiQl", MergeNone, "aarch64_sve_whilele_{d}", [IsOverloadNone], [ImmCheck<2, ImmCheck2_4_Mul2>]>;
+def SVWHILELT_COUNT  : SInst<"svwhilelt_{d}",  "}lli", "QcQsQiQl", MergeNone, "aarch64_sve_whilelt_{d}", [IsOverloadNone], [ImmCheck<2, ImmCheck2_4_Mul2>]>;
+def SVWHILELO_COUNT  : SInst<"svwhilelo_{d}",  "}nni", "QcQsQiQl", MergeNone, "aarch64_sve_whilelo_{d}", [IsOverloadNone], [ImmCheck<2, ImmCheck2_4_Mul2>]>;
+def SVWHILELS_COUNT  : SInst<"svwhilels_{d}",  "}nni", "QcQsQiQl", MergeNone, "aarch64_sve_whilels_{d}", [IsOverloadNone], [ImmCheck<2, ImmCheck2_4_Mul2>]>;
+def SVWHILEHI_COUNT  : SInst<"svwhilehi_{d}",  "}nni", "QcQsQiQl", MergeNone, "aarch64_sve_whilehi_{d}", [IsOverloadNone], [ImmCheck<2, ImmCheck2_4_Mul2>]>;
+def SVWHILEHS_COUNT  : SInst<"svwhilehs_{d}",  "}nni", "QcQsQiQl", MergeNone, "aarch64_sve_whilehs_{d}", [IsOverloadNone], [ImmCheck<2, ImmCheck2_4_Mul2>]>;
+
+def SVLD1B_X2 : MInst<"svld1[_{2}]_x2", "2}c", "cUc", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x2">;
+def SVLD1H_X2 : MInst<"svld1[_{2}]_x2", "2}c", "sUshb", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x2">;
+def SVLD1W_X2 : MInst<"svld1[_{2}]_x2", "2}c", "iUif", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x2">;
+def SVLD1D_X2 : MInst<"svld1[_{2}]_x2", "2}c", "lUld", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x2">;
+def SVLD1B_X4 : MInst<"svld1[_{2}]_x4", "4}c", "cUc", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x4">;
+def SVLD1H_X4 : MInst<"svld1[_{2}]_x4", "4}c", "sUshb", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x4">;
+def SVLD1W_X4 : MInst<"svld1[_{2}]_x4", "4}c", "iUif", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x4">;
+def SVLD1D_X4 : MInst<"svld1[_{2}]_x4", "4}c", "lUld", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x4">;
+
+def SVLDNT1B_X2 : MInst<"svldnt1[_{2}]_x2", "2}c", "cUc", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x2">;
+def SVLDNT1H_X2 : MInst<"svldnt1[_{2}]_x2", "2}c", "sUshb", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x2">;
+def SVLDNT1W_X2 : MInst<"svldnt1[_{2}]_x2", "2}c", "iUif", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x2">;
+def SVLDNT1D_X2 : MInst<"svldnt1[_{2}]_x2", "2}c", "lUld", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x2">;
+def SVLDNT1B_X4 : MInst<"svldnt1[_{2}]_x4", "4}c", "cUc", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x4">;
+def SVLDNT1H_X4 : MInst<"svldnt1[_{2}]_x4", "4}c", "sUshb", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x4">;
+def SVLDNT1W_X4 : MInst<"svldnt1[_{2}]_x4", "4}c", "iUif", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x4">;
+def SVLDNT1D_X4 : MInst<"svldnt1[_{2}]_x4", "4}c", "lUld", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x4">;
+
+def SVLD1B_VNUM_X2 : MInst<"svld1_vnum[_{2}]_x2", "2}cl", "cUc", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x2">;
+def SVLD1H_VNUM_X2 : MInst<"svld1_vnum[_{2}]_x2", "2}cl", "sUshb", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x2">;
+def SVLD1W_VNUM_X2 : MInst<"svld1_vnum[_{2}]_x2", "2}cl", "iUif", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x2">;
+def SVLD1D_VNUM_X2 : MInst<"svld1_vnum[_{2}]_x2", "2}cl", "lUld", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x2">;
+def SVLD1B_VNUM_X4 : MInst<"svld1_vnum[_{2}]_x4", "4}cl", "cUc", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x4">;
+def SVLD1H_VNUM_X4 : MInst<"svld1_vnum[_{2}]_x4", "4}cl", "sUshb", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x4">;
+def SVLD1W_VNUM_X4 : MInst<"svld1_vnum[_{2}]_x4", "4}cl", "iUif", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x4">;
+def SVLD1D_VNUM_X4 : MInst<"svld1_vnum[_{2}]_x4", "4}cl", "lUld", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ld1_pn_x4">;
+
+def SVLDNT1B_VNUM_X2 : MInst<"svldnt1_vnum[_{2}]_x2", "2}cl", "cUc", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x2">;
+def SVLDNT1H_VNUM_X2 : MInst<"svldnt1_vnum[_{2}]_x2", "2}cl", "sUshb", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x2">;
+def SVLDNT1W_VNUM_X2 : MInst<"svldnt1_vnum[_{2}]_x2", "2}cl", "iUif", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x2">;
+def SVLDNT1D_VNUM_X2 : MInst<"svldnt1_vnum[_{2}]_x2", "2}cl", "lUld", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x2">;
+def SVLDNT1B_VNUM_X4 : MInst<"svldnt1_vnum[_{2}]_x4", "4}cl", "cUc", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x4">;
+def SVLDNT1H_VNUM_X4 : MInst<"svldnt1_vnum[_{2}]_x4", "4}cl", "sUshb", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x4">;
+def SVLDNT1W_VNUM_X4 : MInst<"svldnt1_vnum[_{2}]_x4", "4}cl", "iUif", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x4">;
+def SVLDNT1D_VNUM_X4 : MInst<"svldnt1_vnum[_{2}]_x4", "4}cl", "lUld", [IsStructLoad], MemEltTyDefault, "aarch64_sve_ldnt1_pn_x4">;
+
+def SVST1B_X2 : MInst<"svst1[_{2}_x2]", "v}p2", "cUc", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x2">;
+def SVST1H_X2 : MInst<"svst1[_{2}_x2]", "v}p2", "sUshb", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x2">;
+def SVST1W_X2 : MInst<"svst1[_{2}_x2]", "v}p2", "iUif", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x2">;
+def SVST1D_X2 : MInst<"svst1[_{2}_x2]", "v}p2", "lUld", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x2">;
+def SVST1B_X4 : MInst<"svst1[_{2}_x4]", "v}p4", "cUc", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x4">;
+def SVST1H_X4 : MInst<"svst1[_{2}_x4]", "v}p4", "sUshb", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x4">;
+def SVST1W_X4 : MInst<"svst1[_{2}_x4]", "v}p4", "iUif", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x4">;
+def SVST1D_X4 : MInst<"svst1[_{2}_x4]", "v}p4", "lUld", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x4">;
+
+def SVST1B_VNUM_X2 : MInst<"svst1_vnum[_{2}_x2]", "v}pl2", "cUc", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x2">;
+def SVST1H_VNUM_X2 : MInst<"svst1_vnum[_{2}_x2]", "v}pl2", "sUshb", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x2">;
+def SVST1W_VNUM_X2 : MInst<"svst1_vnum[_{2}_x2]", "v}pl2", "iUif", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x2">;
+def SVST1D_VNUM_X2 : MInst<"svst1_vnum[_{2}_x2]", "v}pl2", "lUld", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x2">;
+def SVST1B_VNUM_X4 : MInst<"svst1_vnum[_{2}_x4]", "v}pl4", "cUc", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x4">;
+def SVST1H_VNUM_X4 : MInst<"svst1_vnum[_{2}_x4]", "v}pl4", "sUshb", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x4">;
+def SVST1W_VNUM_X4 : MInst<"svst1_vnum[_{2}_x4]", "v}pl4", "iUif", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x4">;
+def SVST1D_VNUM_X4 : MInst<"svst1_vnum[_{2}_x4]", "v}pl4", "lUld", [IsStructStore], MemEltTyDefault, "aarch64_sve_st1_pn_x4">;
+
+def SVSTNT1B_X2 : MInst<"svstnt1[_{2}_x2]", "v}p2", "cUc", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x2">;
+def SVSTNT1H_X2 : MInst<"svstnt1[_{2}_x2]", "v}p2", "sUshb", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x2">;
+def SVSTNT1W_X2 : MInst<"svstnt1[_{2}_x2]", "v}p2", "iUif", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x2">;
+def SVSTNT1D_X2 : MInst<"svstnt1[_{2}_x2]", "v}p2", "lUld", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x2">;
+def SVSTNT1B_X4 : MInst<"svstnt1[_{2}_x4]", "v}p4", "cUc", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x4">;
+def SVSTNT1H_X4 : MInst<"svstnt1[_{2}_x4]", "v}p4", "sUshb", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x4">;
+def SVSTNT1W_X4 : MInst<"svstnt1[_{2}_x4]", "v}p4", "iUif", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x4">;
+def SVSTNT1D_X4 : MInst<"svstnt1[_{2}_x4]", "v}p4", "lUld", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x4">;
+
+def SVSTNT1B_VNUM_X2 : MInst<"svstnt1_vnum[_{2}_x2]", "v}pl2", "cUc", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x2">;
+def SVSTNT1H_VNUM_X2 : MInst<"svstnt1_vnum[_{2}_x2]", "v}pl2", "sUshb", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x2">;
+def SVSTNT1W_VNUM_X2 : MInst<"svstnt1_vnum[_{2}_x2]", "v}pl2", "iUif", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x2">;
+def SVSTNT1D_VNUM_X2 : MInst<"svstnt1_vnum[_{2}_x2]", "v}pl2", "lUld", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x2">;
+def SVSTNT1B_VNUM_X4 : MInst<"svstnt1_vnum[_{2}_x4]", "v}pl4", "cUc", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x4">;
+def SVSTNT1H_VNUM_X4 : MInst<"svstnt1_vnum[_{2}_x4]", "v}pl4", "sUshb", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x4">;
+def SVSTNT1W_VNUM_X4 : MInst<"svstnt1_vnum[_{2}_x4]", "v}pl4", "iUif", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x4">;
+def SVSTNT1D_VNUM_X4 : MInst<"svstnt1_vnum[_{2}_x4]", "v}pl4", "lUld", [IsStructStore], MemEltTyDefault, "aarch64_sve_stnt1_pn_x4">;
+
+def SVDOT_X2_S : SInst<"svdot[_{d}_{2}_{3}]", "ddhh", "i",  MergeNone, "aarch64_sve_sdot_x2", [], []>;
+def SVDOT_X2_U : SInst<"svdot[_{d}_{2}_{3}]", "ddhh", "Ui", MergeNone, "aarch64_sve_udot_x2", [], []>;
+def SVDOT_X2_F : SInst<"svdot[_{d}_{2}_{3}]", "ddhh", "f",  MergeNone, "aarch64_sve_fdot_x2", [], []>;
+def SVDOT_LANE_X2_S : SInst<"svdot_lane[_{d}_{2}_{3}]", "ddhhi", "i",  MergeNone, "aarch64_sve_sdot_lane_x2", [], [ImmCheck<3, ImmCheck0_3>]>;
+def SVDOT_LANE_X2_U : SInst<"svdot_lane[_{d}_{2}_{3}]", "ddhhi", "Ui", MergeNone, "aarch64_sve_udot_lane_x2", [], [ImmCheck<3, ImmCheck0_3>]>;
+def SVDOT_LANE_X2_F : SInst<"svdot_lane[_{d}_{2}_{3}]", "ddhhi", "f",  MergeNone, "aarch64_sve_fdot_lane_x2", [], [ImmCheck<3, ImmCheck0_3>]>;
+
+def SVBFMLSLB : SInst<"svbfmlslb[_{d}]", "dd$$", "f", MergeNone, "aarch64_sve_bfmlslb", [IsOverloadNone], []>;
+def SVBFMLSLT : SInst<"svbfmlslt[_{d}]", "dd$$", "f", MergeNone, "aarch64_sve_bfmlslt", [IsOverloadNone], []>;
+
+def SVBFMLSLB_LANE : SInst<"svbfmlslb_lane[_{d}]", "dd$$i", "f", MergeNone, "aarch64_sve_bfmlslb_lane", [IsOverloadNone], [ImmCheck<3, ImmCheck0_7>]>;
+def SVBFMLSLT_LANE : SInst<"svbfmlslt_lane[_{d}]", "dd$$i", "f", MergeNone, "aarch64_sve_bfmlslt_lane", [IsOverloadNone], [ImmCheck<3, ImmCheck0_7>]>;
+}
+
+let TargetGuard = "sve2p1" in {
+def SVSCLAMP : SInst<"svclamp[_{d}]", "dddd", "csil",     MergeNone, "aarch64_sve_sclamp", [], []>;
+def SVUCLAMP : SInst<"svclamp[_{d}]", "dddd", "UcUsUiUl", MergeNone, "aarch64_sve_uclamp", [], []>;
+
+def SVPSEL_B : SInst<"svpsel_lane_b8",  "PPPm", "Pc", MergeNone, "", [], []>;
+def SVPSEL_H : SInst<"svpsel_lane_b16", "PPPm", "Ps", MergeNone, "", [], []>;
+def SVPSEL_S : SInst<"svpsel_lane_b32", "PPPm", "Pi", MergeNone, "", [], []>;
+def SVPSEL_D : SInst<"svpsel_lane_b64", "PPPm", "Pl", MergeNone, "", [], []>;
+
+def SVCNTP_COUNT : SInst<"svcntp_{d}", "n}i", "QcQsQiQl", MergeNone, "aarch64_sve_cntp_{d}", [IsOverloadNone], [ImmCheck<1, ImmCheck2_4_Mul2>]>;
+
+defm SVREVD : SInstZPZ<"svrevd", "csilUcUsUiUl", "aarch64_sve_revd">;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// SME2
+
+// SME intrinsics which operate only on vectors and do not require ZA should be added here,
+// as they could possibly become SVE instructions in the future.
+
+let TargetGuard = "sme2" in {
+// == ADD (vectors) ==
+  def SVADD_SINGLE_X2 : SInst<"svadd[_single_{d}_x2]", "22d", "cUcsUsiUilUl", MergeNone, "aarch64_sve_add_single_x2", [IsStreaming], []>;
+  def SVADD_SINGLE_X4 : SInst<"svadd[_single_{d}_x4]", "44d", "cUcsUsiUilUl", MergeNone, "aarch64_sve_add_single_x4", [IsStreaming], []>;
 }

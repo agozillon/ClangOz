@@ -12,6 +12,7 @@
 
 #include "llvm/IR/Instruction.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/IR/AttributeMask.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -79,7 +80,7 @@ void Instruction::removeFromParent() {
   getParent()->getInstList().remove(getIterator());
 }
 
-iplist<Instruction>::iterator Instruction::eraseFromParent() {
+BasicBlock::iterator Instruction::eraseFromParent() {
   return getParent()->getInstList().erase(getIterator());
 }
 
@@ -113,8 +114,7 @@ void Instruction::moveAfter(Instruction *MovePos) {
   moveBefore(*MovePos->getParent(), ++MovePos->getIterator());
 }
 
-void Instruction::moveBefore(BasicBlock &BB,
-                             SymbolTableList<Instruction>::iterator I) {
+void Instruction::moveBefore(BasicBlock &BB, InstListType::iterator I) {
   assert(I == BB.end() || I->getParent() == &BB);
   BB.splice(I, getParent(), getIterator());
 }
@@ -171,12 +171,23 @@ void Instruction::setIsExact(bool b) {
   cast<PossiblyExactOperator>(this)->setIsExact(b);
 }
 
+void Instruction::setNonNeg(bool b) {
+  assert(isa<PossiblyNonNegInst>(this) && "Must be zext");
+  SubclassOptionalData = (SubclassOptionalData & ~PossiblyNonNegInst::NonNeg) |
+                         (b * PossiblyNonNegInst::NonNeg);
+}
+
 bool Instruction::hasNoUnsignedWrap() const {
   return cast<OverflowingBinaryOperator>(this)->hasNoUnsignedWrap();
 }
 
 bool Instruction::hasNoSignedWrap() const {
   return cast<OverflowingBinaryOperator>(this)->hasNoSignedWrap();
+}
+
+bool Instruction::hasNonNeg() const {
+  assert(isa<PossiblyNonNegInst>(this) && "Must be zext");
+  return (SubclassOptionalData & PossiblyNonNegInst::NonNeg) != 0;
 }
 
 bool Instruction::hasPoisonGeneratingFlags() const {
@@ -203,7 +214,12 @@ void Instruction::dropPoisonGeneratingFlags() {
   case Instruction::GetElementPtr:
     cast<GetElementPtrInst>(this)->setIsInBounds(false);
     break;
+
+  case Instruction::ZExt:
+    setNonNeg(false);
+    break;
   }
+
   if (isa<FPMathOperator>(this)) {
     setHasNoNaNs(false);
     setHasNoInfs(false);
@@ -378,6 +394,10 @@ void Instruction::copyIRFlags(const Value *V, bool IncludeWrapFlags) {
   if (auto *SrcGEP = dyn_cast<GetElementPtrInst>(V))
     if (auto *DestGEP = dyn_cast<GetElementPtrInst>(this))
       DestGEP->setIsInBounds(SrcGEP->isInBounds() || DestGEP->isInBounds());
+
+  if (auto *NNI = dyn_cast<PossiblyNonNegInst>(V))
+    if (isa<PossiblyNonNegInst>(this))
+      setNonNeg(NNI->hasNonNeg());
 }
 
 void Instruction::andIRFlags(const Value *V) {
@@ -403,6 +423,10 @@ void Instruction::andIRFlags(const Value *V) {
   if (auto *SrcGEP = dyn_cast<GetElementPtrInst>(V))
     if (auto *DestGEP = dyn_cast<GetElementPtrInst>(this))
       DestGEP->setIsInBounds(SrcGEP->isInBounds() && DestGEP->isInBounds());
+
+  if (auto *NNI = dyn_cast<PossiblyNonNegInst>(V))
+    if (isa<PossiblyNonNegInst>(this))
+      setNonNeg(hasNonNeg() && NNI->hasNonNeg());
 }
 
 const char *Instruction::getOpcodeName(unsigned OpCode) {
@@ -743,6 +767,42 @@ bool Instruction::isVolatile() const {
   }
 }
 
+Type *Instruction::getAccessType() const {
+  switch (getOpcode()) {
+  case Instruction::Store:
+    return cast<StoreInst>(this)->getValueOperand()->getType();
+  case Instruction::Load:
+  case Instruction::AtomicRMW:
+    return getType();
+  case Instruction::AtomicCmpXchg:
+    return cast<AtomicCmpXchgInst>(this)->getNewValOperand()->getType();
+  case Instruction::Call:
+  case Instruction::Invoke:
+    if (const IntrinsicInst *II = dyn_cast<IntrinsicInst>(this)) {
+      switch (II->getIntrinsicID()) {
+      case Intrinsic::masked_load:
+      case Intrinsic::masked_gather:
+      case Intrinsic::masked_expandload:
+      case Intrinsic::vp_load:
+      case Intrinsic::vp_gather:
+      case Intrinsic::experimental_vp_strided_load:
+        return II->getType();
+      case Intrinsic::masked_store:
+      case Intrinsic::masked_scatter:
+      case Intrinsic::masked_compressstore:
+      case Intrinsic::vp_store:
+      case Intrinsic::vp_scatter:
+      case Intrinsic::experimental_vp_strided_store:
+        return II->getOperand(0)->getType();
+      default:
+        break;
+      }
+    }
+  }
+
+  return nullptr;
+}
+
 static bool canUnwindPastLandingPad(const LandingPadInst *LP,
                                     bool IncludePhaseOneUnwind) {
   // Because phase one unwinding skips cleanup landingpads, we effectively
@@ -846,6 +906,13 @@ Instruction::getPrevNonDebugInstruction(bool SkipPseudoOp) const {
     if (!isa<DbgInfoIntrinsic>(I) && !(SkipPseudoOp && isa<PseudoProbeInst>(I)))
       return I;
   return nullptr;
+}
+
+const DebugLoc &Instruction::getStableDebugLoc() const {
+  if (isa<DbgInfoIntrinsic>(this))
+    if (const Instruction *Next = getNextNonDebugInstruction())
+      return Next->getDebugLoc();
+  return getDebugLoc();
 }
 
 bool Instruction::isAssociative() const {

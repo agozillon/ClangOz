@@ -90,6 +90,15 @@ public:
   }
   StringRef getIrdlFile() const { return irdlFileFlag; }
 
+  /// Set the bytecode version to emit.
+  MlirOptMainConfig &setEmitBytecodeVersion(int64_t version) {
+    emitBytecodeVersion = version;
+    return *this;
+  }
+  std::optional<int64_t> bytecodeVersionToEmit() const {
+    return emitBytecodeVersion;
+  }
+
   /// Set the callback to populate the pass manager.
   MlirOptMainConfig &
   setPassPipelineSetupFn(std::function<LogicalResult(PassManager &)> callback) {
@@ -106,6 +115,16 @@ public:
       return passPipelineCallback(pm);
     return success();
   }
+
+  /// Enable running the reproducer information stored in resources (if
+  /// present).
+  MlirOptMainConfig &runReproducer(bool enableReproducer) {
+    runReproducerFlag = enableReproducer;
+    return *this;
+  };
+
+  /// Return true if the reproducer should be run.
+  bool shouldRunReproducer() const { return runReproducerFlag; }
 
   /// Show the registered dialects before trying to load the input file.
   MlirOptMainConfig &showDialects(bool show) {
@@ -144,6 +163,13 @@ public:
   }
   bool shouldVerifyPasses() const { return verifyPassesFlag; }
 
+  /// Set whether to run the verifier after each transformation pass.
+  MlirOptMainConfig &verifyRoundtrip(bool verify) {
+    verifyRoundtripFlag = verify;
+    return *this;
+  }
+  bool shouldVerifyRoundtrip() const { return verifyRoundtripFlag; }
+
 protected:
   /// Allow operation with no registered dialects.
   /// This option is for convenience during testing only and discouraged in
@@ -168,8 +194,14 @@ protected:
   /// Location Breakpoints to filter the action logging.
   std::vector<tracing::BreakpointManager *> logActionLocationFilter;
 
+  /// Emit bytecode at given version.
+  std::optional<int64_t> emitBytecodeVersion = std::nullopt;
+
   /// The callback to populate the pass manager.
   std::function<LogicalResult(PassManager &)> passPipelineCallback;
+
+  /// Enable running the reproducer.
+  bool runReproducerFlag = false;
 
   /// Show the registered dialects before trying to load the input file.
   bool showDialectsFlag = false;
@@ -187,12 +219,24 @@ protected:
 
   /// Run the verifier after each transformation pass.
   bool verifyPassesFlag = true;
+
+  /// Verify that the input IR round-trips perfectly.
+  bool verifyRoundtripFlag = false;
 };
 
 /// This defines the function type used to setup the pass manager. This can be
 /// used to pass in a callback to setup a default pass pipeline to be applied on
 /// the loaded IR.
 using PassPipelineFn = llvm::function_ref<LogicalResult(PassManager &pm)>;
+
+/// Register and parse command line options.
+/// - toolName is used for the header displayed by `--help`.
+/// - registry should contain all the dialects that can be parsed in the source.
+/// - return std::pair<std::string, std::string> for
+///   inputFilename and outputFilename command line option values.
+std::pair<std::string, std::string>
+registerAndParseCLIOptions(int argc, char **argv, llvm::StringRef toolName,
+                           DialectRegistry &registry);
 
 /// Perform the core processing behind `mlir-opt`.
 /// - outputStream is the stream where the resulting IR is printed.
@@ -208,6 +252,16 @@ LogicalResult MlirOptMain(llvm::raw_ostream &outputStream,
 /// - toolName is used for the header displayed by `--help`.
 /// - registry should contain all the dialects that can be parsed in the source.
 LogicalResult MlirOptMain(int argc, char **argv, llvm::StringRef toolName,
+                          DialectRegistry &registry);
+
+/// Implementation for tools like `mlir-opt`.
+/// This function can be used with registrationAndParseCLIOptions so that
+/// CLI options can be accessed before running MlirOptMain.
+/// - inputFilename is the name of the input mlir file.
+/// - outputFilename is the name of the output file.
+/// - registry should contain all the dialects that can be parsed in the source.
+LogicalResult MlirOptMain(int argc, char **argv, llvm::StringRef inputFilename,
+                          llvm::StringRef outputFilename,
                           DialectRegistry &registry);
 
 /// Helper wrapper to return the result of MlirOptMain directly from main.

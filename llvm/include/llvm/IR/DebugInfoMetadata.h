@@ -22,6 +22,7 @@
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/IR/PseudoProbe.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Discriminator.h"
@@ -1377,7 +1378,8 @@ public:
     Default = 0,
     GNU = 1,
     None = 2,
-    LastDebugNameTableKind = None
+    Apple = 3,
+    LastDebugNameTableKind = Apple
   };
 
   static std::optional<DebugEmissionKind> getEmissionKind(StringRef Str);
@@ -1817,6 +1819,7 @@ public:
   DISubprogram *getDeclaration() const {
     return cast_or_null<DISubprogram>(getRawDeclaration());
   }
+  void replaceDeclaration(DISubprogram *Decl) { replaceOperandWith(6, Decl); }
   DINodeArray getRetainedNodes() const {
     return cast_or_null<MDTuple>(getRawRetainedNodes());
   }
@@ -1855,6 +1858,9 @@ public:
 
   void replaceRawLinkageName(MDString *LinkageName) {
     replaceOperandWith(3, LinkageName);
+  }
+  void replaceRetainedNodes(DINodeArray N) {
+    replaceOperandWith(7, N.get());
   }
 
   /// Check if this subprogram describes the given function.
@@ -2048,15 +2054,13 @@ public:
   /// use the scope of any location.
   ///
   /// \p LocA \p LocB: The locations to be merged.
-  static const DILocation *getMergedLocation(const DILocation *LocA,
-                                             const DILocation *LocB);
+  static DILocation *getMergedLocation(DILocation *LocA, DILocation *LocB);
 
   /// Try to combine the vector of locations passed as input in a single one.
   /// This function applies getMergedLocation() repeatedly left-to-right.
   ///
   /// \p Locs: The locations to be merged.
-  static const DILocation *
-  getMergedLocations(ArrayRef<const DILocation *> Locs);
+  static DILocation *getMergedLocations(ArrayRef<DILocation *> Locs);
 
   /// Return the masked discriminator value for an input discrimnator value D
   /// (i.e. zero out the (B+1)-th and above bits for D (B is 0-base).
@@ -2072,6 +2076,14 @@ public:
   static unsigned
   getBaseDiscriminatorFromDiscriminator(unsigned D,
                                         bool IsFSDiscriminator = false) {
+    // Return the probe id instead of zero for a pseudo probe discriminator.
+    // This should help differenciate callsites with same line numbers to
+    // achieve a decent AutoFDO profile under -fpseudo-probe-for-profiling,
+    // where the original callsite dwarf discriminator is overwritten by
+    // callsite probe information.
+    if (isPseudoProbeDiscriminator(D))
+      return PseudoProbeDwarfDiscriminator::extractProbeIndex(D);
+
     if (IsFSDiscriminator)
       return getMaskedDiscriminator(D, getBaseDiscriminatorBits());
     return getUnsignedFromPrefixEncoding(D);
@@ -2308,6 +2320,12 @@ DILocation::cloneWithBaseDiscriminator(unsigned D) const {
 std::optional<const DILocation *>
 DILocation::cloneByMultiplyingDuplicationFactor(unsigned DF) const {
   assert(!EnableFSDiscriminator && "FSDiscriminator should not call this.");
+  // Do no interfere with pseudo probes. Pseudo probe doesn't need duplication
+  // factor support as samples collected on cloned probes will be aggregated.
+  // Also pseudo probe at a callsite uses the dwarf discriminator to store
+  // pseudo probe related information, such as the probe id.
+  if (isPseudoProbeDiscriminator(getDiscriminator()))
+    return this;
 
   DF *= getDuplicationFactor();
   if (DF <= 1)
@@ -2832,6 +2850,13 @@ public:
   /// DW_OP_LLVM_arg op as its first operand, or if it contains none.
   bool isSingleLocationExpression() const;
 
+  /// Returns a reference to the elements contained in this expression, skipping
+  /// past the leading `DW_OP_LLVM_arg, 0` if one is present.
+  /// Similar to `convertToNonVariadicExpression`, but faster and cheaper - it
+  /// does not check whether the expression is a single-location expression, and
+  /// it returns elements rather than creating a new DIExpression.
+  std::optional<ArrayRef<uint64_t>> getSingleLocationExpressionElements() const;
+
   /// Removes all elements from \p Expr that do not apply to an undef debug
   /// value, which includes every operator that computes the value/location on
   /// the DWARF stack, including any DW_OP_LLVM_arg elements (making the result
@@ -2850,6 +2875,9 @@ public:
   /// single debug operand at the start of the expression, then return that
   /// expression in a non-variadic form by removing DW_OP_LLVM_arg from the
   /// expression if it is present; otherwise returns std::nullopt.
+  /// See also `getSingleLocationExpressionElements` above, which skips
+  /// checking `isSingleLocationExpression` and returns a list of elements
+  /// rather than a DIExpression.
   static std::optional<const DIExpression *>
   convertToNonVariadicExpression(const DIExpression *Expr);
 
@@ -3736,6 +3764,10 @@ public:
 
   iterator args_begin() { return Args.begin(); }
   iterator args_end() { return Args.end(); }
+
+  ReplaceableMetadataImpl *getReplaceableUses() {
+    return Context.getReplaceableUses();
+  }
 
   static bool classof(const Metadata *MD) {
     return MD->getMetadataID() == DIArgListKind;

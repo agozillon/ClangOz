@@ -10,6 +10,7 @@ set(LLVM_LINK_COMPONENTS
   AArch64Utils
   AsmParser
   CodeGen
+  CodeGenTypes
   Core
   GlobalISel
   MC
@@ -27,6 +28,7 @@ add_llvm_target_unittest(AArch64Tests
   InstSizes.cpp
   MatrixRegisterAliasing.cpp
   SMEAttributesTest.cpp
+  AArch64SVESchedPseudoTest.cpp
   )
 
 set_property(TARGET AArch64Tests PROPERTY FOLDER "Tests/UnitTests/TargetTests")

@@ -171,7 +171,7 @@ Here are the steps you can follow to do so:
    keep an unstable builder connected to staging indefinitely.
 
 #. (Optional) Once the builder is stable on the staging buildmaster with
-   several days of green history, you can chose to move it to the production
+   several days of green history, you can choose to move it to the production
    buildmaster to enable developer notifications.  Please email `Galina
    Kistanova <mailto:gkistanova@gmail.com>`_ for review and approval.
 
@@ -236,7 +236,7 @@ Use Ninja & LLD
   Ninja really does help build times over Make, particularly for highly
   parallel builds.  LLD helps to reduce both link times and memory usage
   during linking significantly.  With a build machine with sufficient
-  parallism, link times tend to dominate critical path of the build, and are
+  parallelism, link times tend to dominate critical path of the build, and are
   thus worth optimizing.
 
 Use CCache and NOT incremental builds

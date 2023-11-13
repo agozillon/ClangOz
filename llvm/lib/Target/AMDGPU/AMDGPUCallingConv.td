@@ -176,6 +176,10 @@ def CSR_AMDGPU_SI_Gfx_GFX90AInsts : CalleeSavedRegs<
   (add CSR_AMDGPU_SI_Gfx, CSR_AMDGPU_AGPRs)
 >;
 
+def CSR_AMDGPU_CS_ChainPreserve : CalleeSavedRegs<
+  (sequence "VGPR%u", 8, 255)
+>;
+
 def CSR_AMDGPU_NoRegs : CalleeSavedRegs<(add)>;
 
 // Calling convention for leaf functions
@@ -211,6 +215,16 @@ def CC_AMDGPU : CallingConv<[
          "(State.getMachineFunction().getSubtarget()).getGeneration() >= "
            "AMDGPUSubtarget::SOUTHERN_ISLANDS && State.getCallingConv() == CallingConv::C",
         CCDelegateTo<CC_AMDGPU_Func>>
+]>;
+
+def CC_AMDGPU_CS_CHAIN : CallingConv<[
+  CCIfInReg<CCIfType<[f32, i32, f16, i16, v2i16, v2f16] , CCAssignToReg<
+    !foreach(i, !range(105), !cast<Register>("SGPR"#i))
+  >>>,
+
+  CCIfNotInReg<CCIfType<[f32, i32, f16, i16, v2i16, v2f16] , CCAssignToReg<
+    !foreach(i, !range(8, 255), !cast<Register>("VGPR"#i))
+  >>>
 ]>;
 
 // Trivial class to denote when a def is used only to get a RegMask, i.e.

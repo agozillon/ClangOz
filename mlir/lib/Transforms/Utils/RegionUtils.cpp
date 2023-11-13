@@ -244,17 +244,17 @@ public:
   bool wasProvenLive(Value value) {
     // TODO: For results that are removable, e.g. for region based control flow,
     // we could allow for these values to be tracked independently.
-    if (OpResult result = value.dyn_cast<OpResult>())
+    if (OpResult result = dyn_cast<OpResult>(value))
       return wasProvenLive(result.getOwner());
-    return wasProvenLive(value.cast<BlockArgument>());
+    return wasProvenLive(cast<BlockArgument>(value));
   }
   bool wasProvenLive(BlockArgument arg) { return liveValues.count(arg); }
   void setProvedLive(Value value) {
     // TODO: For results that are removable, e.g. for region based control flow,
     // we could allow for these values to be tracked independently.
-    if (OpResult result = value.dyn_cast<OpResult>())
+    if (OpResult result = dyn_cast<OpResult>(value))
       return setProvedLive(result.getOwner());
-    setProvedLive(value.cast<BlockArgument>());
+    setProvedLive(cast<BlockArgument>(value));
   }
   void setProvedLive(BlockArgument arg) {
     changed |= liveValues.insert(arg).second;
@@ -538,11 +538,11 @@ unsigned BlockEquivalenceData::getOrderOf(Value value) const {
   assert(value.getParentBlock() == block && "expected value of this block");
 
   // Arguments use the argument number as the order index.
-  if (BlockArgument arg = value.dyn_cast<BlockArgument>())
+  if (BlockArgument arg = dyn_cast<BlockArgument>(value))
     return arg.getArgNumber();
 
   // Otherwise, the result order is offset from the parent op's order.
-  OpResult result = value.cast<OpResult>();
+  OpResult result = cast<OpResult>(value);
   auto opOrderIt = opOrderIndex.find(result.getDefiningOp());
   assert(opOrderIt != opOrderIndex.end() && "expected op to have an order");
   return opOrderIt->second + result.getResultNumber();
@@ -835,4 +835,20 @@ LogicalResult mlir::simplifyRegions(RewriterBase &rewriter,
       succeeded(mergeIdenticalBlocks(rewriter, regions));
   return success(eliminatedBlocks || eliminatedOpsOrArgs ||
                  mergedIdenticalBlocks);
+}
+
+SetVector<Block *> mlir::getTopologicallySortedBlocks(Region &region) {
+  // For each block that has not been visited yet (i.e. that has no
+  // predecessors), add it to the list as well as its successors.
+  SetVector<Block *> blocks;
+  for (Block &b : region) {
+    if (blocks.count(&b) == 0) {
+      llvm::ReversePostOrderTraversal<Block *> traversal(&b);
+      blocks.insert(traversal.begin(), traversal.end());
+    }
+  }
+  assert(blocks.size() == region.getBlocks().size() &&
+         "some blocks are not sorted");
+
+  return blocks;
 }

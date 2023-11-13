@@ -15,6 +15,8 @@
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
+#include <deque>
+
 using namespace llvm;
 
 namespace {
@@ -104,12 +106,12 @@ void CallingConvEmitter::EmitCallingConv(Record *CC, raw_ostream &O) {
   // Emit all of the actions, in order.
   for (unsigned i = 0, e = CCActions->size(); i != e; ++i) {
     Record *Action = CCActions->getElementAsRecord(i);
-    SwiftAction = llvm::any_of(Action->getSuperClasses(),
-                               [](const std::pair<Record *, SMRange> &Class) {
-                                 std::string Name =
-                                     Class.first->getNameInitAsString();
-                                 return StringRef(Name).startswith("CCIfSwift");
-                               });
+    SwiftAction =
+        llvm::any_of(Action->getSuperClasses(),
+                     [](const std::pair<Record *, SMRange> &Class) {
+                       std::string Name = Class.first->getNameInitAsString();
+                       return StringRef(Name).starts_with("CCIfSwift");
+                     });
 
     O << "\n";
     EmitAction(Action, 2, O);
@@ -249,7 +251,7 @@ void CallingConvEmitter::EmitAction(Record *Action,
       int Size = Action->getValueAsInt("Size");
       int Align = Action->getValueAsInt("Align");
 
-      O << IndentStr << "unsigned Offset" << ++Counter
+      O << IndentStr << "int64_t Offset" << ++Counter
         << " = State.AllocateStack(";
       if (Size)
         O << Size << ", ";
@@ -285,7 +287,7 @@ void CallingConvEmitter::EmitAction(Record *Action,
         O << LS << getQualifiedName(ShadowRegList->getElementAsRecord(i));
       O << "\n" << IndentStr << "};\n";
 
-      O << IndentStr << "unsigned Offset" << ++Counter
+      O << IndentStr << "int64_t Offset" << ++Counter
         << " = State.AllocateStack(" << Size << ", Align(" << Align << "), "
         << "ShadowRegList" << ShadowRegListNumber << ");\n";
       O << IndentStr << "State.addLoc(CCValAssign::getMem(ValNo, ValVT, Offset"

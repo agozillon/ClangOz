@@ -37,23 +37,13 @@ struct IndexOpInterface
     int64_t flatDimCtr = 0;
     for (Value operand : linalgOp->getOperands()) {
       assert(flatDimPos >= flatDimCtr && "invalid pos");
-      auto shapedType = operand.getType().cast<ShapedType>();
+      auto shapedType = llvm::cast<ShapedType>(operand.getType());
       if (flatDimPos < flatDimCtr + shapedType.getRank()) {
         cstr.bound(value) < cstr.getExpr(operand, flatDimPos - flatDimCtr);
         break;
       }
       flatDimCtr += shapedType.getRank();
     }
-  }
-};
-
-/// Helper structure that iterates over all LinalgOps in `OpTys` and registers
-/// the `ValueBoundsOpInterface` with each of them.
-template <typename... Ops> struct LinalgValueBoundsOpInterfaceHelper {
-  static void registerOpInterface(MLIRContext *ctx) {
-    (Ops::template attachInterface<DstValueBoundsOpInterfaceExternalModel<Ops>>(
-         *ctx),
-     ...);
   }
 };
 
@@ -65,11 +55,7 @@ void mlir::linalg::registerValueBoundsOpInterfaceExternalModels(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *ctx, linalg::LinalgDialect *dialect) {
     IndexOp::attachInterface<IndexOpInterface>(*ctx);
-
-    // Register all Linalg structured ops.
-    LinalgValueBoundsOpInterfaceHelper<
-#define GET_OP_LIST
-#include "mlir/Dialect/Linalg/IR/LinalgStructuredOps.cpp.inc"
-        >::registerOpInterface(ctx);
+    // Note: ValueBoundsOpInterface implementation is not required for ops that
+    // implement `DestinationStyleOpInterface` (for querying shaped OpResults).
   });
 }

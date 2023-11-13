@@ -6,27 +6,34 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_LIBC_SRC_SUPPORT_STRING_UTIL_TABLES_SIGNAL_TABLE_H
-#define LLVM_LIBC_SRC_SUPPORT_STRING_UTIL_TABLES_SIGNAL_TABLE_H
+#ifndef LLVM_LIBC_SRC___SUPPORT_STRING_UTIL_TABLES_SIGNAL_TABLE_H
+#define LLVM_LIBC_SRC___SUPPORT_STRING_UTIL_TABLES_SIGNAL_TABLE_H
 
 #include "src/__support/StringUtil/message_mapper.h"
 
-#include "posix_signal_table.h"
-#include "stdc_signal_table.h"
+#include "posix_signals.h"
+#include "stdc_signals.h"
 
-#ifdef __linux__
-#include "linux/signal_table.h"
-#endif
-
-namespace __llvm_libc::internal {
-
-#ifdef __linux__
-inline constexpr auto PLATFORM_SIGNALS =
-    STDC_SIGNALS + POSIX_SIGNALS + LINUX_SIGNALS;
+#if defined(__linux__) || defined(__Fuchsia__)
+#define USE_LINUX_PLATFORM_SIGNALS 1
 #else
-inline constexpr auto PLATFORM_SIGNALS = STDC_SIGNALS;
+#define USE_LINUX_PLATFORM_SIGNALS 0
 #endif
 
-} // namespace __llvm_libc::internal
+#if USE_LINUX_PLATFORM_SIGNALS
+#include "linux_extension_signals.h"
+#endif
 
-#endif // LLVM_LIBC_SRC_SUPPORT_STRING_UTIL_TABLES_SIGNAL_TABLE_H
+namespace LIBC_NAMESPACE::internal {
+
+LIBC_INLINE_VAR constexpr auto PLATFORM_SIGNALS = []() {
+  if constexpr (USE_LINUX_PLATFORM_SIGNALS) {
+    return STDC_SIGNALS + POSIX_SIGNALS + LINUX_SIGNALS;
+  } else {
+    return STDC_SIGNALS;
+  }
+}();
+
+} // namespace LIBC_NAMESPACE::internal
+
+#endif // LLVM_LIBC_SRC___SUPPORT_STRING_UTIL_TABLES_SIGNAL_TABLE_H

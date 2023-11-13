@@ -196,6 +196,16 @@ public:
   void addSymbols(ThunkSection &isec) override;
 };
 
+class ThumbV6MABSXOLongThunk final : public ThumbThunk {
+public:
+  ThumbV6MABSXOLongThunk(Symbol &dest, int64_t addend)
+      : ThumbThunk(dest, addend) {}
+
+  uint32_t sizeLong() override { return 20; }
+  void writeLong(uint8_t *buf) override;
+  void addSymbols(ThunkSection &isec) override;
+};
+
 class ThumbV6MPILongThunk final : public ThumbThunk {
 public:
   ThumbV6MPILongThunk(Symbol &dest, int64_t addend)
@@ -289,6 +299,16 @@ public:
 
   uint32_t sizeLong() override { return 16; }
   void writeLong(uint8_t *buf) override;
+  void addSymbols(ThunkSection &isec) override;
+};
+
+// The AVR devices need thunks for R_AVR_LO8_LDI_GS/R_AVR_HI8_LDI_GS
+// when their destination is out of range [0, 0x1ffff].
+class AVRThunk : public Thunk {
+public:
+  AVRThunk(Symbol &dest, int64_t addend) : Thunk(dest, addend) {}
+  uint32_t size() override { return 4; }
+  void writeTo(uint8_t *buf) override;
   void addSymbols(ThunkSection &isec) override;
 };
 
@@ -734,7 +754,36 @@ void ThumbV6MABSLongThunk::addSymbols(ThunkSection &isec) {
   addSymbol(saver().save("__Thumbv6MABSLongThunk_" + destination.getName()),
             STT_FUNC, 1, isec);
   addSymbol("$t", STT_NOTYPE, 0, isec);
-  addSymbol("$d", STT_NOTYPE, 8, isec);
+  if (!getMayUseShortThunk())
+    addSymbol("$d", STT_NOTYPE, 8, isec);
+}
+
+void ThumbV6MABSXOLongThunk::writeLong(uint8_t *buf) {
+  // Most Thumb instructions cannot access the high registers r8 - r15. As the
+  // only register we can corrupt is r12 we must instead spill a low register
+  // to the stack to use as a scratch register. We push r1 even though we
+  // don't need to get some space to use for the return address.
+  write16(buf + 0, 0xb403);  // push {r0, r1} ; Obtain scratch registers
+  write16(buf + 2, 0x2000);  // movs r0, :upper8_15:S
+  write16(buf + 4, 0x0200);  // lsls r0, r0, #8
+  write16(buf + 6, 0x3000);  // adds r0, :upper0_7:S
+  write16(buf + 8, 0x0200);  // lsls r0, r0, #8
+  write16(buf + 10, 0x3000); // adds r0, :lower8_15:S
+  write16(buf + 12, 0x0200); // lsls r0, r0, #8
+  write16(buf + 14, 0x3000); // adds r0, :lower0_7:S
+  write16(buf + 16, 0x9001); // str r0, [sp, #4] ; SP + 4 = S
+  write16(buf + 18, 0xbd01); // pop {r0, pc} ; restore r0 and branch to dest
+  uint64_t s = getARMThunkDestVA(destination);
+  target->relocateNoSym(buf + 2, R_ARM_THM_ALU_ABS_G3, s);
+  target->relocateNoSym(buf + 6, R_ARM_THM_ALU_ABS_G2_NC, s);
+  target->relocateNoSym(buf + 10, R_ARM_THM_ALU_ABS_G1_NC, s);
+  target->relocateNoSym(buf + 14, R_ARM_THM_ALU_ABS_G0_NC, s);
+}
+
+void ThumbV6MABSXOLongThunk::addSymbols(ThunkSection &isec) {
+  addSymbol(saver().save("__Thumbv6MABSXOLongThunk_" + destination.getName()),
+            STT_FUNC, 1, isec);
+  addSymbol("$t", STT_NOTYPE, 0, isec);
 }
 
 void ThumbV6MPILongThunk::writeLong(uint8_t *buf) {
@@ -757,7 +806,8 @@ void ThumbV6MPILongThunk::addSymbols(ThunkSection &isec) {
   addSymbol(saver().save("__Thumbv6MPILongThunk_" + destination.getName()),
             STT_FUNC, 1, isec);
   addSymbol("$t", STT_NOTYPE, 0, isec);
-  addSymbol("$d", STT_NOTYPE, 12, isec);
+  if (!getMayUseShortThunk())
+    addSymbol("$d", STT_NOTYPE, 12, isec);
 }
 
 void ARMV5LongLdrPcThunk::writeLong(uint8_t *buf) {
@@ -770,7 +820,8 @@ void ARMV5LongLdrPcThunk::addSymbols(ThunkSection &isec) {
   addSymbol(saver().save("__ARMv5LongLdrPcThunk_" + destination.getName()),
             STT_FUNC, 0, isec);
   addSymbol("$a", STT_NOTYPE, 0, isec);
-  addSymbol("$d", STT_NOTYPE, 4, isec);
+  if (!getMayUseShortThunk())
+    addSymbol("$d", STT_NOTYPE, 4, isec);
 }
 
 void ARMV4ABSLongBXThunk::writeLong(uint8_t *buf) {
@@ -784,7 +835,8 @@ void ARMV4ABSLongBXThunk::addSymbols(ThunkSection &isec) {
   addSymbol(saver().save("__ARMv4ABSLongBXThunk_" + destination.getName()),
             STT_FUNC, 0, isec);
   addSymbol("$a", STT_NOTYPE, 0, isec);
-  addSymbol("$d", STT_NOTYPE, 8, isec);
+  if (!getMayUseShortThunk())
+    addSymbol("$d", STT_NOTYPE, 8, isec);
 }
 
 void ThumbV4ABSLongBXThunk::writeLong(uint8_t *buf) {
@@ -800,7 +852,8 @@ void ThumbV4ABSLongBXThunk::addSymbols(ThunkSection &isec) {
             STT_FUNC, 1, isec);
   addSymbol("$t", STT_NOTYPE, 0, isec);
   addSymbol("$a", STT_NOTYPE, 4, isec);
-  addSymbol("$d", STT_NOTYPE, 8, isec);
+  if (!getMayUseShortThunk())
+    addSymbol("$d", STT_NOTYPE, 8, isec);
 }
 
 void ThumbV4ABSLongThunk::writeLong(uint8_t *buf) {
@@ -817,7 +870,8 @@ void ThumbV4ABSLongThunk::addSymbols(ThunkSection &isec) {
             STT_FUNC, 1, isec);
   addSymbol("$t", STT_NOTYPE, 0, isec);
   addSymbol("$a", STT_NOTYPE, 4, isec);
-  addSymbol("$d", STT_NOTYPE, 12, isec);
+  if (!getMayUseShortThunk())
+    addSymbol("$d", STT_NOTYPE, 12, isec);
 }
 
 void ARMV4PILongBXThunk::writeLong(uint8_t *buf) {
@@ -834,7 +888,8 @@ void ARMV4PILongBXThunk::addSymbols(ThunkSection &isec) {
   addSymbol(saver().save("__ARMv4PILongBXThunk_" + destination.getName()),
             STT_FUNC, 0, isec);
   addSymbol("$a", STT_NOTYPE, 0, isec);
-  addSymbol("$d", STT_NOTYPE, 12, isec);
+  if (!getMayUseShortThunk())
+    addSymbol("$d", STT_NOTYPE, 12, isec);
 }
 
 void ARMV4PILongThunk::writeLong(uint8_t *buf) {
@@ -850,7 +905,8 @@ void ARMV4PILongThunk::addSymbols(ThunkSection &isec) {
   addSymbol(saver().save("__ARMv4PILongThunk_" + destination.getName()),
             STT_FUNC, 0, isec);
   addSymbol("$a", STT_NOTYPE, 0, isec);
-  addSymbol("$d", STT_NOTYPE, 8, isec);
+  if (!getMayUseShortThunk())
+    addSymbol("$d", STT_NOTYPE, 8, isec);
 }
 
 void ThumbV4PILongBXThunk::writeLong(uint8_t *buf) {
@@ -869,7 +925,8 @@ void ThumbV4PILongBXThunk::addSymbols(ThunkSection &isec) {
             STT_FUNC, 1, isec);
   addSymbol("$t", STT_NOTYPE, 0, isec);
   addSymbol("$a", STT_NOTYPE, 4, isec);
-  addSymbol("$d", STT_NOTYPE, 12, isec);
+  if (!getMayUseShortThunk())
+    addSymbol("$d", STT_NOTYPE, 12, isec);
 }
 
 void ThumbV4PILongThunk::writeLong(uint8_t *buf) {
@@ -889,7 +946,19 @@ void ThumbV4PILongThunk::addSymbols(ThunkSection &isec) {
             STT_FUNC, 1, isec);
   addSymbol("$t", STT_NOTYPE, 0, isec);
   addSymbol("$a", STT_NOTYPE, 4, isec);
-  addSymbol("$d", STT_NOTYPE, 16, isec);
+  if (!getMayUseShortThunk())
+    addSymbol("$d", STT_NOTYPE, 16, isec);
+}
+
+// Use the long jump which covers a range up to 8MiB.
+void AVRThunk::writeTo(uint8_t *buf) {
+  write32(buf, 0x940c); // jmp func
+  target->relocateNoSym(buf, R_AVR_CALL, destination.getVA());
+}
+
+void AVRThunk::addSymbols(ThunkSection &isec) {
+  addSymbol(saver().save("__AVRThunk_" + destination.getName()), STT_FUNC, 0,
+            isec);
 }
 
 // Write MIPS LA25 thunk code to call PIC function from the non-PIC one.
@@ -1069,7 +1138,7 @@ void PPC64PltCallStub::writeTo(uint8_t *buf) {
 void PPC64PltCallStub::addSymbols(ThunkSection &isec) {
   Defined *s = addSymbol(saver().save("__plt_" + destination.getName()),
                          STT_FUNC, 0, isec);
-  s->needsTocRestore = true;
+  s->setNeedsTocRestore(true);
   s->file = destination.file;
 }
 
@@ -1113,7 +1182,7 @@ void PPC64R2SaveStub::writeTo(uint8_t *buf) {
 void PPC64R2SaveStub::addSymbols(ThunkSection &isec) {
   Defined *s = addSymbol(saver().save("__toc_save_" + destination.getName()),
                          STT_FUNC, 0, isec);
-  s->needsTocRestore = true;
+  s->setNeedsTocRestore(true);
 }
 
 bool PPC64R2SaveStub::isCompatibleWith(const InputSection &isec,
@@ -1257,13 +1326,23 @@ static Thunk *addThunkArmv5v6(RelType reloc, Symbol &s, int64_t a) {
 // - MOVT and MOVW instructions cannot be used.
 // - Only a limited number of instructions can access registers r8 and above
 // - No interworking support is needed (all Thumb).
-static Thunk *addThunkV6M(RelType reloc, Symbol &s, int64_t a) {
+static Thunk *addThunkV6M(const InputSection &isec, RelType reloc, Symbol &s,
+                          int64_t a) {
+  const bool isPureCode = isec.getParent()->flags & SHF_ARM_PURECODE;
   switch (reloc) {
   case R_ARM_THM_JUMP19:
   case R_ARM_THM_JUMP24:
   case R_ARM_THM_CALL:
-    if (config->isPic)
-      return make<ThumbV6MPILongThunk>(s, a);
+    if (config->isPic) {
+      if (!isPureCode)
+        return make<ThumbV6MPILongThunk>(s, a);
+
+      fatal("relocation " + toString(reloc) + " to " + toString(s) +
+            " not supported for Armv6-M targets for position independant"
+            " and execute only code");
+    }
+    if (isPureCode)
+      return make<ThumbV6MABSXOLongThunk>(s, a);
     return make<ThumbV6MABSLongThunk>(s, a);
   }
   fatal("relocation " + toString(reloc) + " to " + toString(s) +
@@ -1271,7 +1350,8 @@ static Thunk *addThunkV6M(RelType reloc, Symbol &s, int64_t a) {
 }
 
 // Creates a thunk for Thumb-ARM interworking or branch range extension.
-static Thunk *addThunkArm(RelType reloc, Symbol &s, int64_t a) {
+static Thunk *addThunkArm(const InputSection &isec, RelType reloc, Symbol &s,
+                          int64_t a) {
   // Decide which Thunk is needed based on:
   // Available instruction set
   // - An Arm Thunk can only be used if Arm state is available.
@@ -1283,6 +1363,7 @@ static Thunk *addThunkArm(RelType reloc, Symbol &s, int64_t a) {
   // - Branch and link relocations can change state, can select Thunks from
   //   either Arm or Thumb.
   // Position independent Thunks if we require position independent code.
+  // Execute Only Thunks if the output section is execute only code.
 
   // Handle architectures that have restrictions on the instructions that they
   // can use in Thunks. The flags below are set by reading the BuildAttributes
@@ -1290,7 +1371,7 @@ static Thunk *addThunkArm(RelType reloc, Symbol &s, int64_t a) {
   // architecture to flag.
   if (!config->armHasMovtMovw) {
     if (config->armJ1J2BranchEncoding)
-      return addThunkV6M(reloc, s, a);
+      return addThunkV6M(isec, reloc, s, a);
     if (config->armHasBlx)
       return addThunkArmv5v6(reloc, s, a);
     return addThunkArmv4(reloc, s, a);
@@ -1312,6 +1393,16 @@ static Thunk *addThunkArm(RelType reloc, Symbol &s, int64_t a) {
     return make<ThumbV7ABSLongThunk>(s, a);
   }
   fatal("unrecognized relocation type");
+}
+
+static Thunk *addThunkAVR(RelType type, Symbol &s, int64_t a) {
+  switch (type) {
+  case R_AVR_LO8_LDI_GS:
+  case R_AVR_HI8_LDI_GS:
+    return make<AVRThunk>(s, a);
+  default:
+    fatal("unrecognized relocation type " + toString(type));
+  }
 }
 
 static Thunk *addThunkMips(RelType type, Symbol &s) {
@@ -1336,6 +1427,12 @@ static Thunk *addThunkPPC64(RelType type, Symbol &s, int64_t a) {
   assert((type == R_PPC64_REL14 || type == R_PPC64_REL24 ||
           type == R_PPC64_REL24_NOTOC) &&
          "unexpected relocation type for thunk");
+
+  // If we are emitting stubs for NOTOC relocations, we need to tell
+  // the PLT resolver that there can be multiple TOCs.
+  if (type == R_PPC64_REL24_NOTOC)
+    getPPC64TargetInfo()->ppc64DynamicSectionOpt = 0x2;
+
   if (s.isInPlt())
     return type == R_PPC64_REL24_NOTOC
                ? (Thunk *)make<PPC64R12SetupStub>(s, /*gotPlt=*/true)
@@ -1364,7 +1461,9 @@ Thunk *elf::addThunk(const InputSection &isec, Relocation &rel) {
   case EM_AARCH64:
     return addThunkAArch64(rel.type, s, a);
   case EM_ARM:
-    return addThunkArm(rel.type, s, a);
+    return addThunkArm(isec, rel.type, s, a);
+  case EM_AVR:
+    return addThunkAVR(rel.type, s, a);
   case EM_MIPS:
     return addThunkMips(rel.type, s);
   case EM_PPC:
@@ -1372,6 +1471,6 @@ Thunk *elf::addThunk(const InputSection &isec, Relocation &rel) {
   case EM_PPC64:
     return addThunkPPC64(rel.type, s, a);
   default:
-    llvm_unreachable("add Thunk only supported for ARM, Mips and PowerPC");
+    llvm_unreachable("add Thunk only supported for ARM, AVR, Mips and PowerPC");
   }
 }

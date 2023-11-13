@@ -31,8 +31,8 @@ void replaceCoroFree(CoroIdInst *CoroId, bool Elide);
 /// If the frame pointer is an Argument, store it into an alloca if
 /// OptimizeFrame is false.
 void salvageDebugInfo(
-    SmallDenseMap<llvm::Value *, llvm::AllocaInst *, 4> &DbgPtrAllocaCache,
-    DbgVariableIntrinsic *DVI, bool OptimizeFrame);
+    SmallDenseMap<Argument *, AllocaInst *, 4> &ArgToAllocaMap,
+    DbgVariableIntrinsic *DVI, bool OptimizeFrame, bool IsEntryPoint);
 
 // Keeps data and helper functions for lowering coroutine intrinsics.
 struct LowererBase {
@@ -127,7 +127,6 @@ struct LLVM_LIBRARY_VISIBILITY Shape {
   };
 
   struct AsyncLoweringStorage {
-    FunctionType *AsyncFuncTy;
     Value *Context;
     CallingConv::ID AsyncCC;
     unsigned ContextArgNo;

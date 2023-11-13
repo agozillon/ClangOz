@@ -25,7 +25,7 @@
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Function.h"
-#include "llvm/MC/SubtargetFeature.h"
+#include "llvm/TargetParser/SubtargetFeature.h"
 #include <optional>
 
 namespace llvm {
@@ -165,15 +165,15 @@ public:
   TypeSize getRegisterBitWidth(TargetTransformInfo::RegisterKind K) const {
     switch (K) {
     case TargetTransformInfo::RGK_Scalar:
-      return TypeSize::getFixed(32);
+      return TypeSize::Fixed(32);
     case TargetTransformInfo::RGK_FixedWidthVector:
       if (ST->hasNEON())
-        return TypeSize::getFixed(128);
+        return TypeSize::Fixed(128);
       if (ST->hasMVEIntegerOps())
-        return TypeSize::getFixed(128);
-      return TypeSize::getFixed(0);
+        return TypeSize::Fixed(128);
+      return TypeSize::Fixed(0);
     case TargetTransformInfo::RGK_ScalableVector:
-      return TypeSize::getScalable(0);
+      return TypeSize::Scalable(0);
     }
     llvm_unreachable("Unsupported register kind");
   }
@@ -209,6 +209,10 @@ public:
   }
 
   InstructionCost getMemcpyCost(const Instruction *I);
+
+  uint64_t getMaxMemIntrinsicInlineSizeThreshold() const {
+    return ST->getMaxInlineSizeThreshold();
+  }
 
   int getNumMemOps(const IntrinsicInst *I) const;
 
@@ -284,6 +288,10 @@ public:
                                            TTI::TargetCostKind CostKind);
   InstructionCost getMulAccReductionCost(bool IsUnsigned, Type *ResTy,
                                          VectorType *ValTy,
+                                         TTI::TargetCostKind CostKind);
+
+  InstructionCost getMinMaxReductionCost(Intrinsic::ID IID, VectorType *Ty,
+                                         FastMathFlags FMF,
                                          TTI::TargetCostKind CostKind);
 
   InstructionCost getIntrinsicInstrCost(const IntrinsicCostAttributes &ICA,

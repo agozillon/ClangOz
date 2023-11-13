@@ -15,6 +15,7 @@
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/SemaInternal.h"
+#include "llvm/ADT/StringExtras.h"
 #include <optional>
 
 using namespace clang;
@@ -27,11 +28,11 @@ static void checkModuleImportContext(Sema &S, Module *M,
 
   if (auto *LSD = dyn_cast<LinkageSpecDecl>(DC)) {
     switch (LSD->getLanguage()) {
-    case LinkageSpecDecl::lang_c:
+    case LinkageSpecLanguageIDs::C:
       if (ExternCLoc.isInvalid())
         ExternCLoc = LSD->getBeginLoc();
       break;
-    case LinkageSpecDecl::lang_cxx:
+    case LinkageSpecLanguageIDs::CXX:
       break;
     }
     DC = LSD->getParent();
@@ -102,7 +103,8 @@ void Sema::HandleStartOfHeaderUnit() {
 
   StringRef HUName = getLangOpts().CurrentModule;
   if (HUName.empty()) {
-    HUName = SourceMgr.getFileEntryForID(SourceMgr.getMainFileID())->getName();
+    HUName =
+        SourceMgr.getFileEntryRefForID(SourceMgr.getMainFileID())->getName();
     const_cast<LangOptions &>(getLangOpts()).CurrentModule = HUName.str();
   }
 
@@ -255,7 +257,7 @@ Sema::ActOnModuleDecl(SourceLocation StartLoc, SourceLocation ModuleLoc,
     }
   }
 
-  // C++2b [module.unit]p1: ... The identifiers module and import shall not
+  // C++23 [module.unit]p1: ... The identifiers module and import shall not
   // appear as identifiers in a module-name or module-partition. All
   // module-names either beginning with an identifier consisting of std
   // followed by zero or more digits or containing a reserved identifier
@@ -389,7 +391,7 @@ Sema::ActOnModuleDecl(SourceLocation StartLoc, SourceLocation ModuleLoc,
   // statements, so imports are allowed.
   ImportState = ModuleImportState::ImportAllowed;
 
-  getASTContext().setNamedModuleForCodeGen(Mod);
+  getASTContext().setCurrentNamedModule(Mod);
 
   // We already potentially made an implicit import (in the case of a module
   // implementation unit importing its interface).  Make this module visible
@@ -397,6 +399,7 @@ Sema::ActOnModuleDecl(SourceLocation StartLoc, SourceLocation ModuleLoc,
   if (Interface) {
 
     VisibleModules.setVisible(Interface, ModuleLoc);
+    VisibleModules.makeTransitiveImportsVisible(Interface, ModuleLoc);
 
     // Make the import decl for the interface in the impl module.
     ImportDecl *Import = ImportDecl::Create(Context, CurContext, ModuleLoc,
@@ -529,6 +532,12 @@ DeclResult Sema::ActOnModuleImport(SourceLocation StartLoc,
   if (!Mod)
     return true;
 
+  if (!Mod->isInterfaceOrPartition() && !ModuleName.empty()) {
+    Diag(ImportLoc, diag::err_module_import_non_interface_nor_parition)
+        << ModuleName;
+    return true;
+  }
+
   return ActOnModuleImport(StartLoc, ExportLoc, ImportLoc, Mod, Path);
 }
 
@@ -544,6 +553,9 @@ DeclResult Sema::ActOnModuleImport(SourceLocation StartLoc,
                                    SourceLocation ExportLoc,
                                    SourceLocation ImportLoc, Module *Mod,
                                    ModuleIdPath Path) {
+  if (Mod->isHeaderUnit())
+    Diag(ImportLoc, diag::warn_experimental_header_unit);
+
   VisibleModules.setVisible(Mod, ImportLoc);
 
   checkModuleImportContext(*this, Mod, ImportLoc, CurContext);
@@ -633,11 +645,9 @@ void Sema::BuildModuleInclude(SourceLocation DirectiveLoc, Module *Mod) {
       TUKind == TU_Module &&
       getSourceManager().isWrittenInMainFile(DirectiveLoc);
 
-  bool ShouldAddImport = !IsInModuleIncludes;
-
-  // If this module import was due to an inclusion directive, create an
-  // implicit import declaration to capture it in the AST.
-  if (ShouldAddImport) {
+  // If we are really importing a module (not just checking layering) due to an
+  // #include in the main file, synthesize an ImportDecl.
+  if (getLangOpts().Modules && !IsInModuleIncludes) {
     TranslationUnitDecl *TU = getASTContext().getTranslationUnitDecl();
     ImportDecl *ImportD = ImportDecl::CreateImplicit(getASTContext(), TU,
                                                      DirectiveLoc, Mod,
@@ -813,85 +823,32 @@ Decl *Sema::ActOnStartExportDecl(Scope *S, SourceLocation ExportLoc,
   return D;
 }
 
+static bool checkExportedDecl(Sema &, Decl *, SourceLocation);
+
+/// Check that it's valid to export all the declarations in \p DC.
 static bool checkExportedDeclContext(Sema &S, DeclContext *DC,
-                                     SourceLocation BlockStart);
-
-namespace {
-enum class UnnamedDeclKind {
-  Empty,
-  StaticAssert,
-  Asm,
-  UsingDirective,
-  Namespace,
-  Context
-};
-}
-
-static std::optional<UnnamedDeclKind> getUnnamedDeclKind(Decl *D) {
-  if (isa<EmptyDecl>(D))
-    return UnnamedDeclKind::Empty;
-  if (isa<StaticAssertDecl>(D))
-    return UnnamedDeclKind::StaticAssert;
-  if (isa<FileScopeAsmDecl>(D))
-    return UnnamedDeclKind::Asm;
-  if (isa<UsingDirectiveDecl>(D))
-    return UnnamedDeclKind::UsingDirective;
-  // Everything else either introduces one or more names or is ill-formed.
-  return std::nullopt;
-}
-
-unsigned getUnnamedDeclDiag(UnnamedDeclKind UDK, bool InBlock) {
-  switch (UDK) {
-  case UnnamedDeclKind::Empty:
-  case UnnamedDeclKind::StaticAssert:
-    // Allow empty-declarations and static_asserts in an export block as an
-    // extension.
-    return InBlock ? diag::ext_export_no_name_block : diag::err_export_no_name;
-
-  case UnnamedDeclKind::UsingDirective:
-    // Allow exporting using-directives as an extension.
-    return diag::ext_export_using_directive;
-
-  case UnnamedDeclKind::Namespace:
-    // Anonymous namespace with no content.
-    return diag::introduces_no_names;
-
-  case UnnamedDeclKind::Context:
-    // Allow exporting DeclContexts that transitively contain no declarations
-    // as an extension.
-    return diag::ext_export_no_names;
-
-  case UnnamedDeclKind::Asm:
-    return diag::err_export_no_name;
-  }
-  llvm_unreachable("unknown kind");
-}
-
-static void diagExportedUnnamedDecl(Sema &S, UnnamedDeclKind UDK, Decl *D,
-                                    SourceLocation BlockStart) {
-  S.Diag(D->getLocation(), getUnnamedDeclDiag(UDK, BlockStart.isValid()))
-      << (unsigned)UDK;
-  if (BlockStart.isValid())
-    S.Diag(BlockStart, diag::note_export);
+                                     SourceLocation BlockStart) {
+  bool AllUnnamed = true;
+  for (auto *D : DC->decls())
+    AllUnnamed &= checkExportedDecl(S, D, BlockStart);
+  return AllUnnamed;
 }
 
 /// Check that it's valid to export \p D.
 static bool checkExportedDecl(Sema &S, Decl *D, SourceLocation BlockStart) {
-  // C++2a [module.interface]p3:
-  //   An exported declaration shall declare at least one name
-  if (auto UDK = getUnnamedDeclKind(D))
-    diagExportedUnnamedDecl(S, *UDK, D, BlockStart);
 
-  //   [...] shall not declare a name with internal linkage.
+  //  C++20 [module.interface]p3:
+  //   [...] it shall not declare a name with internal linkage.
   bool HasName = false;
   if (auto *ND = dyn_cast<NamedDecl>(D)) {
     // Don't diagnose anonymous union objects; we'll diagnose their members
     // instead.
     HasName = (bool)ND->getDeclName();
-    if (HasName && ND->getFormalLinkage() == InternalLinkage) {
+    if (HasName && ND->getFormalLinkage() == Linkage::Internal) {
       S.Diag(ND->getLocation(), diag::err_export_internal) << ND;
       if (BlockStart.isValid())
         S.Diag(BlockStart, diag::note_export);
+      return false;
     }
   }
 
@@ -901,37 +858,35 @@ static bool checkExportedDecl(Sema &S, Decl *D, SourceLocation BlockStart) {
   if (auto *USD = dyn_cast<UsingShadowDecl>(D)) {
     NamedDecl *Target = USD->getUnderlyingDecl();
     Linkage Lk = Target->getFormalLinkage();
-    if (Lk == InternalLinkage || Lk == ModuleLinkage) {
+    if (Lk == Linkage::Internal || Lk == Linkage::Module) {
       S.Diag(USD->getLocation(), diag::err_export_using_internal)
-          << (Lk == InternalLinkage ? 0 : 1) << Target;
+          << (Lk == Linkage::Internal ? 0 : 1) << Target;
       S.Diag(Target->getLocation(), diag::note_using_decl_target);
       if (BlockStart.isValid())
         S.Diag(BlockStart, diag::note_export);
+      return false;
     }
   }
 
   // Recurse into namespace-scope DeclContexts. (Only namespace-scope
-  // declarations are exported.).
+  // declarations are exported).
   if (auto *DC = dyn_cast<DeclContext>(D)) {
-    if (isa<NamespaceDecl>(D) && DC->decls().empty()) {
-      if (!HasName)
-        // We don't allow an empty anonymous namespace (we don't allow decls
-        // in them either, but that's handled in the recursion).
-        diagExportedUnnamedDecl(S, UnnamedDeclKind::Namespace, D, BlockStart);
-      // We allow an empty named namespace decl.
-    } else if (DC->getRedeclContext()->isFileContext() && !isa<EnumDecl>(D))
-      return checkExportedDeclContext(S, DC, BlockStart);
-  }
-  return false;
-}
+    if (!isa<NamespaceDecl>(D))
+      return true;
 
-/// Check that it's valid to export all the declarations in \p DC.
-static bool checkExportedDeclContext(Sema &S, DeclContext *DC,
-                                     SourceLocation BlockStart) {
-  bool AllUnnamed = true;
-  for (auto *D : DC->decls())
-    AllUnnamed &= checkExportedDecl(S, D, BlockStart);
-  return AllUnnamed;
+    if (auto *ND = dyn_cast<NamedDecl>(D)) {
+      if (!ND->getDeclName()) {
+        S.Diag(ND->getLocation(), diag::err_export_anon_ns_internal);
+        if (BlockStart.isValid())
+          S.Diag(BlockStart, diag::note_export);
+        return false;
+      } else if (!DC->decls().empty() &&
+                 DC->getRedeclContext()->isFileContext()) {
+        return checkExportedDeclContext(S, DC, BlockStart);
+      }
+    }
+  }
+  return true;
 }
 
 /// Complete the definition of an export declaration.
@@ -946,12 +901,7 @@ Decl *Sema::ActOnFinishExportDecl(Scope *S, Decl *D, SourceLocation RBraceLoc) {
     SourceLocation BlockStart =
         ED->hasBraces() ? ED->getBeginLoc() : SourceLocation();
     for (auto *Child : ED->decls()) {
-      if (checkExportedDecl(*this, Child, BlockStart)) {
-        // If a top-level child is a linkage-spec declaration, it might contain
-        // no declarations (transitively), in which case it's ill-formed.
-        diagExportedUnnamedDecl(*this, UnnamedDeclKind::Context, Child,
-                                BlockStart);
-      }
+      checkExportedDecl(*this, Child, BlockStart);
       if (auto *FD = dyn_cast<FunctionDecl>(Child)) {
         // [dcl.inline]/7
         // If an inline function or variable that is attached to a named module
@@ -1020,17 +970,4 @@ void Sema::PopImplicitGlobalModuleFragment() {
          getCurrentModule()->isImplicitGlobalModule() &&
          "left the wrong module scope, which is not global module fragment");
   ModuleScopes.pop_back();
-}
-
-bool Sema::isModuleUnitOfCurrentTU(const Module *M) const {
-  assert(M);
-
-  Module *CurrentModuleUnit = getCurrentModule();
-
-  // If we are not in a module currently, M must not be the module unit of
-  // current TU.
-  if (!CurrentModuleUnit)
-    return false;
-
-  return M->isSubModuleOf(CurrentModuleUnit->getTopLevelModule());
 }

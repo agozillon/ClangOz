@@ -26,12 +26,16 @@
 #include <string>
 #include <vector>
 
+namespace llvm {
+class PassBuilder;
+}
 namespace clang {
 
 /// Bitfields of CodeGenOptions, split out from CodeGenOptions to ensure
 /// that this large collection of bitfields is a trivial class type.
 class CodeGenOptionsBase {
   friend class CompilerInvocation;
+  friend class CompilerInvocationBase;
 
 public:
 #define CODEGENOPT(Name, Bits, Default) unsigned Name : Bits;
@@ -55,13 +59,14 @@ public:
   };
 
   enum VectorLibrary {
-    NoLibrary,         // Don't use any vector library.
-    Accelerate,        // Use the Accelerate framework.
-    LIBMVEC,           // GLIBC vector math library.
-    MASSV,             // IBM MASS vector library.
-    SVML,              // Intel short vector math library.
-    SLEEF,             // SLEEF SIMD Library for Evaluating Elementary Functions.
-    Darwin_libsystem_m // Use Darwin's libsytem_m vector functions.
+    NoLibrary,  // Don't use any vector library.
+    Accelerate, // Use the Accelerate framework.
+    LIBMVEC,    // GLIBC vector math library.
+    MASSV,      // IBM MASS vector library.
+    SVML,       // Intel short vector math library.
+    SLEEF,      // SLEEF SIMD Library for Evaluating Elementary Functions.
+    Darwin_libsystem_m, // Use Darwin's libsytem_m vector functions.
+    ArmPL               // Arm Performance Libraries.
   };
 
   enum ObjCDispatchMethodKind {
@@ -172,6 +177,10 @@ public:
   /// The code model to use (-mcmodel).
   std::string CodeModel;
 
+  /// The code model-specific large data threshold to use
+  /// (-mlarge-data-threshold).
+  uint64_t LargeDataThreshold;
+
   /// The filename with path we use for coverage data files. The runtime
   /// allows further manipulation with the GCOV_PREFIX and GCOV_PREFIX_STRIP
   /// environment variables.
@@ -206,8 +215,11 @@ public:
   /// if non-empty.
   std::string RecordCommandLine;
 
-  std::map<std::string, std::string> DebugPrefixMap;
-  std::map<std::string, std::string> CoveragePrefixMap;
+  llvm::SmallVector<std::pair<std::string, std::string>, 0> DebugPrefixMap;
+
+  /// Prefix replacement map for source-based code coverage to remap source
+  /// file paths in coverage mapping.
+  llvm::SmallVector<std::pair<std::string, std::string>, 0> CoveragePrefixMap;
 
   /// The ABI to use for passing floating point arguments.
   std::string FloatABI;
@@ -278,6 +290,9 @@ public:
 
   /// Name of the profile file to use as output for with -fmemory-profile.
   std::string MemoryProfileOutput;
+
+  /// Name of the profile file to use as input for -fmemory-profile-use.
+  std::string MemoryProfileUsePath;
 
   /// Name of the profile file to use as input for -fprofile-instr-use
   std::string ProfileInstrumentUsePath;
@@ -395,6 +410,9 @@ public:
 
   /// List of dynamic shared object files to be loaded as pass plugins.
   std::vector<std::string> PassPlugins;
+
+  /// List of pass builder callbacks.
+  std::vector<std::function<void(llvm::PassBuilder &)>> PassBuilderCallbacks;
 
   /// Path to allowlist file specifying which objects
   /// (files, functions) should exclusively be instrumented

@@ -96,11 +96,6 @@ if(WIN32)
       )
     endforeach()
   endforeach()
-else()
-  # It is difficult to create a dummy assembly file that compiles into an
-  # executable for every architecture and then check the C compiler to
-  # see if -x assembler-with-cpp exists and works, so we assume it does for non-Windows.
-  set(LIBOMP_HAVE_X_ASSEMBLER_WITH_CPP_FLAG TRUE)
 endif()
 if(${LIBOMP_FORTRAN_MODULES})
   libomp_check_fortran_flag(-m32 LIBOMP_HAVE_M32_FORTRAN_FLAG)
@@ -330,7 +325,8 @@ else()
       (LIBOMP_ARCH STREQUAL ppc64le) OR
       (LIBOMP_ARCH STREQUAL ppc64) OR
       (LIBOMP_ARCH STREQUAL riscv64) OR
-      (LIBOMP_ARCH STREQUAL loongarch64))
+      (LIBOMP_ARCH STREQUAL loongarch64) OR
+      (LIBOMP_ARCH STREQUAL s390x))
      AND # OS supported?
      ((WIN32 AND LIBOMP_HAVE_PSAPI) OR APPLE OR (NOT WIN32 AND LIBOMP_HAVE_WEAK_ATTRIBUTE)))
     set(LIBOMP_HAVE_OMPT_SUPPORT TRUE)

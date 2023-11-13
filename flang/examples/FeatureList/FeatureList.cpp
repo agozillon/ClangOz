@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 
+using namespace Fortran::common;
 using namespace Fortran::frontend;
 using namespace Fortran::parser;
 using namespace Fortran;
@@ -80,7 +81,7 @@ public:
   READ_FEATURE(AccEndAtomic)
   READ_FEATURE(AccEndBlockDirective)
   READ_FEATURE(AccEndCombinedDirective)
-  READ_FEATURE(AccGangArgument)
+  READ_FEATURE(AccGangArg)
   READ_FEATURE(AccObject)
   READ_FEATURE(AccObjectList)
   READ_FEATURE(AccObjectListWithModifier)
@@ -474,6 +475,7 @@ public:
   READ_FEATURE(OmpDependenceType::Type)
   READ_FEATURE(OmpDependSinkVec)
   READ_FEATURE(OmpDependSinkVecLength)
+  READ_FEATURE(OmpEndAllocators)
   READ_FEATURE(OmpEndAtomic)
   READ_FEATURE(OmpEndBlockDirective)
   READ_FEATURE(OmpEndCriticalDirective)
@@ -506,7 +508,10 @@ public:
   READ_FEATURE(OmpReductionInitializerClause)
   READ_FEATURE(OmpReductionOperator)
   READ_FEATURE(OmpAllocateClause)
-  READ_FEATURE(OmpAllocateClause::Allocator)
+  READ_FEATURE(OmpAllocateClause::AllocateModifier)
+  READ_FEATURE(OmpAllocateClause::AllocateModifier::Allocator)
+  READ_FEATURE(OmpAllocateClause::AllocateModifier::ComplexModifier)
+  READ_FEATURE(OmpAllocateClause::AllocateModifier::Align)
   READ_FEATURE(OmpScheduleClause)
   READ_FEATURE(OmpScheduleClause::ScheduleType)
   READ_FEATURE(OmpDeviceClause)
@@ -549,10 +554,11 @@ public:
   READ_FEATURE(OmpAtomicClause)
   READ_FEATURE(OmpAtomicClauseList)
   READ_FEATURE(OmpAtomicDefaultMemOrderClause)
-  READ_FEATURE(OmpAtomicDefaultMemOrderClause::Type)
+  READ_FEATURE(OmpAtomicDefaultMemOrderType)
   READ_FEATURE(OpenMPFlushConstruct)
   READ_FEATURE(OpenMPLoopConstruct)
   READ_FEATURE(OpenMPExecutableAllocate)
+  READ_FEATURE(OpenMPAllocatorsConstruct)
   READ_FEATURE(OpenMPRequiresConstruct)
   READ_FEATURE(OpenMPSimpleStandaloneConstruct)
   READ_FEATURE(OpenMPStandaloneConstruct)

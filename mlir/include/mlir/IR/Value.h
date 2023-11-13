@@ -187,6 +187,11 @@ public:
   /// Returns true if the value is used outside of the given block.
   bool isUsedOutsideOfBlock(Block *block);
 
+  /// Shuffle the use list order according to the provided indices. It is
+  /// responsibility of the caller to make sure that the indices map the current
+  /// use-list chain to another valid use-list chain.
+  void shuffleUseList(ArrayRef<unsigned> indices);
+
   //===--------------------------------------------------------------------===//
   // Uses
 
@@ -226,6 +231,7 @@ public:
 
   /// Print this value as if it were an operand.
   void printAsOperand(raw_ostream &os, AsmState &state);
+  void printAsOperand(raw_ostream &os, const OpPrintingFlags &flags);
 
   /// Methods for supporting PointerLikeTypeTraits.
   void *getAsOpaquePointer() const { return impl; }
@@ -261,6 +267,9 @@ public:
 
   /// Return which operand this is in the OpOperand list of the Operation.
   unsigned getOperandNumber();
+
+  /// Set the current value being used by this operand.
+  void assign(Value value) { set(value); }
 
 private:
   /// Keep the constructor private and accessible to the OperandStorage class
@@ -432,7 +441,7 @@ struct TypedValue : Value {
   static bool classof(Value value) { return llvm::isa<Ty>(value.getType()); }
 
   /// Return the known Type
-  Ty getType() { return Value::getType().template cast<Ty>(); }
+  Ty getType() { return llvm::cast<Ty>(Value::getType()); }
   void setType(Ty ty) { Value::setType(ty); }
 };
 
@@ -523,6 +532,18 @@ struct DenseMapInfo<mlir::OpResult> : public DenseMapInfo<mlir::Value> {
     return reinterpret_cast<mlir::detail::OpResultImpl *>(pointer);
   }
 };
+template <typename T>
+struct DenseMapInfo<mlir::detail::TypedValue<T>>
+    : public DenseMapInfo<mlir::Value> {
+  static mlir::detail::TypedValue<T> getEmptyKey() {
+    void *pointer = llvm::DenseMapInfo<void *>::getEmptyKey();
+    return reinterpret_cast<mlir::detail::ValueImpl *>(pointer);
+  }
+  static mlir::detail::TypedValue<T> getTombstoneKey() {
+    void *pointer = llvm::DenseMapInfo<void *>::getTombstoneKey();
+    return reinterpret_cast<mlir::detail::ValueImpl *>(pointer);
+  }
+};
 
 /// Allow stealing the low bits of a value.
 template <>
@@ -555,6 +576,14 @@ public:
     return reinterpret_cast<mlir::detail::OpResultImpl *>(pointer);
   }
 };
+template <typename T>
+struct PointerLikeTypeTraits<mlir::detail::TypedValue<T>>
+    : public PointerLikeTypeTraits<mlir::Value> {
+public:
+  static inline mlir::detail::TypedValue<T> getFromVoidPointer(void *pointer) {
+    return reinterpret_cast<mlir::detail::ValueImpl *>(pointer);
+  }
+};
 
 /// Add support for llvm style casts. We provide a cast between To and From if
 /// From is mlir::Value or derives from it.
@@ -576,7 +605,6 @@ struct CastInfo<
     /// Return a constant true instead of a dynamic true when casting to self or
     /// up the hierarchy.
     if constexpr (std::is_base_of_v<To, From>) {
-      (void)ty;
       return true;
     } else {
       return To::classof(ty);

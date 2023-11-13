@@ -414,7 +414,7 @@ bool llvm::wouldInstructionBeTriviallyDeadOnUnusedPaths(
   return wouldInstructionBeTriviallyDead(I, TLI);
 }
 
-bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
+bool llvm::wouldInstructionBeTriviallyDead(const Instruction *I,
                                            const TargetLibraryInfo *TLI) {
   if (I->isTerminator())
     return false;
@@ -424,19 +424,11 @@ bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
   if (I->isEHPad())
     return false;
 
-  // We don't want debug info removed by anything this general, unless
-  // debug info is empty.
-  if (DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(I)) {
-    if (DDI->getAddress())
-      return false;
-    return true;
-  }
-  if (DbgValueInst *DVI = dyn_cast<DbgValueInst>(I)) {
-    if (DVI->hasArgList() || DVI->getValue(0))
-      return false;
-    return true;
-  }
-  if (DbgLabelInst *DLI = dyn_cast<DbgLabelInst>(I)) {
+  // We don't want debug info removed by anything this general.
+  if (isa<DbgVariableIntrinsic>(I))
+    return false;
+
+  if (const DbgLabelInst *DLI = dyn_cast<DbgLabelInst>(I)) {
     if (DLI->getLabel())
       return false;
     return true;
@@ -451,9 +443,16 @@ bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
     if (!II)
       return false;
 
+    switch (II->getIntrinsicID()) {
+    case Intrinsic::experimental_guard: {
+      // Guards on true are operationally no-ops.  In the future we can
+      // consider more sophisticated tradeoffs for guards considering potential
+      // for check widening, but for now we keep things simple.
+      auto *Cond = dyn_cast<ConstantInt>(II->getArgOperand(0));
+      return Cond && Cond->isOne();
+    }
     // TODO: These intrinsics are not safe to remove, because this may remove
     // a well-defined trap.
-    switch (II->getIntrinsicID()) {
     case Intrinsic::wasm_trunc_signed:
     case Intrinsic::wasm_trunc_unsigned:
     case Intrinsic::ptrauth_auth:
@@ -469,7 +468,7 @@ bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
 
   // Special case intrinsics that "may have side effects" but can be deleted
   // when dead.
-  if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) {
+  if (const IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) {
     // Safe to delete llvm.stacksave and launder.invariant.group if dead.
     if (II->getIntrinsicID() == Intrinsic::stacksave ||
         II->getIntrinsicID() == Intrinsic::launder_invariant_group)
@@ -492,13 +491,9 @@ bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
       return false;
     }
 
-    // Assumptions are dead if their condition is trivially true.  Guards on
-    // true are operationally no-ops.  In the future we can consider more
-    // sophisticated tradeoffs for guards considering potential for check
-    // widening, but for now we keep things simple.
-    if ((II->getIntrinsicID() == Intrinsic::assume &&
-         isAssumeWithEmptyBundle(cast<AssumeInst>(*II))) ||
-        II->getIntrinsicID() == Intrinsic::experimental_guard) {
+    // Assumptions are dead if their condition is trivially true.
+    if (II->getIntrinsicID() == Intrinsic::assume &&
+        isAssumeWithEmptyBundle(cast<AssumeInst>(*II))) {
       if (ConstantInt *Cond = dyn_cast<ConstantInt>(II->getArgOperand(0)))
         return !Cond->isZero();
 
@@ -855,17 +850,17 @@ static bool CanMergeValues(Value *First, Value *Second) {
 /// branch to Succ, into Succ.
 ///
 /// Assumption: Succ is the single successor for BB.
-static bool CanPropagatePredecessorsForPHIs(BasicBlock *BB, BasicBlock *Succ) {
+static bool
+CanPropagatePredecessorsForPHIs(BasicBlock *BB, BasicBlock *Succ,
+                                const SmallPtrSetImpl<BasicBlock *> &BBPreds) {
   assert(*succ_begin(BB) == Succ && "Succ is not successor of BB!");
 
   LLVM_DEBUG(dbgs() << "Looking to fold " << BB->getName() << " into "
                     << Succ->getName() << "\n");
   // Shortcut, if there is only a single predecessor it must be BB and merging
   // is always safe
-  if (Succ->getSinglePredecessor()) return true;
-
-  // Make a list of the predecessors of BB
-  SmallPtrSet<BasicBlock*, 16> BBPreds(pred_begin(BB), pred_end(BB));
+  if (Succ->getSinglePredecessor())
+    return true;
 
   // Look at all the phi nodes in Succ, to see if they present a conflict when
   // merging these blocks
@@ -1005,6 +1000,35 @@ static void replaceUndefValuesInPhi(PHINode *PN,
   }
 }
 
+// Only when they shares a single common predecessor, return true.
+// Only handles cases when BB can't be merged while its predecessors can be
+// redirected.
+static bool
+CanRedirectPredsOfEmptyBBToSucc(BasicBlock *BB, BasicBlock *Succ,
+                                const SmallPtrSetImpl<BasicBlock *> &BBPreds,
+                                const SmallPtrSetImpl<BasicBlock *> &SuccPreds,
+                                BasicBlock *&CommonPred) {
+
+  // There must be phis in BB, otherwise BB will be merged into Succ directly
+  if (BB->phis().empty() || Succ->phis().empty())
+    return false;
+
+  // BB must have predecessors not shared that can be redirected to Succ
+  if (!BB->hasNPredecessorsOrMore(2))
+    return false;
+
+  // Get single common predecessors of both BB and Succ
+  for (BasicBlock *SuccPred : SuccPreds) {
+    if (BBPreds.count(SuccPred)) {
+      if (CommonPred)
+        return false;
+      CommonPred = SuccPred;
+    }
+  }
+
+  return true;
+}
+
 /// Replace a value flowing from a block to a phi with
 /// potentially multiple instances of that value flowing from the
 /// block's predecessors to the phi.
@@ -1012,9 +1036,11 @@ static void replaceUndefValuesInPhi(PHINode *PN,
 /// \param BB The block with the value flowing into the phi.
 /// \param BBPreds The predecessors of BB.
 /// \param PN The phi that we are updating.
+/// \param CommonPred The common predecessor of BB and PN's BasicBlock
 static void redirectValuesFromPredecessorsToPhi(BasicBlock *BB,
                                                 const PredBlockVector &BBPreds,
-                                                PHINode *PN) {
+                                                PHINode *PN,
+                                                BasicBlock *CommonPred) {
   Value *OldVal = PN->removeIncomingValue(BB, false);
   assert(OldVal && "No entry in PHI for Pred BB!");
 
@@ -1042,26 +1068,39 @@ static void redirectValuesFromPredecessorsToPhi(BasicBlock *BB,
       // will trigger asserts if we try to clean it up now, without also
       // simplifying the corresponding conditional branch).
       BasicBlock *PredBB = OldValPN->getIncomingBlock(i);
+
+      if (PredBB == CommonPred)
+        continue;
+
       Value *PredVal = OldValPN->getIncomingValue(i);
-      Value *Selected = selectIncomingValueForBlock(PredVal, PredBB,
-                                                    IncomingValues);
+      Value *Selected =
+          selectIncomingValueForBlock(PredVal, PredBB, IncomingValues);
 
       // And add a new incoming value for this predecessor for the
       // newly retargeted branch.
       PN->addIncoming(Selected, PredBB);
     }
+    if (CommonPred)
+      PN->addIncoming(OldValPN->getIncomingValueForBlock(CommonPred), BB);
+
   } else {
     for (unsigned i = 0, e = BBPreds.size(); i != e; ++i) {
       // Update existing incoming values in PN for this
       // predecessor of BB.
       BasicBlock *PredBB = BBPreds[i];
-      Value *Selected = selectIncomingValueForBlock(OldVal, PredBB,
-                                                    IncomingValues);
+
+      if (PredBB == CommonPred)
+        continue;
+
+      Value *Selected =
+          selectIncomingValueForBlock(OldVal, PredBB, IncomingValues);
 
       // And add a new incoming value for this predecessor for the
       // newly retargeted branch.
       PN->addIncoming(Selected, PredBB);
     }
+    if (CommonPred)
+      PN->addIncoming(OldVal, BB);
   }
 
   replaceUndefValuesInPhi(PN, IncomingValues);
@@ -1072,13 +1111,30 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB,
   assert(BB != &BB->getParent()->getEntryBlock() &&
          "TryToSimplifyUncondBranchFromEmptyBlock called on entry block!");
 
-  // We can't eliminate infinite loops.
+  // We can't simplify infinite loops.
   BasicBlock *Succ = cast<BranchInst>(BB->getTerminator())->getSuccessor(0);
-  if (BB == Succ) return false;
+  if (BB == Succ)
+    return false;
 
-  // Check to see if merging these blocks would cause conflicts for any of the
-  // phi nodes in BB or Succ. If not, we can safely merge.
-  if (!CanPropagatePredecessorsForPHIs(BB, Succ)) return false;
+  SmallPtrSet<BasicBlock *, 16> BBPreds(pred_begin(BB), pred_end(BB));
+  SmallPtrSet<BasicBlock *, 16> SuccPreds(pred_begin(Succ), pred_end(Succ));
+
+  // The single common predecessor of BB and Succ when BB cannot be killed
+  BasicBlock *CommonPred = nullptr;
+
+  bool BBKillable = CanPropagatePredecessorsForPHIs(BB, Succ, BBPreds);
+
+  // Even if we can not fold bB into Succ, we may be able to redirect the
+  // predecessors of BB to Succ.
+  bool BBPhisMergeable =
+      BBKillable ||
+      CanRedirectPredsOfEmptyBBToSucc(BB, Succ, BBPreds, SuccPreds, CommonPred);
+
+  if (!BBKillable && !BBPhisMergeable)
+    return false;
+
+  // Check to see if merging these blocks/phis would cause conflicts for any of
+  // the phi nodes in BB or Succ. If not, we can safely merge.
 
   // Check for cases where Succ has multiple predecessors and a PHI node in BB
   // has uses which will not disappear when the PHI nodes are merged.  It is
@@ -1106,6 +1162,11 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB,
       ++BBI;
     }
   }
+
+  if (BBPhisMergeable && CommonPred)
+    LLVM_DEBUG(dbgs() << "Found Common Predecessor between: " << BB->getName()
+                      << " and " << Succ->getName() << " : "
+                      << CommonPred->getName() << "\n");
 
   // 'BB' and 'BB->Pred' are loop latches, bail out to presrve inner loop
   // metadata.
@@ -1179,25 +1240,37 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB,
           if (PredTI->hasMetadata(LLVMContext::MD_loop))
             return false;
 
-  LLVM_DEBUG(dbgs() << "Killing Trivial BB: \n" << *BB);
+  if (BBKillable)
+    LLVM_DEBUG(dbgs() << "Killing Trivial BB: \n" << *BB);
+  else if (BBPhisMergeable)
+    LLVM_DEBUG(dbgs() << "Merge Phis in Trivial BB: \n" << *BB);
 
   SmallVector<DominatorTree::UpdateType, 32> Updates;
+
   if (DTU) {
     // To avoid processing the same predecessor more than once.
     SmallPtrSet<BasicBlock *, 8> SeenPreds;
-    // All predecessors of BB will be moved to Succ.
-    SmallPtrSet<BasicBlock *, 8> PredsOfSucc(pred_begin(Succ), pred_end(Succ));
+    // All predecessors of BB (except the common predecessor) will be moved to
+    // Succ.
     Updates.reserve(Updates.size() + 2 * pred_size(BB) + 1);
-    for (auto *PredOfBB : predecessors(BB))
-      // This predecessor of BB may already have Succ as a successor.
-      if (!PredsOfSucc.contains(PredOfBB))
+
+    for (auto *PredOfBB : predecessors(BB)) {
+      // Do not modify those common predecessors of BB and Succ
+      if (!SuccPreds.contains(PredOfBB))
         if (SeenPreds.insert(PredOfBB).second)
           Updates.push_back({DominatorTree::Insert, PredOfBB, Succ});
+    }
+
     SeenPreds.clear();
+
     for (auto *PredOfBB : predecessors(BB))
-      if (SeenPreds.insert(PredOfBB).second)
+      // When BB cannot be killed, do not remove the edge between BB and
+      // CommonPred.
+      if (SeenPreds.insert(PredOfBB).second && PredOfBB != CommonPred)
         Updates.push_back({DominatorTree::Delete, PredOfBB, BB});
-    Updates.push_back({DominatorTree::Delete, BB, Succ});
+
+    if (BBKillable)
+      Updates.push_back({DominatorTree::Delete, BB, Succ});
   }
 
   if (isa<PHINode>(Succ->begin())) {
@@ -1209,21 +1282,19 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB,
     // Loop over all of the PHI nodes in the successor of BB.
     for (BasicBlock::iterator I = Succ->begin(); isa<PHINode>(I); ++I) {
       PHINode *PN = cast<PHINode>(I);
-
-      redirectValuesFromPredecessorsToPhi(BB, BBPreds, PN);
+      redirectValuesFromPredecessorsToPhi(BB, BBPreds, PN, CommonPred);
     }
   }
 
   if (Succ->getSinglePredecessor()) {
     // BB is the only predecessor of Succ, so Succ will end up with exactly
     // the same predecessors BB had.
-
     // Copy over any phi, debug or lifetime instruction.
     BB->getTerminator()->eraseFromParent();
     Succ->splice(Succ->getFirstNonPHI()->getIterator(), BB);
   } else {
     while (PHINode *PN = dyn_cast<PHINode>(&BB->front())) {
-      // We explicitly check for such uses in CanPropagatePredecessorsForPHIs.
+      // We explicitly check for such uses for merging phis.
       assert(PN->use_empty() && "There shouldn't be any uses here!");
       PN->eraseFromParent();
     }
@@ -1231,33 +1302,47 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB,
 
   // If the unconditional branch we replaced contains llvm.loop metadata, we
   // add the metadata to the branch instructions in the predecessors.
-  unsigned LoopMDKind = BB->getContext().getMDKindID("llvm.loop");
-  Instruction *TI = BB->getTerminator();
-  if (TI)
-    if (MDNode *LoopMD = TI->getMetadata(LoopMDKind))
+  if (Instruction *TI = BB->getTerminator())
+    if (MDNode *LoopMD = TI->getMetadata(LLVMContext::MD_loop))
       for (BasicBlock *Pred : predecessors(BB))
-        Pred->getTerminator()->setMetadata(LoopMDKind, LoopMD);
+        Pred->getTerminator()->setMetadata(LLVMContext::MD_loop, LoopMD);
 
-  // Everything that jumped to BB now goes to Succ.
-  BB->replaceAllUsesWith(Succ);
-  if (!Succ->hasName()) Succ->takeName(BB);
+  if (BBKillable) {
+    // Everything that jumped to BB now goes to Succ.
+    BB->replaceAllUsesWith(Succ);
 
-  // Clear the successor list of BB to match updates applying to DTU later.
-  if (BB->getTerminator())
-    BB->back().eraseFromParent();
-  new UnreachableInst(BB->getContext(), BB);
-  assert(succ_empty(BB) && "The successor list of BB isn't empty before "
-                           "applying corresponding DTU updates.");
+    if (!Succ->hasName())
+      Succ->takeName(BB);
+
+    // Clear the successor list of BB to match updates applying to DTU later.
+    if (BB->getTerminator())
+      BB->back().eraseFromParent();
+
+    new UnreachableInst(BB->getContext(), BB);
+    assert(succ_empty(BB) && "The successor list of BB isn't empty before "
+                             "applying corresponding DTU updates.");
+  } else if (BBPhisMergeable) {
+    //  Everything except CommonPred that jumped to BB now goes to Succ.
+    BB->replaceUsesWithIf(Succ, [BBPreds, CommonPred](Use &U) -> bool {
+      if (Instruction *UseInst = dyn_cast<Instruction>(U.getUser()))
+        return UseInst->getParent() != CommonPred &&
+               BBPreds.contains(UseInst->getParent());
+      return false;
+    });
+  }
 
   if (DTU)
     DTU->applyUpdates(Updates);
 
-  DeleteDeadBlock(BB, DTU);
+  if (BBKillable)
+    DeleteDeadBlock(BB, DTU);
 
   return true;
 }
 
-static bool EliminateDuplicatePHINodesNaiveImpl(BasicBlock *BB) {
+static bool
+EliminateDuplicatePHINodesNaiveImpl(BasicBlock *BB,
+                                    SmallPtrSetImpl<PHINode *> &ToRemove) {
   // This implementation doesn't currently consider undef operands
   // specially. Theoretically, two phis which are identical except for
   // one having an undef where the other doesn't could be collapsed.
@@ -1273,12 +1358,14 @@ static bool EliminateDuplicatePHINodesNaiveImpl(BasicBlock *BB) {
     // Note that we only look in the upper square's triangle,
     // we already checked that the lower triangle PHI's aren't identical.
     for (auto J = I; PHINode *DuplicatePN = dyn_cast<PHINode>(J); ++J) {
+      if (ToRemove.contains(DuplicatePN))
+        continue;
       if (!DuplicatePN->isIdenticalToWhenDefined(PN))
         continue;
       // A duplicate. Replace this PHI with the base PHI.
       ++NumPHICSEs;
       DuplicatePN->replaceAllUsesWith(PN);
-      DuplicatePN->eraseFromParent();
+      ToRemove.insert(DuplicatePN);
       Changed = true;
 
       // The RAUW can change PHIs that we already visited.
@@ -1289,7 +1376,9 @@ static bool EliminateDuplicatePHINodesNaiveImpl(BasicBlock *BB) {
   return Changed;
 }
 
-static bool EliminateDuplicatePHINodesSetBasedImpl(BasicBlock *BB) {
+static bool
+EliminateDuplicatePHINodesSetBasedImpl(BasicBlock *BB,
+                                       SmallPtrSetImpl<PHINode *> &ToRemove) {
   // This implementation doesn't currently consider undef operands
   // specially. Theoretically, two phis which are identical except for
   // one having an undef where the other doesn't could be collapsed.
@@ -1353,12 +1442,14 @@ static bool EliminateDuplicatePHINodesSetBasedImpl(BasicBlock *BB) {
   // Examine each PHI.
   bool Changed = false;
   for (auto I = BB->begin(); PHINode *PN = dyn_cast<PHINode>(I++);) {
+    if (ToRemove.contains(PN))
+      continue;
     auto Inserted = PHISet.insert(PN);
     if (!Inserted.second) {
       // A duplicate. Replace this PHI with its duplicate.
       ++NumPHICSEs;
       PN->replaceAllUsesWith(*Inserted.first);
-      PN->eraseFromParent();
+      ToRemove.insert(PN);
       Changed = true;
 
       // The RAUW can change PHIs that we already visited. Start over from the
@@ -1371,25 +1462,27 @@ static bool EliminateDuplicatePHINodesSetBasedImpl(BasicBlock *BB) {
   return Changed;
 }
 
-bool llvm::EliminateDuplicatePHINodes(BasicBlock *BB) {
+bool llvm::EliminateDuplicatePHINodes(BasicBlock *BB,
+                                      SmallPtrSetImpl<PHINode *> &ToRemove) {
   if (
 #ifndef NDEBUG
       !PHICSEDebugHash &&
 #endif
       hasNItemsOrLess(BB->phis(), PHICSENumPHISmallSize))
-    return EliminateDuplicatePHINodesNaiveImpl(BB);
-  return EliminateDuplicatePHINodesSetBasedImpl(BB);
+    return EliminateDuplicatePHINodesNaiveImpl(BB, ToRemove);
+  return EliminateDuplicatePHINodesSetBasedImpl(BB, ToRemove);
 }
 
-/// If the specified pointer points to an object that we control, try to modify
-/// the object's alignment to PrefAlign. Returns a minimum known alignment of
-/// the value after the operation, which may be lower than PrefAlign.
-///
-/// Increating value alignment isn't often possible though. If alignment is
-/// important, a more reliable approach is to simply align all global variables
-/// and allocation instructions to their preferred alignment from the beginning.
-static Align tryEnforceAlignment(Value *V, Align PrefAlign,
-                                 const DataLayout &DL) {
+bool llvm::EliminateDuplicatePHINodes(BasicBlock *BB) {
+  SmallPtrSet<PHINode *, 8> ToRemove;
+  bool Changed = EliminateDuplicatePHINodes(BB, ToRemove);
+  for (PHINode *PN : ToRemove)
+    PN->eraseFromParent();
+  return Changed;
+}
+
+Align llvm::tryEnforceAlignment(Value *V, Align PrefAlign,
+                                const DataLayout &DL) {
   V = V->stripPointerCasts();
 
   if (AllocaInst *AI = dyn_cast<AllocaInst>(V)) {
@@ -1494,7 +1587,7 @@ static bool valueCoversEntireFragment(Type *ValTy, DbgVariableIntrinsic *DII) {
   const DataLayout &DL = DII->getModule()->getDataLayout();
   TypeSize ValueSize = DL.getTypeAllocSizeInBits(ValTy);
   if (std::optional<uint64_t> FragmentSize = DII->getFragmentSizeInBits())
-    return TypeSize::isKnownGE(ValueSize, TypeSize::getFixed(*FragmentSize));
+    return TypeSize::isKnownGE(ValueSize, TypeSize::Fixed(*FragmentSize));
 
   // We can't always calculate the size of the DI variable (e.g. if it is a
   // VLA). Try to use the size of the alloca that the dbg intrinsic describes
@@ -1990,6 +2083,18 @@ uint64_t getDwarfOpForBinOp(Instruction::BinaryOps Opcode) {
   }
 }
 
+static void handleSSAValueOperands(uint64_t CurrentLocOps,
+                                   SmallVectorImpl<uint64_t> &Opcodes,
+                                   SmallVectorImpl<Value *> &AdditionalValues,
+                                   Instruction *I) {
+  if (!CurrentLocOps) {
+    Opcodes.append({dwarf::DW_OP_LLVM_arg, 0});
+    CurrentLocOps = 1;
+  }
+  Opcodes.append({dwarf::DW_OP_LLVM_arg, CurrentLocOps});
+  AdditionalValues.push_back(I->getOperand(1));
+}
+
 Value *getSalvageOpsForBinOp(BinaryOperator *BI, uint64_t CurrentLocOps,
                              SmallVectorImpl<uint64_t> &Opcodes,
                              SmallVectorImpl<Value *> &AdditionalValues) {
@@ -2012,12 +2117,7 @@ Value *getSalvageOpsForBinOp(BinaryOperator *BI, uint64_t CurrentLocOps,
     }
     Opcodes.append({dwarf::DW_OP_constu, Val});
   } else {
-    if (!CurrentLocOps) {
-      Opcodes.append({dwarf::DW_OP_LLVM_arg, 0});
-      CurrentLocOps = 1;
-    }
-    Opcodes.append({dwarf::DW_OP_LLVM_arg, CurrentLocOps});
-    AdditionalValues.push_back(BI->getOperand(1));
+    handleSSAValueOperands(CurrentLocOps, Opcodes, AdditionalValues, BI);
   }
 
   // Add salvaged binary operator to expression stack, if it has a valid
@@ -2027,6 +2127,60 @@ Value *getSalvageOpsForBinOp(BinaryOperator *BI, uint64_t CurrentLocOps,
     return nullptr;
   Opcodes.push_back(DwarfBinOp);
   return BI->getOperand(0);
+}
+
+uint64_t getDwarfOpForIcmpPred(CmpInst::Predicate Pred) {
+  // The signedness of the operation is implicit in the typed stack, signed and
+  // unsigned instructions map to the same DWARF opcode.
+  switch (Pred) {
+  case CmpInst::ICMP_EQ:
+    return dwarf::DW_OP_eq;
+  case CmpInst::ICMP_NE:
+    return dwarf::DW_OP_ne;
+  case CmpInst::ICMP_UGT:
+  case CmpInst::ICMP_SGT:
+    return dwarf::DW_OP_gt;
+  case CmpInst::ICMP_UGE:
+  case CmpInst::ICMP_SGE:
+    return dwarf::DW_OP_ge;
+  case CmpInst::ICMP_ULT:
+  case CmpInst::ICMP_SLT:
+    return dwarf::DW_OP_lt;
+  case CmpInst::ICMP_ULE:
+  case CmpInst::ICMP_SLE:
+    return dwarf::DW_OP_le;
+  default:
+    return 0;
+  }
+}
+
+Value *getSalvageOpsForIcmpOp(ICmpInst *Icmp, uint64_t CurrentLocOps,
+                              SmallVectorImpl<uint64_t> &Opcodes,
+                              SmallVectorImpl<Value *> &AdditionalValues) {
+  // Handle icmp operations with constant integer operands as a special case.
+  auto *ConstInt = dyn_cast<ConstantInt>(Icmp->getOperand(1));
+  // Values wider than 64 bits cannot be represented within a DIExpression.
+  if (ConstInt && ConstInt->getBitWidth() > 64)
+    return nullptr;
+  // Push any Constant Int operand onto the expression stack.
+  if (ConstInt) {
+    if (Icmp->isSigned())
+      Opcodes.push_back(dwarf::DW_OP_consts);
+    else
+      Opcodes.push_back(dwarf::DW_OP_constu);
+    uint64_t Val = ConstInt->getSExtValue();
+    Opcodes.push_back(Val);
+  } else {
+    handleSSAValueOperands(CurrentLocOps, Opcodes, AdditionalValues, Icmp);
+  }
+
+  // Add salvaged binary operator to expression stack, if it has a valid
+  // representation in a DIExpression.
+  uint64_t DwarfIcmpOp = getDwarfOpForIcmpPred(Icmp->getPredicate());
+  if (!DwarfIcmpOp)
+    return nullptr;
+  Opcodes.push_back(DwarfIcmpOp);
+  return Icmp->getOperand(0);
 }
 
 Value *llvm::salvageDebugInfoImpl(Instruction &I, uint64_t CurrentLocOps,
@@ -2068,6 +2222,8 @@ Value *llvm::salvageDebugInfoImpl(Instruction &I, uint64_t CurrentLocOps,
     return getSalvageOpsForGEP(GEP, DL, CurrentLocOps, Ops, AdditionalValues);
   if (auto *BI = dyn_cast<BinaryOperator>(&I))
     return getSalvageOpsForBinOp(BI, CurrentLocOps, Ops, AdditionalValues);
+  if (auto *IC = dyn_cast<ICmpInst>(&I))
+    return getSalvageOpsForIcmpOp(IC, CurrentLocOps, Ops, AdditionalValues);
 
   // *Not* to do: we should not attempt to salvage load instructions,
   // because the validity and lifetime of a dbg.value containing
@@ -2717,6 +2873,10 @@ void llvm::combineMetadata(Instruction *K, const Instruction *J,
         // Preserve !nontemporal if it is present on both instructions.
         K->setMetadata(Kind, JMD);
         break;
+      case LLVMContext::MD_prof:
+        if (DoesKMove)
+          K->setMetadata(Kind, MDNode::getMergedProfMetadata(KMD, JMD, K, J));
+        break;
     }
   }
   // Set !invariant.group from J if J has it. If both instructions have it
@@ -2745,6 +2905,7 @@ void llvm::combineMetadataForCSE(Instruction *K, const Instruction *J,
                          LLVMContext::MD_dereferenceable_or_null,
                          LLVMContext::MD_access_group,
                          LLVMContext::MD_preserve_access_index,
+                         LLVMContext::MD_prof,
                          LLVMContext::MD_nontemporal,
                          LLVMContext::MD_noundef};
   combineMetadata(K, J, KnownIDs, KDominatesJ);
@@ -2838,9 +2999,10 @@ static unsigned replaceDominatedUsesWith(Value *From, Value *To,
   for (Use &U : llvm::make_early_inc_range(From->uses())) {
     if (!Dominates(Root, U))
       continue;
+    LLVM_DEBUG(dbgs() << "Replace dominated use of '";
+               From->printAsOperand(dbgs());
+               dbgs() << "' with " << *To << " in " << *U.getUser() << "\n");
     U.set(To);
-    LLVM_DEBUG(dbgs() << "Replace dominated use of '" << From->getName()
-                      << "' as " << *To << " in " << *U << "\n");
     ++Count;
   }
   return Count;
@@ -3003,6 +3165,41 @@ void llvm::hoistAllInstructionsInto(BasicBlock *DomBlock, Instruction *InsertPt,
   }
   DomBlock->splice(InsertPt->getIterator(), BB, BB->begin(),
                    BB->getTerminator()->getIterator());
+}
+
+DIExpression *llvm::getExpressionForConstant(DIBuilder &DIB, const Constant &C,
+                                             Type &Ty) {
+  // Create integer constant expression.
+  auto createIntegerExpression = [&DIB](const Constant &CV) -> DIExpression * {
+    const APInt &API = cast<ConstantInt>(&CV)->getValue();
+    std::optional<int64_t> InitIntOpt = API.trySExtValue();
+    return InitIntOpt ? DIB.createConstantValueExpression(
+                            static_cast<uint64_t>(*InitIntOpt))
+                      : nullptr;
+  };
+
+  if (isa<ConstantInt>(C))
+    return createIntegerExpression(C);
+
+  if (Ty.isFloatTy() || Ty.isDoubleTy()) {
+    const APFloat &APF = cast<ConstantFP>(&C)->getValueAPF();
+    return DIB.createConstantValueExpression(
+        APF.bitcastToAPInt().getZExtValue());
+  }
+
+  if (!Ty.isPointerTy())
+    return nullptr;
+
+  if (isa<ConstantPointerNull>(C))
+    return DIB.createConstantValueExpression(0);
+
+  if (const ConstantExpr *CE = dyn_cast<ConstantExpr>(&C))
+    if (CE->getOpcode() == Instruction::IntToPtr) {
+      const Value *V = CE->getOperand(0);
+      if (auto CI = dyn_cast_or_null<ConstantInt>(V))
+        return createIntegerExpression(*CI);
+    }
+  return nullptr;
 }
 
 namespace {

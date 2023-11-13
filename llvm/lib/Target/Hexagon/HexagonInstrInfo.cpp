@@ -19,6 +19,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/DFAPacketizer.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
@@ -33,6 +34,7 @@
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/ScheduleDAG.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
@@ -48,7 +50,6 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MachineValueType.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
@@ -2177,11 +2178,17 @@ bool HexagonInstrInfo::isConstExtended(const MachineInstr &MI) const {
   // have 'isExtended' flag set.
   assert(MO.isImm() && "Extendable operand must be Immediate type");
 
-  int MinValue = getMinValue(MI);
-  int MaxValue = getMaxValue(MI);
-  int ImmValue = MO.getImm();
-
-  return (ImmValue < MinValue || ImmValue > MaxValue);
+  int64_t Value = MO.getImm();
+  if ((F >> HexagonII::ExtentSignedPos) & HexagonII::ExtentSignedMask) {
+    int32_t SValue = Value;
+    int32_t MinValue = getMinValue(MI);
+    int32_t MaxValue = getMaxValue(MI);
+    return SValue < MinValue || SValue > MaxValue;
+  }
+  uint32_t UValue = Value;
+  uint32_t MinValue = getMinValue(MI);
+  uint32_t MaxValue = getMaxValue(MI);
+  return UValue < MinValue || UValue > MaxValue;
 }
 
 bool HexagonInstrInfo::isDeallocRet(const MachineInstr &MI) const {
@@ -2219,15 +2226,11 @@ bool HexagonInstrInfo::isDependent(const MachineInstr &ProdMI,
       if (RegA == RegB)
         return true;
 
-      if (RegA.isPhysical())
-        for (MCPhysReg SubReg : HRI.subregs(RegA))
-          if (RegB == SubReg)
-            return true;
+      if (RegA.isPhysical() && llvm::is_contained(HRI.subregs(RegA), RegB))
+        return true;
 
-      if (RegB.isPhysical())
-        for (MCPhysReg SubReg : HRI.subregs(RegB))
-          if (RegA == SubReg)
-            return true;
+      if (RegB.isPhysical() && llvm::is_contained(HRI.subregs(RegB), RegA))
+        return true;
     }
 
   return false;

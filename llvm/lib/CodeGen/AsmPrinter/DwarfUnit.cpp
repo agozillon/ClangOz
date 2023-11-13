@@ -16,7 +16,6 @@
 #include "DwarfExpression.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
@@ -543,7 +542,7 @@ void DwarfUnit::addAccess(DIE &Die, DINode::DIFlags Flags) {
 }
 
 DIE *DwarfUnit::getOrCreateContextDIE(const DIScope *Context) {
-  if (!Context || isa<DIFile>(Context))
+  if (!Context || isa<DIFile>(Context) || isa<DICompileUnit>(Context))
     return &getUnitDie();
   if (auto *T = dyn_cast<DIType>(Context))
     return getOrCreateTypeDIE(T);
@@ -1223,7 +1222,7 @@ bool DwarfUnit::applySubprogramDefinitionAttributes(const DISubprogram *SP,
          "decl has a linkage name and it is different");
   if (DeclLinkageName.empty() &&
       // Always emit it for abstract subprograms.
-      (DD->useAllLinkageNames() || DU->getAbstractSPDies().lookup(SP)))
+      (DD->useAllLinkageNames() || DU->getAbstractScopeDIEs().lookup(SP)))
     addLinkageName(SPDie, LinkageName);
 
   if (!DeclDie)

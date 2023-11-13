@@ -190,7 +190,7 @@ private:
   SmallString<128> CompilationDir;
 
   /// Prefix replacement map for source file information.
-  std::map<std::string, const std::string, std::greater<>> DebugPrefixMap;
+  SmallVector<std::pair<std::string, std::string>, 0> DebugPrefixMap;
 
   /// The main file name if passed in explicitly.
   std::string MainFileName;
@@ -473,9 +473,11 @@ public:
   /// \name Symbol Management
   /// @{
 
-  /// Create and return a new linker temporary symbol with a unique but
-  /// unspecified name.
+  /// Create a new linker temporary symbol with the specified prefix (Name) or
+  /// "tmp". This creates a "l"-prefixed symbol for Mach-O and is identical to
+  /// createNamedTempSymbol for other object file formats.
   MCSymbol *createLinkerPrivateTempSymbol();
+  MCSymbol *createLinkerPrivateSymbol(const Twine &Name);
 
   /// Create a temporary symbol with a unique name. The name will be omitted
   /// in the symbol table if UseNamesOnTempLabels is false (default except
@@ -788,6 +790,7 @@ public:
   void setGenDwarfForAssembly(bool Value) { GenDwarfForAssembly = Value; }
   unsigned getGenDwarfFileNumber() { return GenDwarfFileNumber; }
   EmitDwarfUnwindType emitDwarfUnwindInfo() const;
+  bool emitCompactUnwindNonCanonical() const;
 
   void setGenDwarfFileNumber(unsigned FileNumber) {
     GenDwarfFileNumber = FileNumber;

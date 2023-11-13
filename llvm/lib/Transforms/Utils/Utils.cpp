@@ -21,12 +21,9 @@ using namespace llvm;
 /// initializeTransformUtils - Initialize all passes in the TransformUtils
 /// library.
 void llvm::initializeTransformUtils(PassRegistry &Registry) {
-  initializeAddDiscriminatorsLegacyPassPass(Registry);
-  initializeAssumeSimplifyPassLegacyPassPass(Registry);
   initializeAssumeBuilderPassLegacyPassPass(Registry);
   initializeBreakCriticalEdgesPass(Registry);
   initializeCanonicalizeFreezeInLoopsPass(Registry);
-  initializeInstNamerPass(Registry);
   initializeLCSSAWrapperPassPass(Registry);
   initializeLoopSimplifyPass(Registry);
   initializeLowerGlobalDtorsLegacyPassPass(Registry);
@@ -34,10 +31,8 @@ void llvm::initializeTransformUtils(PassRegistry &Registry) {
   initializeLowerSwitchLegacyPassPass(Registry);
   initializePromoteLegacyPassPass(Registry);
   initializeUnifyFunctionExitNodesLegacyPassPass(Registry);
-  initializeMetaRenamerPass(Registry);
   initializeStripGCRelocatesLegacyPass(Registry);
   initializePredicateInfoPrinterLegacyPassPass(Registry);
-  initializeInjectTLIMappingsLegacyPass(Registry);
   initializeFixIrreduciblePass(Registry);
   initializeUnifyLoopExitsLegacyPassPass(Registry);
 }

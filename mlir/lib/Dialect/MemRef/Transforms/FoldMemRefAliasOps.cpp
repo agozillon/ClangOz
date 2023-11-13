@@ -63,6 +63,12 @@ resolveSourceIndicesExpandShape(Location loc, PatternRewriter &rewriter,
                                 memref::ExpandShapeOp expandShapeOp,
                                 ValueRange indices,
                                 SmallVectorImpl<Value> &sourceIndices) {
+  // The below implementation uses computeSuffixProduct method, which only
+  // allows int64_t values (i.e., static shape). Bail out if it has dynamic
+  // shapes.
+  if (!expandShapeOp.getResultType().hasStaticShape())
+    return failure();
+
   MLIRContext *ctx = rewriter.getContext();
   for (ArrayRef<int64_t> groups : expandShapeOp.getReassociationIndices()) {
     assert(!groups.empty() && "association indices groups cannot be empty");
@@ -122,10 +128,16 @@ resolveSourceIndicesCollapseShape(Location loc, PatternRewriter &rewriter,
     dynamicIndices.push_back(indices[cnt++]);
     int64_t groupSize = groups.size();
 
-    // Calculate suffix product for all collapse op source dimension sizes.
-    SmallVector<int64_t> sizes(groupSize);
-    for (int64_t i = 0; i < groupSize; ++i)
+    // Calculate suffix product for all collapse op source dimension sizes
+    // except the most major one of each group.
+    // We allow the most major source dimension to be dynamic but enforce all
+    // others to be known statically.
+    SmallVector<int64_t> sizes(groupSize, 1);
+    for (int64_t i = 1; i < groupSize; ++i) {
       sizes[i] = collapseShapeOp.getSrcType().getDimSize(groups[i]);
+      if (sizes[i] == ShapedType::kDynamic)
+        return failure();
+    }
     SmallVector<int64_t> suffixProduct = computeSuffixProduct(sizes);
 
     // Derive the index values along all dimensions of the source corresponding
@@ -148,7 +160,7 @@ resolveSourceIndicesCollapseShape(Location loc, PatternRewriter &rewriter,
   if (collapseShapeOp.getReassociationIndices().empty()) {
     auto zeroAffineMap = rewriter.getConstantAffineMap(0);
     int64_t srcRank =
-        collapseShapeOp.getViewSource().getType().cast<MemRefType>().getRank();
+        cast<MemRefType>(collapseShapeOp.getViewSource().getType()).getRank();
     for (int64_t i = 0; i < srcRank; i++) {
       OpFoldResult ofr = affine::makeComposedFoldedAffineApply(
           rewriter, loc, zeroAffineMap, dynamicIndices);
@@ -168,6 +180,14 @@ static Value getMemRefOperand(LoadOrStoreOpTy op) {
 static Value getMemRefOperand(vector::TransferReadOp op) {
   return op.getSource();
 }
+
+static Value getMemRefOperand(nvgpu::LdMatrixOp op) {
+  return op.getSrcMemref();
+}
+
+static Value getMemRefOperand(vector::LoadOp op) { return op.getBase(); }
+
+static Value getMemRefOperand(vector::MaskedLoadOp op) { return op.getBase(); }
 
 static Value getMemRefOperand(vector::TransferWriteOp op) {
   return op.getSource();
@@ -326,8 +346,6 @@ preconditionsFoldSubViewOpImpl(RewriterBase &rewriter, XferOp xferOp,
       "must be a vector transfer op");
   if (xferOp.hasOutOfBoundsDim())
     return rewriter.notifyMatchFailure(xferOp, "out of bounds transfer dim");
-  if (xferOp.getMask())
-    return rewriter.notifyMatchFailure(xferOp, "masked transfer");
   if (!subviewOp.hasUnitStride()) {
     return rewriter.notifyMatchFailure(
         xferOp, "non-1 stride subview, need to track strides in folded memref");
@@ -393,18 +411,32 @@ LogicalResult LoadOpOfSubViewOpFolder<OpTy>::matchAndRewrite(
         rewriter.replaceOpWithNewOp<memref::LoadOp>(
             loadOp, subViewOp.getSource(), sourceIndices, op.getNontemporal());
       })
+      .Case([&](vector::LoadOp op) {
+        rewriter.replaceOpWithNewOp<vector::LoadOp>(
+            op, op.getType(), subViewOp.getSource(), sourceIndices);
+      })
+      .Case([&](vector::MaskedLoadOp op) {
+        rewriter.replaceOpWithNewOp<vector::MaskedLoadOp>(
+            op, op.getType(), subViewOp.getSource(), sourceIndices,
+            op.getMask(), op.getPassThru());
+      })
       .Case([&](vector::TransferReadOp op) {
         rewriter.replaceOpWithNewOp<vector::TransferReadOp>(
             op, op.getVectorType(), subViewOp.getSource(), sourceIndices,
             AffineMapAttr::get(expandDimsToRank(
                 op.getPermutationMap(), subViewOp.getSourceType().getRank(),
                 subViewOp.getDroppedDims())),
-            op.getPadding(), /*mask=*/Value(), op.getInBoundsAttr());
+            op.getPadding(), op.getMask(), op.getInBoundsAttr());
       })
       .Case([&](gpu::SubgroupMmaLoadMatrixOp op) {
         rewriter.replaceOpWithNewOp<gpu::SubgroupMmaLoadMatrixOp>(
             op, op.getType(), subViewOp.getSource(), sourceIndices,
             op.getLeadDimension(), op.getTransposeAttr());
+      })
+      .Case([&](nvgpu::LdMatrixOp op) {
+        rewriter.replaceOpWithNewOp<nvgpu::LdMatrixOp>(
+            op, op.getType(), subViewOp.getSource(), sourceIndices,
+            op.getTranspose(), op.getNumTiles());
       })
       .Default([](Operation *) { llvm_unreachable("unexpected operation."); });
   return success();
@@ -523,7 +555,7 @@ LogicalResult StoreOpOfSubViewOpFolder<OpTy>::matchAndRewrite(
             AffineMapAttr::get(expandDimsToRank(
                 op.getPermutationMap(), subViewOp.getSourceType().getRank(),
                 subViewOp.getDroppedDims())),
-            op.getInBoundsAttr());
+            op.getMask(), op.getInBoundsAttr());
       })
       .Case([&](gpu::SubgroupMmaStoreMatrixOp op) {
         rewriter.replaceOpWithNewOp<gpu::SubgroupMmaStoreMatrixOp>(
@@ -658,6 +690,9 @@ LogicalResult NvgpuAsyncCopyOpSubViewOpFolder::matchAndRewrite(
 void memref::populateFoldMemRefAliasOpPatterns(RewritePatternSet &patterns) {
   patterns.add<LoadOpOfSubViewOpFolder<affine::AffineLoadOp>,
                LoadOpOfSubViewOpFolder<memref::LoadOp>,
+               LoadOpOfSubViewOpFolder<nvgpu::LdMatrixOp>,
+               LoadOpOfSubViewOpFolder<vector::LoadOp>,
+               LoadOpOfSubViewOpFolder<vector::MaskedLoadOp>,
                LoadOpOfSubViewOpFolder<vector::TransferReadOp>,
                LoadOpOfSubViewOpFolder<gpu::SubgroupMmaLoadMatrixOp>,
                StoreOpOfSubViewOpFolder<affine::AffineStoreOp>,

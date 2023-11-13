@@ -89,8 +89,8 @@ enum {
 
 class PluginProperties : public Properties {
 public:
-  static ConstString GetSettingName() {
-    return ConstString(JITLoaderGDB::GetPluginNameStatic());
+  static llvm::StringRef GetSettingName() {
+    return JITLoaderGDB::GetPluginNameStatic();
   }
 
   PluginProperties() {
@@ -99,9 +99,10 @@ public:
   }
 
   EnableJITLoaderGDB GetEnable() const {
-    return (EnableJITLoaderGDB)m_collection_sp->GetPropertyAtIndexAsEnumeration(
-        nullptr, ePropertyEnable,
-        g_jitloadergdb_properties[ePropertyEnable].default_uint_value);
+    return GetPropertyAtIndexAs<EnableJITLoaderGDB>(
+        ePropertyEnable,
+        static_cast<EnableJITLoaderGDB>(
+            g_jitloadergdb_properties[ePropertyEnable].default_uint_value));
   }
 };
 } // namespace

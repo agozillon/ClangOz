@@ -88,7 +88,7 @@ static bool doubleBuffer(Value oldMemRef, AffineForOp forOp) {
     return MemRefType::Builder(oldMemRefType).setShape(newShape).setLayout({});
   };
 
-  auto oldMemRefType = oldMemRef.getType().cast<MemRefType>();
+  auto oldMemRefType = cast<MemRefType>(oldMemRef.getType());
   auto newMemRefType = doubleShape(oldMemRefType);
 
   // The double buffer is allocated right before 'forOp'.
@@ -107,7 +107,7 @@ static bool doubleBuffer(Value oldMemRef, AffineForOp forOp) {
 
   // Create 'iv mod 2' value to index the leading dimension.
   auto d0 = bInner.getAffineDimExpr(0);
-  int64_t step = forOp.getStep();
+  int64_t step = forOp.getStepAsInt();
   auto modTwoMap =
       AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0, d0.floorDiv(step) % 2);
   auto ivModTwoOp = bInner.create<AffineApplyOp>(forOp.getLoc(), modTwoMap,

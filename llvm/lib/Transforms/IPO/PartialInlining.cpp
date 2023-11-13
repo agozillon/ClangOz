@@ -14,6 +14,7 @@
 #include "llvm/Transforms/IPO/PartialInlining.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
@@ -160,7 +161,7 @@ struct FunctionOutliningInfo {
   // The dominating block of the region to be outlined.
   BasicBlock *NonReturnBlock = nullptr;
 
-  // The set of blocks in Entries that that are predecessors to ReturnBlock
+  // The set of blocks in Entries that are predecessors to ReturnBlock
   SmallVector<BasicBlock *, 4> ReturnBlockPreds;
 };
 
@@ -766,7 +767,7 @@ bool PartialInlinerImpl::shouldPartialInline(
   const DataLayout &DL = Caller->getParent()->getDataLayout();
 
   // The savings of eliminating the call:
-  int NonWeightedSavings = getCallsiteCost(CB, DL);
+  int NonWeightedSavings = getCallsiteCost(CalleeTTI, CB, DL);
   BlockFrequency NormWeightedSavings(NonWeightedSavings);
 
   // Weighted saving is smaller than weighted cost, return false
@@ -841,12 +842,12 @@ PartialInlinerImpl::computeBBInlineCost(BasicBlock *BB,
     }
 
     if (CallInst *CI = dyn_cast<CallInst>(&I)) {
-      InlineCost += getCallsiteCost(*CI, DL);
+      InlineCost += getCallsiteCost(*TTI, *CI, DL);
       continue;
     }
 
     if (InvokeInst *II = dyn_cast<InvokeInst>(&I)) {
-      InlineCost += getCallsiteCost(*II, DL);
+      InlineCost += getCallsiteCost(*TTI, *II, DL);
       continue;
     }
 
@@ -1041,7 +1042,7 @@ void PartialInlinerImpl::FunctionCloner::normalizeReturnBlock() const {
   ClonedOI->ReturnBlock = ClonedOI->ReturnBlock->splitBasicBlock(
       ClonedOI->ReturnBlock->getFirstNonPHI()->getIterator());
   BasicBlock::iterator I = PreReturn->begin();
-  Instruction *Ins = &ClonedOI->ReturnBlock->front();
+  BasicBlock::iterator Ins = ClonedOI->ReturnBlock->begin();
   SmallVector<Instruction *, 4> DeadPhis;
   while (I != PreReturn->end()) {
     PHINode *OldPhi = dyn_cast<PHINode>(I);
@@ -1049,9 +1050,10 @@ void PartialInlinerImpl::FunctionCloner::normalizeReturnBlock() const {
       break;
 
     PHINode *RetPhi =
-        PHINode::Create(OldPhi->getType(), NumPredsFromEntries + 1, "", Ins);
+        PHINode::Create(OldPhi->getType(), NumPredsFromEntries + 1, "");
+    RetPhi->insertBefore(Ins);
     OldPhi->replaceAllUsesWith(RetPhi);
-    Ins = ClonedOI->ReturnBlock->getFirstNonPHI();
+    Ins = ClonedOI->ReturnBlock->getFirstNonPHIIt();
 
     RetPhi->addIncoming(&*I, PreReturn);
     for (BasicBlock *E : ClonedOI->ReturnBlockPreds) {
@@ -1178,14 +1180,14 @@ PartialInlinerImpl::FunctionCloner::doSingleRegionFunctionOutlining() {
   ToExtract.push_back(ClonedOI->NonReturnBlock);
   OutlinedRegionCost += PartialInlinerImpl::computeBBInlineCost(
       ClonedOI->NonReturnBlock, ClonedFuncTTI);
-  for (BasicBlock &BB : *ClonedFunc)
-    if (!ToBeInlined(&BB) && &BB != ClonedOI->NonReturnBlock) {
-      ToExtract.push_back(&BB);
+  for (BasicBlock *BB : depth_first(&ClonedFunc->getEntryBlock()))
+    if (!ToBeInlined(BB) && BB != ClonedOI->NonReturnBlock) {
+      ToExtract.push_back(BB);
       // FIXME: the code extractor may hoist/sink more code
       // into the outlined function which may make the outlining
       // overhead (the difference of the outlined function cost
       // and OutliningRegionCost) look larger.
-      OutlinedRegionCost += computeBBInlineCost(&BB, ClonedFuncTTI);
+      OutlinedRegionCost += computeBBInlineCost(BB, ClonedFuncTTI);
     }
 
   // Extract the body of the if.

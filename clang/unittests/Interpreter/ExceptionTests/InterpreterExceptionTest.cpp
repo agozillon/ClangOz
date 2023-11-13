@@ -29,6 +29,14 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+// Disable LSan for this test.
+// FIXME: Re-enable once we can assume GCC 13.2 or higher.
+// https://llvm.org/github.com/llvm/llvm-project/issues/67586.
+#if LLVM_ADDRESS_SANITIZER_BUILD || LLVM_HWADDRESS_SANITIZER_BUILD
+#include <sanitizer/lsan_interface.h>
+LLVM_ATTRIBUTE_USED int __lsan_is_turned_off() { return 1; }
+#endif
+
 using namespace clang;
 
 namespace {
@@ -38,7 +46,9 @@ createInterpreter(const Args &ExtraArgs = {},
                   DiagnosticConsumer *Client = nullptr) {
   Args ClangArgs = {"-Xclang", "-emit-llvm-only"};
   ClangArgs.insert(ClangArgs.end(), ExtraArgs.begin(), ExtraArgs.end());
-  auto CI = cantFail(clang::IncrementalCompilerBuilder::create(ClangArgs));
+  auto CB = clang::IncrementalCompilerBuilder();
+  CB.SetCompilerArgs(ClangArgs);
+  auto CI = cantFail(CB.CreateCpp());
   if (Client)
     CI->getDiagnostics().setClient(Client, /*ShouldOwnClient=*/false);
   return cantFail(clang::Interpreter::create(std::move(CI)));

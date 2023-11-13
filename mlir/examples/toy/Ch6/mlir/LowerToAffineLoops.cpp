@@ -12,7 +12,17 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinDialect.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/ValueRange.h"
+#include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
+#include "mlir/Support/TypeID.h"
 #include "toy/Dialect.h"
 #include "toy/Passes.h"
 
@@ -22,7 +32,15 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
+#include "llvm/Support/Casting.h"
+#include <algorithm>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <utility>
 
 using namespace mlir;
 
@@ -62,7 +80,7 @@ using LoopIterationFn = function_ref<Value(
 static void lowerOpToLoops(Operation *op, ValueRange operands,
                            PatternRewriter &rewriter,
                            LoopIterationFn processIteration) {
-  auto tensorType = (*op->result_type_begin()).cast<RankedTensorType>();
+  auto tensorType = llvm::cast<RankedTensorType>((*op->result_type_begin()));
   auto loc = op->getLoc();
 
   // Insert an allocation and deallocation for the result of this operation.
@@ -144,7 +162,7 @@ struct ConstantOpLowering : public OpRewritePattern<toy::ConstantOp> {
 
     // When lowering the constant operation, we allocate and assign the constant
     // values to a corresponding memref allocation.
-    auto tensorType = op.getType().cast<RankedTensorType>();
+    auto tensorType = llvm::cast<RankedTensorType>(op.getType());
     auto memRefType = convertTensorToMemRef(tensorType);
     auto alloc = insertAllocAndDealloc(memRefType, loc, rewriter);
 
@@ -342,7 +360,7 @@ void ToyToAffineLoweringPass::runOnOperation() {
   target.addIllegalDialect<toy::ToyDialect>();
   target.addDynamicallyLegalOp<toy::PrintOp>([](toy::PrintOp op) {
     return llvm::none_of(op->getOperandTypes(),
-                         [](Type type) { return type.isa<TensorType>(); });
+                         [](Type type) { return llvm::isa<TensorType>(type); });
   });
 
   // Now that the conversion target has been defined, we just need to provide

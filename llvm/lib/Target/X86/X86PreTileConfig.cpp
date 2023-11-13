@@ -28,6 +28,7 @@
 #include "X86MachineFunctionInfo.h"
 #include "X86RegisterInfo.h"
 #include "X86Subtarget.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
@@ -43,12 +44,10 @@ using namespace llvm;
 #define DEBUG_TYPE "tile-pre-config"
 
 static void emitErrorMsg(MachineFunction &MF) {
-  SmallString<32> Str;
-  Twine ErrorMsg =
-      MF.getName() +
-      ": Failed to config tile register, please define the shape earlier";
   LLVMContext &Context = MF.getMMI().getModule()->getContext();
-  Context.emitError(ErrorMsg);
+  Context.emitError(
+      MF.getName() +
+      ": Failed to config tile register, please define the shape earlier");
 }
 
 namespace {

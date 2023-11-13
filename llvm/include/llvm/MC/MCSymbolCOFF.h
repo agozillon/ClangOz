@@ -50,10 +50,12 @@ public:
     return static_cast<COFF::WeakExternalCharacteristics>((getFlags() & SF_WeakExternalCharacteristicsMask) >>
            SF_WeakExternalCharacteristicsShift);
   }
-  void setIsWeakExternal(COFF::WeakExternalCharacteristics Characteristics) const {
-    IsWeakExternal = true;
+  void setWeakExternalCharacteristics(COFF::WeakExternalCharacteristics Characteristics) const {
     modifyFlags(Characteristics << SF_WeakExternalCharacteristicsShift,
                 SF_WeakExternalCharacteristicsMask);
+  }
+  void setIsWeakExternal(bool WeakExt) const {
+    IsWeakExternal = WeakExt;
   }
 
   bool isSafeSEH() const {

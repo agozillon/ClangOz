@@ -244,7 +244,7 @@ private:
   Type getUndefType(uint32_t id) { return undefMap.lookup(id); }
 
   /// Returns true if the given `type` is for SPIR-V void type.
-  bool isVoidType(Type type) const { return type.isa<NoneType>(); }
+  bool isVoidType(Type type) const { return isa<NoneType>(type); }
 
   /// Processes a SPIR-V type instruction with given `opcode` and `operands` and
   /// registers the type into `module`.
@@ -254,7 +254,9 @@ private:
 
   LogicalResult processArrayType(ArrayRef<uint32_t> operands);
 
-  LogicalResult processCooperativeMatrixType(ArrayRef<uint32_t> operands);
+  LogicalResult processCooperativeMatrixTypeKHR(ArrayRef<uint32_t> operands);
+
+  LogicalResult processCooperativeMatrixTypeNV(ArrayRef<uint32_t> operands);
 
   LogicalResult processFunctionType(ArrayRef<uint32_t> operands);
 

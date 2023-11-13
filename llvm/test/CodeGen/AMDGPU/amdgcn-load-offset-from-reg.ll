@@ -21,16 +21,19 @@ define amdgpu_cs void @test_load_zext(i32 inreg %0, i32 inreg %1, i32 inreg %res
   %11 = zext i32 %10 to i64
   %12 = getelementptr [4294967295 x i8], ptr addrspace(4) %9, i64 0, i64 %11
   %13 = load <4 x i32>, ptr addrspace(4) %12, align 16, !invariant.load !5
+  %.13.as.int = bitcast <4 x i32> %13 to i128
+  %.13.as.ptr = inttoptr i128 %.13.as.int to ptr addrspace(8)
   %14 = call <4 x i32> @llvm.amdgcn.s.buffer.load.v4i32(<4 x i32> %13, i32 0, i32 0)
-  call void @llvm.amdgcn.raw.buffer.store.v4i32(<4 x i32> %14, <4 x i32> %13, i32 0, i32 0, i32 0)
+  call void @llvm.amdgcn.raw.ptr.buffer.store.v4i32(<4 x i32> %14, ptr addrspace(8) %.13.as.ptr, i32 0, i32 0, i32 0)
   ret void
 }
 
 ; Make sure we match constant bases with register offests, in which case
 ; the base may be the RHS operand of the load in SDAG.
 ; GCN-LABEL: name: test_complex_reg_offset
-; GCN-DAG: %[[BASE:.*]]:sreg_64 = SI_PC_ADD_REL_OFFSET target-flags(amdgpu-rel32-lo) @0 + 4,
-; GCN-DAG: %[[OFFSET:.*]]:sreg_32 = S_LSHL_B32
+; GCN-DAG: %[[BASE:.*]]:sreg_64 = SI_PC_ADD_REL_OFFSET target-flags(amdgpu-rel32-lo) @0,
+; SDAG-DAG: %[[OFFSET:.*]]:sreg_32 = nuw nsw S_LSHL_B32
+; GISEL-DAG: %[[OFFSET:.*]]:sreg_32 = S_LSHL_B32
 ; SDAG: S_LOAD_DWORD_SGPR_IMM killed %[[BASE]], killed %[[OFFSET]], 0, 0
 ; GISEL: S_LOAD_DWORD_SGPR_IMM %[[BASE]], %[[OFFSET]], 0, 0
 define amdgpu_ps void @test_complex_reg_offset(ptr addrspace(1) %out) {
@@ -132,7 +135,7 @@ define amdgpu_cs void @test_buffer_load_sgpr_or_imm_offset(<4 x i32> inreg %base
   ret void
 }
 
-declare void @llvm.amdgcn.raw.buffer.store.v4i32(<4 x i32>, <4 x i32>, i32, i32, i32 immarg) #1
+declare void @llvm.amdgcn.raw.ptr.buffer.store.v4i32(<4 x i32>, ptr addrspace(8) nocapture, i32, i32, i32 immarg) #1
 
 declare i32 @llvm.amdgcn.s.buffer.load.i32(<4 x i32>, i32, i32 immarg) nounwind readnone willreturn
 
@@ -146,7 +149,7 @@ declare i64 @llvm.amdgcn.s.getpc() #3
 declare <4 x i32> @llvm.amdgcn.s.buffer.load.v4i32(<4 x i32>, i32, i32 immarg) #1
 
 attributes #0 = { argmemonly nounwind willreturn }
-attributes #1 = { nounwind readnone }
+attributes #1 = { nounwind memory(argmem: write) }
 attributes #2 = { nounwind "amdgpu-unroll-threshold"="700" }
 attributes #3 = { nounwind readnone speculatable }
 attributes #4 = { nounwind writeonly }
