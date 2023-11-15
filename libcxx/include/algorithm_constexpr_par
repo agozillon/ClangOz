@@ -24,7 +24,9 @@
 #include <bit>
 #include <version>
 
-#include <__debug>
+#include <__iterator/iterator_traits.h>
+#include <__type_traits/enable_if.h>
+#include <__utility/convert_to_integral.h>
 
 #include "loop_wrapper.h"
 
@@ -485,8 +487,8 @@ inline _LIBCPP_INLINE_VISIBILITY
  constexpr 
 typename enable_if
 <
-   __is_cpp17_input_iterator<_InputIterator>::value &&
-   !__is_cpp17_random_access_iterator<_InputIterator>::value &&
+   __has_input_iterator_category<_InputIterator>::value &&
+   !__has_random_access_iterator_category<_InputIterator>::value &&
    __cep::experimental::execution::is_constexpr_par_execution_policy<
          typename std::decay<_ExecutionPolicy>::type>::value,
     _OutputIterator
@@ -525,7 +527,7 @@ inline _LIBCPP_INLINE_VISIBILITY
  constexpr 
 typename enable_if
 <
-    __is_cpp17_random_access_iterator<_InputIterator>::value &&
+    __has_random_access_iterator_category<_InputIterator>::value &&
     __cep::experimental::execution::is_constexpr_par_execution_policy<
          typename std::decay<_ExecutionPolicy>::type>::value,
     _OutputIterator
