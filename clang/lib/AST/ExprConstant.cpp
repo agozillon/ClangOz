@@ -5217,6 +5217,8 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
   llvm_unreachable("Invalid EvalStmtResult!");
 }
 
+#define TESTASSERTS 0
+
 // I am open to cleaner patterns than the below visitor pattern, they're a very
 // baseline attempt. Although, I'm not convinced it's worth persuing it too far
 // if this recursive evaluation method will eventually be phased out. As this
@@ -5227,6 +5229,10 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
 namespace {
 
 APValue *GetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info) {
+#if TESTASSERTS
+  assert(llvm::any_isa<const void *>(ArgOrTemp) ==
+         (llvm::any_cast<const void *>(ArgOrTemp) != nullptr));
+#endif
   if (llvm::any_isa<const void *>(ArgOrTemp)) {
     auto key = llvm::any_cast<const void *>(ArgOrTemp);
     return Info.CurrentCall->getCurrentTemporary(key);
@@ -5238,6 +5244,10 @@ APValue *GetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info) {
 
 void SetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info, APValue SetTo,
                   bool ThreadLocal = true) {
+#if TESTASSERTS
+  assert(llvm::any_isa<const void *>(ArgOrTemp) ==
+         (llvm::any_cast<const void *>(ArgOrTemp) != nullptr));
+#endif
   if (llvm::any_isa<const void *>(ArgOrTemp)) {
     auto key = llvm::any_cast<const void *>(ArgOrTemp);
     
@@ -6320,18 +6330,41 @@ public:
       for (auto v : NoCopyBackList) {
         if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
             llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
+{
+#if TESTASSERTS
+  assert(llvm::any_isa<unsigned int>(v) ==
+         llvm::any_cast<unsigned int>(v));
+  assert(llvm::any_isa<unsigned int>(i) ==
+         llvm::any_cast<unsigned int>(i));
+#endif
           return true;
+}
         else if (llvm::any_isa<const void *>(v) &&
                  llvm::any_isa<const void *>(i) &&
                  llvm::any_cast<const void *>(v) ==
                      llvm::any_cast<const void *>(i))
+{
+#if TESTASSERTS
+  assert(llvm::any_isa<const void *>(v) ==
+         (llvm::any_cast<const void *>(v) != nullptr));
+  assert(llvm::any_isa<const void *>(i) ==
+         (llvm::any_cast<const void *>(i) != nullptr));
+#endif
           return true;
+}
         else if (llvm::any_isa<const ParmVarDecl*>(v) &&
                  llvm::any_isa<const ParmVarDecl*>(i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
+{
+#if TESTASSERTS
+  assert(llvm::any_isa<const ParmVarDecl*>(v) ==
+         (llvm::any_cast<const ParmVarDecl*>(v) != nullptr));
+  assert(llvm::any_isa<const ParmVarDecl*>(i) ==
+         (llvm::any_cast<const ParmVarDecl*>(i) != nullptr));
+#endif
           return true;
-        
+}
       }
       return false;
     };
@@ -6552,18 +6585,41 @@ public:
       for (auto v : NoCopyBackList) {
         if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
             llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
+{
+#if TESTASSERTS
+  assert(llvm::any_isa<unsigned int>(v) ==
+         llvm::any_cast<unsigned int>(v));
+  assert(llvm::any_isa<unsigned int>(i) ==
+         llvm::any_cast<unsigned int>(i));
+#endif
           return true;
+}
         else if (llvm::any_isa<const void *>(v) &&
                  llvm::any_isa<const void *>(i) &&
                  llvm::any_cast<const void *>(v) ==
                      llvm::any_cast<const void *>(i))
+{
+#if TESTASSERTS
+  assert(llvm::any_isa<const void *>(v) ==
+         (llvm::any_cast<const void *>(v) != nullptr));
+  assert(llvm::any_isa<const void *>(i) ==
+         (llvm::any_cast<const void *>(i) != nullptr));
+#endif
           return true;
+}
         else if (llvm::any_isa<const ParmVarDecl*>(v) &&
                  llvm::any_isa<const ParmVarDecl*>(i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
+{
+#if TESTASSERTS
+  assert(llvm::any_isa<const ParmVarDecl*>(v) ==
+         (llvm::any_cast<const ParmVarDecl*>(v) != nullptr));
+  assert(llvm::any_isa<const ParmVarDecl*>(i) ==
+         (llvm::any_cast<const ParmVarDecl*>(i) != nullptr));
+#endif
           return true;
-        
+}
       }
       return false;
     };
@@ -6588,18 +6644,41 @@ public:
       for (auto v : NoCopyBackList) {
         if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
             llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
+{
+#if TESTASSERTS
+  assert(llvm::any_isa<unsigned int>(v) ==
+         llvm::any_cast<unsigned int>(v));
+  assert(llvm::any_isa<unsigned int>(i) ==
+         llvm::any_cast<unsigned int>(i));
+#endif
           return true;
+}
         else if (llvm::any_isa<const void *>(v) &&
                  llvm::any_isa<const void *>(i) &&
                  llvm::any_cast<const void *>(v) ==
                      llvm::any_cast<const void *>(i))
+{
+#if TESTASSERTS
+  assert(llvm::any_isa<const void *>(v) ==
+         (llvm::any_cast<const void *>(v) != nullptr));
+  assert(llvm::any_isa<const void *>(i) ==
+         (llvm::any_cast<const void *>(i) != nullptr));
+#endif
           return true;
+}
         else if (llvm::any_isa<const ParmVarDecl*>(v) &&
                  llvm::any_isa<const ParmVarDecl*>(i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
+{
+#if TESTASSERTS
+  assert(llvm::any_isa<const ParmVarDecl*>(v) ==
+         (llvm::any_cast<const ParmVarDecl*>(v) != nullptr));
+  assert(llvm::any_isa<const ParmVarDecl*>(i) ==
+         (llvm::any_cast<const ParmVarDecl*>(i) != nullptr));
+#endif
           return true;
-        
+}
       }
       return false;
     };
