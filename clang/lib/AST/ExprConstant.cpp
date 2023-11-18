@@ -6333,7 +6333,7 @@ public:
       for (auto v : NoCopyBackList) {
         if (llvm::any_cast<unsigned int>(&v) &&
             llvm::any_cast<unsigned int>(&i) &&
-            llvm::any_cast<unsigned int>(&v) == llvm::any_cast<unsigned int>(&i))
+            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
 #if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<unsigned int>(v) ==
@@ -6346,8 +6346,8 @@ public:
 }
         else if (llvm::any_cast<const void *>(&v) &&
                  llvm::any_cast<const void *>(&i) &&
-                 llvm::any_cast<const void *>(&v) ==
-                     llvm::any_cast<const void *>(&i))
+                 llvm::any_cast<const void *>(v) ==
+                     llvm::any_cast<const void *>(i))
 {
 #if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const void *>(v) ==
@@ -6592,7 +6592,7 @@ public:
       for (auto v : NoCopyBackList) {
         if (llvm::any_cast<unsigned int>(&v) &&
             llvm::any_cast<unsigned int>(&i) &&
-            llvm::any_cast<unsigned int>(&v) == llvm::any_cast<unsigned int>(&i))
+            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
 #if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<unsigned int>(v) ==
@@ -6605,8 +6605,8 @@ public:
 }
         else if (llvm::any_cast<const void *>(&v) &&
                  llvm::any_cast<const void *>(&i) &&
-                 llvm::any_cast<const void *>(&v) ==
-                     llvm::any_cast<const void *>(&i))
+                 llvm::any_cast<const void *>(v) ==
+                     llvm::any_cast<const void *>(i))
 {
 #if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const void *>(v) ==
@@ -6666,7 +6666,7 @@ public:
 #endif
         if (llvm::any_cast<unsigned int>(&v) &&
             llvm::any_cast<unsigned int>(&i) &&
-            llvm::any_cast<unsigned int>(&v) == llvm::any_cast<unsigned int>(&i))
+            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
 #if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<unsigned int>(v) ==
@@ -6679,8 +6679,8 @@ public:
 }
         else if (llvm::any_cast<const void *>(&v) &&
                  llvm::any_cast<const void *>(&i) &&
-                 llvm::any_cast<const void *>(&v) ==
-                     llvm::any_cast<const void *>(&i))
+                 llvm::any_cast<const void *>(v) ==
+                     llvm::any_cast<const void *>(i))
 {
 #if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const void *>(v) ==
