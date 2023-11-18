@@ -5217,7 +5217,7 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
   llvm_unreachable("Invalid EvalStmtResult!");
 }
 
-#define TESTASSERTS 0
+#define TESTASSERTS 1
 
 // I am open to cleaner patterns than the below visitor pattern, they're a very
 // baseline attempt. Although, I'm not convinced it's worth persuing it too far
@@ -5230,8 +5230,9 @@ namespace {
 
 APValue *GetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info) {
 #if TESTASSERTS
-  assert(llvm::any_isa<const void *>(ArgOrTemp) ==
-         (llvm::any_cast<const void *>(ArgOrTemp) != nullptr));
+  bool bok1 = (llvm::any_isa<const void *>(ArgOrTemp) ==
+         (llvm::any_cast<const void *>(&ArgOrTemp) != nullptr));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << std::endl;
 #endif
   if (llvm::any_isa<const void *>(ArgOrTemp)) {
     auto key = llvm::any_cast<const void *>(ArgOrTemp);
@@ -5245,8 +5246,9 @@ APValue *GetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info) {
 void SetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info, APValue SetTo,
                   bool ThreadLocal = true) {
 #if TESTASSERTS
-  assert(llvm::any_isa<const void *>(ArgOrTemp) ==
-         (llvm::any_cast<const void *>(ArgOrTemp) != nullptr));
+  bool bok1 = (llvm::any_isa<const void *>(ArgOrTemp) ==
+         (llvm::any_cast<const void *>(&ArgOrTemp) != nullptr));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << std::endl;
 #endif
   if (llvm::any_isa<const void *>(ArgOrTemp)) {
     auto key = llvm::any_cast<const void *>(ArgOrTemp);
@@ -6332,10 +6334,11 @@ public:
             llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
 #if TESTASSERTS
-  assert(llvm::any_isa<unsigned int>(v) ==
+  bool bok1 = (llvm::any_isa<unsigned int>(v) ==
          llvm::any_cast<unsigned int>(v));
-  assert(llvm::any_isa<unsigned int>(i) ==
+  bool bok2 = (llvm::any_isa<unsigned int>(i) ==
          llvm::any_cast<unsigned int>(i));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
 #endif
           return true;
 }
@@ -6345,10 +6348,11 @@ public:
                      llvm::any_cast<const void *>(i))
 {
 #if TESTASSERTS
-  assert(llvm::any_isa<const void *>(v) ==
+  bool bok1 = (llvm::any_isa<const void *>(v) ==
          (llvm::any_cast<const void *>(v) != nullptr));
-  assert(llvm::any_isa<const void *>(i) ==
+  bool bok2 = (llvm::any_isa<const void *>(i) ==
          (llvm::any_cast<const void *>(i) != nullptr));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
 #endif
           return true;
 }
@@ -6358,10 +6362,11 @@ public:
                  llvm::any_cast<const ParmVarDecl*>(i))
 {
 #if TESTASSERTS
-  assert(llvm::any_isa<const ParmVarDecl*>(v) ==
+  bool bok1 = (llvm::any_isa<const ParmVarDecl*>(v) ==
          (llvm::any_cast<const ParmVarDecl*>(v) != nullptr));
-  assert(llvm::any_isa<const ParmVarDecl*>(i) ==
+  bool bok2 = (llvm::any_isa<const ParmVarDecl*>(i) ==
          (llvm::any_cast<const ParmVarDecl*>(i) != nullptr));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
 #endif
           return true;
 }
@@ -6587,10 +6592,11 @@ public:
             llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
 #if TESTASSERTS
-  assert(llvm::any_isa<unsigned int>(v) ==
+  bool bok1 = (llvm::any_isa<unsigned int>(v) ==
          llvm::any_cast<unsigned int>(v));
-  assert(llvm::any_isa<unsigned int>(i) ==
+  bool bok2 = (llvm::any_isa<unsigned int>(i) ==
          llvm::any_cast<unsigned int>(i));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
 #endif
           return true;
 }
@@ -6600,10 +6606,11 @@ public:
                      llvm::any_cast<const void *>(i))
 {
 #if TESTASSERTS
-  assert(llvm::any_isa<const void *>(v) ==
+  bool bok1 = (llvm::any_isa<const void *>(v) ==
          (llvm::any_cast<const void *>(v) != nullptr));
-  assert(llvm::any_isa<const void *>(i) ==
+  bool bok2 = (llvm::any_isa<const void *>(i) ==
          (llvm::any_cast<const void *>(i) != nullptr));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
 #endif
           return true;
 }
@@ -6613,10 +6620,11 @@ public:
                  llvm::any_cast<const ParmVarDecl*>(i))
 {
 #if TESTASSERTS
-  assert(llvm::any_isa<const ParmVarDecl*>(v) ==
+  bool bok1 = (llvm::any_isa<const ParmVarDecl*>(v) ==
          (llvm::any_cast<const ParmVarDecl*>(v) != nullptr));
-  assert(llvm::any_isa<const ParmVarDecl*>(i) ==
+  bool bok2 = (llvm::any_isa<const ParmVarDecl*>(i) ==
          (llvm::any_cast<const ParmVarDecl*>(i) != nullptr));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
 #endif
           return true;
 }
@@ -6646,10 +6654,11 @@ public:
             llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
 #if TESTASSERTS
-  assert(llvm::any_isa<unsigned int>(v) ==
+  bool bok1 = (llvm::any_isa<unsigned int>(v) ==
          llvm::any_cast<unsigned int>(v));
-  assert(llvm::any_isa<unsigned int>(i) ==
+  bool bok2 = (llvm::any_isa<unsigned int>(i) ==
          llvm::any_cast<unsigned int>(i));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
 #endif
           return true;
 }
@@ -6659,10 +6668,11 @@ public:
                      llvm::any_cast<const void *>(i))
 {
 #if TESTASSERTS
-  assert(llvm::any_isa<const void *>(v) ==
+  bool bok1 = (llvm::any_isa<const void *>(v) ==
          (llvm::any_cast<const void *>(v) != nullptr));
-  assert(llvm::any_isa<const void *>(i) ==
+  bool bok2 = (llvm::any_isa<const void *>(i) ==
          (llvm::any_cast<const void *>(i) != nullptr));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
 #endif
           return true;
 }
@@ -6672,10 +6682,11 @@ public:
                  llvm::any_cast<const ParmVarDecl*>(i))
 {
 #if TESTASSERTS
-  assert(llvm::any_isa<const ParmVarDecl*>(v) ==
+  bool bok1 = (llvm::any_isa<const ParmVarDecl*>(v) ==
          (llvm::any_cast<const ParmVarDecl*>(v) != nullptr));
-  assert(llvm::any_isa<const ParmVarDecl*>(i) ==
+  bool bok2 = (llvm::any_isa<const ParmVarDecl*>(i) ==
          (llvm::any_cast<const ParmVarDecl*>(i) != nullptr));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
 #endif
           return true;
 }
