@@ -5280,7 +5280,7 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
 namespace {
 
 APValue *GetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info) {
-  if (llvm::any_cast<const void *>(ArgOrTemp)) {
+  if (llvm::any_cast<const void *>(&ArgOrTemp)) {
     auto key = llvm::any_cast<const void *>(ArgOrTemp);
     return Info.CurrentCall->getCurrentTemporary(key);
   }
@@ -5291,7 +5291,7 @@ APValue *GetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info) {
 
 void SetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info, APValue SetTo,
                   bool ThreadLocal = true) {
-  if (llvm::any_cast<const void *>(ArgOrTemp)) {
+  if (llvm::any_cast<const void *>(&ArgOrTemp)) {
     auto key = llvm::any_cast<const void *>(ArgOrTemp);
 
     if (!Info.CurrentCall->getCurrentTemporary(key)) {
