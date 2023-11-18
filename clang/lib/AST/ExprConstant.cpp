@@ -5217,7 +5217,7 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
   llvm_unreachable("Invalid EvalStmtResult!");
 }
 
-#define TESTASSERTS 1
+#define TESTASSERTS 0
 
 // I am open to cleaner patterns than the below visitor pattern, they're a very
 // baseline attempt. Although, I'm not convinced it's worth persuing it too far
@@ -5234,7 +5234,7 @@ APValue *GetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info) {
          (llvm::any_cast<const void *>(&ArgOrTemp) != nullptr));
   std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << std::endl;
 #endif
-  if (llvm::any_isa<const void *>(ArgOrTemp)) {
+  if (llvm::any_cast<const void *>(&ArgOrTemp)) {
     auto key = llvm::any_cast<const void *>(ArgOrTemp);
     return Info.CurrentCall->getCurrentTemporary(key);
   }
@@ -5250,7 +5250,7 @@ void SetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info, APValue SetTo,
          (llvm::any_cast<const void *>(&ArgOrTemp) != nullptr));
   std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << std::endl;
 #endif
-  if (llvm::any_isa<const void *>(ArgOrTemp)) {
+  if (llvm::any_cast<const void *>(&ArgOrTemp)) {
     auto key = llvm::any_cast<const void *>(ArgOrTemp);
     
     if (!Info.CurrentCall->getCurrentTemporary(key)) {
@@ -6330,8 +6330,11 @@ public:
   void CopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
     auto skip = [this](llvm::Any i) {
       for (auto v : NoCopyBackList) {
-        if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
-            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
+        if (llvm::any_cast<unsigned int>(&v) &&
+            llvm::any_cast<unsigned int>(&i) &&
+            llvm::any_cast<unsigned int>(&v) == llvm::any_cast<unsigned int>(&i))
+//        if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
+//            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
 #if TESTASSERTS
   bool bok1 = (llvm::any_isa<unsigned int>(v) ==
@@ -6342,10 +6345,14 @@ public:
 #endif
           return true;
 }
-        else if (llvm::any_isa<const void *>(v) &&
-                 llvm::any_isa<const void *>(i) &&
-                 llvm::any_cast<const void *>(v) ==
-                     llvm::any_cast<const void *>(i))
+        else if (llvm::any_cast<const void *>(&v) &&
+                 llvm::any_cast<const void *>(&i) &&
+                 llvm::any_cast<const void *>(&v) ==
+                     llvm::any_cast<const void *>(&i))
+//        else if (llvm::any_isa<const void *>(v) &&
+//                 llvm::any_isa<const void *>(i) &&
+//                 llvm::any_cast<const void *>(v) ==
+//                     llvm::any_cast<const void *>(i))
 {
 #if TESTASSERTS
   bool bok1 = (llvm::any_isa<const void *>(v) ==
@@ -6356,10 +6363,14 @@ public:
 #endif
           return true;
 }
-        else if (llvm::any_isa<const ParmVarDecl*>(v) &&
-                 llvm::any_isa<const ParmVarDecl*>(i) &&
+        else if (llvm::any_cast<const ParmVarDecl*>(&v) &&
+                 llvm::any_cast<const ParmVarDecl*>(&i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
+//        else if (llvm::any_isa<const ParmVarDecl*>(v) &&
+//                 llvm::any_isa<const ParmVarDecl*>(i) &&
+//                 llvm::any_cast<const ParmVarDecl*>(v) ==
+//                 llvm::any_cast<const ParmVarDecl*>(i))
 {
 #if TESTASSERTS
   bool bok1 = (llvm::any_isa<const ParmVarDecl*>(v) ==
@@ -6588,8 +6599,11 @@ public:
   void DefaultArrayCopyback(EvalInfo &To) {
     auto skip = [this](llvm::Any i) {
       for (auto v : NoCopyBackList) {
-        if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
-            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
+        if (llvm::any_cast<unsigned int>(&v) &&
+            llvm::any_cast<unsigned int>(&i) &&
+            llvm::any_cast<unsigned int>(&v) == llvm::any_cast<unsigned int>(&i))
+//        if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
+//            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
 #if TESTASSERTS
   bool bok1 = (llvm::any_isa<unsigned int>(v) ==
@@ -6600,10 +6614,14 @@ public:
 #endif
           return true;
 }
-        else if (llvm::any_isa<const void *>(v) &&
-                 llvm::any_isa<const void *>(i) &&
-                 llvm::any_cast<const void *>(v) ==
-                     llvm::any_cast<const void *>(i))
+        else if (llvm::any_cast<const void *>(&v) &&
+                 llvm::any_cast<const void *>(&i) &&
+                 llvm::any_cast<const void *>(&v) ==
+                     llvm::any_cast<const void *>(&i))
+//        else if (llvm::any_isa<const void *>(v) &&
+//                 llvm::any_isa<const void *>(i) &&
+//                 llvm::any_cast<const void *>(v) ==
+//                     llvm::any_cast<const void *>(i))
 {
 #if TESTASSERTS
   bool bok1 = (llvm::any_isa<const void *>(v) ==
@@ -6614,10 +6632,14 @@ public:
 #endif
           return true;
 }
-        else if (llvm::any_isa<const ParmVarDecl*>(v) &&
-                 llvm::any_isa<const ParmVarDecl*>(i) &&
+        else if (llvm::any_cast<const ParmVarDecl*>(&v) &&
+                 llvm::any_cast<const ParmVarDecl*>(&i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
+//        else if (llvm::any_isa<const ParmVarDecl*>(v) &&
+//                 llvm::any_isa<const ParmVarDecl*>(i) &&
+//                 llvm::any_cast<const ParmVarDecl*>(v) ==
+//                 llvm::any_cast<const ParmVarDecl*>(i))
 {
 #if TESTASSERTS
   bool bok1 = (llvm::any_isa<const ParmVarDecl*>(v) ==
@@ -6650,10 +6672,30 @@ public:
   void RestrictedCopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
     auto skip = [this](llvm::Any i) {
       for (auto v : NoCopyBackList) {
-        if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
-            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
+         std::cerr << llvm::any_cast<unsigned int>(&v) << ' '; // no &: error
+         std::cerr << llvm::any_cast<unsigned int>(&i) << ' '; // ""
+         std::cerr << llvm::any_cast<const void*>(&v) << ' ';  // ""
+         std::cerr << llvm::any_cast<const void*>(&i) << ' ';  // ""
+         std::cerr << llvm::any_cast<const ParmVarDecl*>(v) << ' ';
+         std::cerr << llvm::any_cast<const ParmVarDecl*>(i) << ' ';
+         std::cerr << llvm::any_cast<const ParmVarDecl*>(&v) << ' ';
+         std::cerr << llvm::any_cast<const ParmVarDecl*>(&i) << ' ';
+         std::cerr << std::endl;
+//         llvm::any_cast<unsigned int>(i);
+#if 0 // TESTASSERTS
+  bool bok1 = (llvm::any_isa<unsigned int>(v) ==
+         llvm::any_cast<unsigned int>(v));
+  bool bok2 = (llvm::any_isa<unsigned int>(i) ==
+         llvm::any_cast<unsigned int>(i));
+  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
+#endif
+        if (llvm::any_cast<unsigned int>(&v) &&
+            llvm::any_cast<unsigned int>(&i) &&
+            llvm::any_cast<unsigned int>(&v) == llvm::any_cast<unsigned int>(&i))
+//      if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
+//          llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
-#if TESTASSERTS
+#if 1 // TESTASSERTS
   bool bok1 = (llvm::any_isa<unsigned int>(v) ==
          llvm::any_cast<unsigned int>(v));
   bool bok2 = (llvm::any_isa<unsigned int>(i) ==
@@ -6662,10 +6704,14 @@ public:
 #endif
           return true;
 }
-        else if (llvm::any_isa<const void *>(v) &&
-                 llvm::any_isa<const void *>(i) &&
-                 llvm::any_cast<const void *>(v) ==
-                     llvm::any_cast<const void *>(i))
+        else if (llvm::any_cast<const void *>(&v) &&
+                 llvm::any_cast<const void *>(&i) &&
+                 llvm::any_cast<const void *>(&v) ==
+                     llvm::any_cast<const void *>(&i))
+//        else if (llvm::any_isa<const void *>(v) &&
+//                 llvm::any_isa<const void *>(i) &&
+//                 llvm::any_cast<const void *>(v) ==
+//                     llvm::any_cast<const void *>(i))
 {
 #if TESTASSERTS
   bool bok1 = (llvm::any_isa<const void *>(v) ==
@@ -6676,10 +6722,14 @@ public:
 #endif
           return true;
 }
-        else if (llvm::any_isa<const ParmVarDecl*>(v) &&
-                 llvm::any_isa<const ParmVarDecl*>(i) &&
+        else if (llvm::any_cast<const ParmVarDecl*>(&v) &&
+                 llvm::any_cast<const ParmVarDecl*>(&i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
+//        else if (llvm::any_isa<const ParmVarDecl*>(v) &&
+//                 llvm::any_isa<const ParmVarDecl*>(i) &&
+//                 llvm::any_cast<const ParmVarDecl*>(v) ==
+//                 llvm::any_cast<const ParmVarDecl*>(i))
 {
 #if TESTASSERTS
   bool bok1 = (llvm::any_isa<const ParmVarDecl*>(v) ==
