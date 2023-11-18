@@ -6372,17 +6372,17 @@ public:
   void CopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
     auto skip = [this](llvm::Any i) {
       for (auto v : NoCopyBackList) {
-        if (llvm::any_cast<unsigned int>(v) &&
-            llvm::any_cast<unsigned int>(i) &&
+        if (llvm::any_cast<unsigned int>(&v) &&
+            llvm::any_cast<unsigned int>(&i) &&
             llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
           return true;
-        else if (llvm::any_cast<const void *>(v) &&
-                 llvm::any_cast<const void *>(i) &&
+        else if (llvm::any_cast<const void *>(&v) &&
+                 llvm::any_cast<const void *>(&i) &&
                  llvm::any_cast<const void *>(v) ==
                      llvm::any_cast<const void *>(i))
           return true;
-        else if (llvm::any_cast<const ParmVarDecl*>(v) &&
-                 llvm::any_cast<const ParmVarDecl*>(i) &&
+        else if (llvm::any_cast<const ParmVarDecl*>(&v) &&
+                 llvm::any_cast<const ParmVarDecl*>(&i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
           return true;
@@ -6605,18 +6605,17 @@ public:
   void DefaultArrayCopyback(EvalInfo &To) {
     auto skip = [this](llvm::Any i) {
       for (auto v : NoCopyBackList) {
-        if (llvm::any_cast<unsigned int>(v) &&
-            llvm::any_cast<unsigned int>(i) &&
-            llvm::any_cast<unsigned int>(v) ==
-                llvm::any_cast<unsigned int>(i))
+        if (llvm::any_cast<unsigned int>(&v) &&
+            llvm::any_cast<unsigned int>(&i) &&
+            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
           return true;
-        else if (llvm::any_cast<const void *>(v) &&
-                 llvm::any_cast<const void *>(i) &&
+        else if (llvm::any_cast<const void *>(&v) &&
+                 llvm::any_cast<const void *>(&i) &&
                  llvm::any_cast<const void *>(v) ==
                      llvm::any_cast<const void *>(i))
           return true;
-        else if (llvm::any_cast<const ParmVarDecl*>(v) &&
-                 llvm::any_cast<const ParmVarDecl*>(i) &&
+        else if (llvm::any_cast<const ParmVarDecl*>(&v) &&
+                 llvm::any_cast<const ParmVarDecl*>(&i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
           return true;
@@ -6642,17 +6641,17 @@ public:
   void RestrictedCopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
     auto skip = [this](llvm::Any i) {
       for (auto v : NoCopyBackList) {
-        if (llvm::any_cast<unsigned int>(v) &&
-            llvm::any_cast<unsigned int>(i) &&
+        if (llvm::any_cast<unsigned int>(&v) &&
+            llvm::any_cast<unsigned int>(&i) &&
             llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
           return true;
-        else if (llvm::any_cast<const void *>(v) &&
-                 llvm::any_cast<const void *>(i) &&
+        else if (llvm::any_cast<const void *>(&v) &&
+                 llvm::any_cast<const void *>(&i) &&
                  llvm::any_cast<const void *>(v) ==
                      llvm::any_cast<const void *>(i))
           return true;
-        else if (llvm::any_cast<const ParmVarDecl*>(v) &&
-                 llvm::any_cast<const ParmVarDecl*>(i) &&
+        else if (llvm::any_cast<const ParmVarDecl*>(&v) &&
+                 llvm::any_cast<const ParmVarDecl*>(&i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
           return true;
