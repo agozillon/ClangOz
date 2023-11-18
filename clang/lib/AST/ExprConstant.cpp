@@ -5217,7 +5217,8 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
   llvm_unreachable("Invalid EvalStmtResult!");
 }
 
-#define TESTASSERTS 0
+#define TEMP_DEBUG_MESSAGES 0               // Useful, but...
+#define TEMP_DEBUG_MESSAGES_UNCONDITIONAL 0 // enable this for better info
 
 // I am open to cleaner patterns than the below visitor pattern, they're a very
 // baseline attempt. Although, I'm not convinced it's worth persuing it too far
@@ -5229,7 +5230,7 @@ static EvalStmtResult EvaluateSwitch(StmtResult &Result, EvalInfo &Info,
 namespace {
 
 APValue *GetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info) {
-#if TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const void *>(ArgOrTemp) ==
          (llvm::any_cast<const void *>(&ArgOrTemp) != nullptr));
   std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << std::endl;
@@ -5245,7 +5246,7 @@ APValue *GetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info) {
 
 void SetArgOrTemp(llvm::Any ArgOrTemp, EvalInfo& Info, APValue SetTo,
                   bool ThreadLocal = true) {
-#if TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const void *>(ArgOrTemp) ==
          (llvm::any_cast<const void *>(&ArgOrTemp) != nullptr));
   std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << std::endl;
@@ -6333,10 +6334,8 @@ public:
         if (llvm::any_cast<unsigned int>(&v) &&
             llvm::any_cast<unsigned int>(&i) &&
             llvm::any_cast<unsigned int>(&v) == llvm::any_cast<unsigned int>(&i))
-//        if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
-//            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
-#if TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<unsigned int>(v) ==
          llvm::any_cast<unsigned int>(v));
   bool bok2 = (llvm::any_isa<unsigned int>(i) ==
@@ -6349,12 +6348,8 @@ public:
                  llvm::any_cast<const void *>(&i) &&
                  llvm::any_cast<const void *>(&v) ==
                      llvm::any_cast<const void *>(&i))
-//        else if (llvm::any_isa<const void *>(v) &&
-//                 llvm::any_isa<const void *>(i) &&
-//                 llvm::any_cast<const void *>(v) ==
-//                     llvm::any_cast<const void *>(i))
 {
-#if TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const void *>(v) ==
          (llvm::any_cast<const void *>(v) != nullptr));
   bool bok2 = (llvm::any_isa<const void *>(i) ==
@@ -6367,12 +6362,8 @@ public:
                  llvm::any_cast<const ParmVarDecl*>(&i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
-//        else if (llvm::any_isa<const ParmVarDecl*>(v) &&
-//                 llvm::any_isa<const ParmVarDecl*>(i) &&
-//                 llvm::any_cast<const ParmVarDecl*>(v) ==
-//                 llvm::any_cast<const ParmVarDecl*>(i))
 {
-#if TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const ParmVarDecl*>(v) ==
          (llvm::any_cast<const ParmVarDecl*>(v) != nullptr));
   bool bok2 = (llvm::any_isa<const ParmVarDecl*>(i) ==
@@ -6602,10 +6593,8 @@ public:
         if (llvm::any_cast<unsigned int>(&v) &&
             llvm::any_cast<unsigned int>(&i) &&
             llvm::any_cast<unsigned int>(&v) == llvm::any_cast<unsigned int>(&i))
-//        if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
-//            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
-#if TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<unsigned int>(v) ==
          llvm::any_cast<unsigned int>(v));
   bool bok2 = (llvm::any_isa<unsigned int>(i) ==
@@ -6618,12 +6607,8 @@ public:
                  llvm::any_cast<const void *>(&i) &&
                  llvm::any_cast<const void *>(&v) ==
                      llvm::any_cast<const void *>(&i))
-//        else if (llvm::any_isa<const void *>(v) &&
-//                 llvm::any_isa<const void *>(i) &&
-//                 llvm::any_cast<const void *>(v) ==
-//                     llvm::any_cast<const void *>(i))
 {
-#if TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const void *>(v) ==
          (llvm::any_cast<const void *>(v) != nullptr));
   bool bok2 = (llvm::any_isa<const void *>(i) ==
@@ -6636,12 +6621,8 @@ public:
                  llvm::any_cast<const ParmVarDecl*>(&i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
-//        else if (llvm::any_isa<const ParmVarDecl*>(v) &&
-//                 llvm::any_isa<const ParmVarDecl*>(i) &&
-//                 llvm::any_cast<const ParmVarDecl*>(v) ==
-//                 llvm::any_cast<const ParmVarDecl*>(i))
 {
-#if TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const ParmVarDecl*>(v) ==
          (llvm::any_cast<const ParmVarDecl*>(v) != nullptr));
   bool bok2 = (llvm::any_isa<const ParmVarDecl*>(i) ==
@@ -6672,30 +6653,22 @@ public:
   void RestrictedCopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
     auto skip = [this](llvm::Any i) {
       for (auto v : NoCopyBackList) {
-         std::cerr << llvm::any_cast<unsigned int>(&v) << ' '; // no &: error
-         std::cerr << llvm::any_cast<unsigned int>(&i) << ' '; // ""
-         std::cerr << llvm::any_cast<const void*>(&v) << ' ';  // ""
-         std::cerr << llvm::any_cast<const void*>(&i) << ' ';  // ""
-         std::cerr << llvm::any_cast<const ParmVarDecl*>(v) << ' ';
-         std::cerr << llvm::any_cast<const ParmVarDecl*>(i) << ' ';
+#if TEMP_DEBUG_MESSAGES_UNCONDITIONAL
+         std::cerr << llvm::any_cast<unsigned int>(&v) << ' ';    // no &: error
+         std::cerr << llvm::any_cast<unsigned int>(&i) << ' ';    // ""
+         std::cerr << llvm::any_cast<const void*>(&v) << ' ';     // ""
+         std::cerr << llvm::any_cast<const void*>(&i) << ' ';     // ""
          std::cerr << llvm::any_cast<const ParmVarDecl*>(&v) << ' ';
          std::cerr << llvm::any_cast<const ParmVarDecl*>(&i) << ' ';
+         std::cerr << llvm::any_cast<const ParmVarDecl*>(v) << ' '; // no &: ok!
+         std::cerr << llvm::any_cast<const ParmVarDecl*>(i) << ' '; // ""
          std::cerr << std::endl;
-//         llvm::any_cast<unsigned int>(i);
-#if 0 // TESTASSERTS
-  bool bok1 = (llvm::any_isa<unsigned int>(v) ==
-         llvm::any_cast<unsigned int>(v));
-  bool bok2 = (llvm::any_isa<unsigned int>(i) ==
-         llvm::any_cast<unsigned int>(i));
-  std::cerr << __PRETTY_FUNCTION__ << ' ' << bok1 << ' ' << bok2 << std::endl;
 #endif
         if (llvm::any_cast<unsigned int>(&v) &&
             llvm::any_cast<unsigned int>(&i) &&
             llvm::any_cast<unsigned int>(&v) == llvm::any_cast<unsigned int>(&i))
-//      if (llvm::any_isa<unsigned int>(v) && llvm::any_isa<unsigned int>(i) &&
-//          llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
 {
-#if 1 // TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<unsigned int>(v) ==
          llvm::any_cast<unsigned int>(v));
   bool bok2 = (llvm::any_isa<unsigned int>(i) ==
@@ -6708,12 +6681,8 @@ public:
                  llvm::any_cast<const void *>(&i) &&
                  llvm::any_cast<const void *>(&v) ==
                      llvm::any_cast<const void *>(&i))
-//        else if (llvm::any_isa<const void *>(v) &&
-//                 llvm::any_isa<const void *>(i) &&
-//                 llvm::any_cast<const void *>(v) ==
-//                     llvm::any_cast<const void *>(i))
 {
-#if TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const void *>(v) ==
          (llvm::any_cast<const void *>(v) != nullptr));
   bool bok2 = (llvm::any_isa<const void *>(i) ==
@@ -6726,12 +6695,8 @@ public:
                  llvm::any_cast<const ParmVarDecl*>(&i) &&
                  llvm::any_cast<const ParmVarDecl*>(v) ==
                  llvm::any_cast<const ParmVarDecl*>(i))
-//        else if (llvm::any_isa<const ParmVarDecl*>(v) &&
-//                 llvm::any_isa<const ParmVarDecl*>(i) &&
-//                 llvm::any_cast<const ParmVarDecl*>(v) ==
-//                 llvm::any_cast<const ParmVarDecl*>(i))
 {
-#if TESTASSERTS
+#if TEMP_DEBUG_MESSAGES
   bool bok1 = (llvm::any_isa<const ParmVarDecl*>(v) ==
          (llvm::any_cast<const ParmVarDecl*>(v) != nullptr));
   bool bok2 = (llvm::any_isa<const ParmVarDecl*>(i) ==
