@@ -5534,18 +5534,17 @@ public:
           }
         }
       } break;
-      
+
       case APValue::Struct: {
         // for all bases
         for (unsigned int i = 0; i < APV.getStructNumBases(); ++i)
-          RecursiveCloneAPValue(APV.getStructBase(i), 
+          RecursiveCloneAPValue(APV.getStructBase(i),
                                 CloneFrame, Original, Clone);
-                                
+
         for (unsigned int i = 0; i < APV.getStructNumFields(); ++i)
-          RecursiveCloneAPValue(APV.getStructField(i), 
+          RecursiveCloneAPValue(APV.getStructField(i),
                                 CloneFrame, Original, Clone);
       } break;
-    
 
       // default clone for now, although in some cases (e.g. union) something
       // further may be required
@@ -6357,39 +6356,41 @@ public:
     return true;
   }
 
+  bool CopySkip(llvm::Any i, const std::vector<llvm::Any>& NoCopyBackList)
+  {
+    using llvm::any_cast;
+
+    for (auto v : NoCopyBackList) {
+           if (any_cast<unsigned int>(&v) &&
+               any_cast<unsigned int>(&i) &&
+               any_cast<unsigned int>(v) == any_cast<unsigned int>(i))
+        return true;
+      else if (any_cast<const void *>(&v) &&
+               any_cast<const void *>(&i) &&
+               any_cast<const void *>(v) == any_cast<const void *>(i))
+        return true;
+      else if (any_cast<const ParmVarDecl*>(&v) &&
+               any_cast<const ParmVarDecl*>(&i) &&
+               any_cast<const ParmVarDecl*>(v) ==
+               any_cast<const ParmVarDecl*>(i))
+        return true;
+    }
+
+    return false;
+  };
+
   // The general idea is that we need to copy back all the copies from the
   // thread EvalInfo's back to the main Info. The PrimaryThread is the
-  // "wining" thread, basically the thread that we returned from or exited
+  // "winning" thread, basically the thread that we returned from or exited
   // from due to a successful but early (or not early) return state. This is
   // only relevant for non-array data that has not been partitioned.
   //
   // At the moment array data that is mutable should be marked with a reduce
-  // wrapper to achieve the appropriate result. I think it's perhaps a
-  // little overkill and strong to converge all of the arrays we find across
-  // the CallStackFrame for all threads, you also have to make some
-  // assumptions on how the data would be paritioned which I dont think is
-  // ideal.
+  // wrapper to achieve the appropriate result. I think it's perhaps a little
+  // overkill and strong to converge all of the arrays we find across the
+  // CallStackFrame for all threads, you also have to make some assumptions on
+  // how the data would be paritioned which I don't think is ideal.
   void CopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
-    auto skip = [this](llvm::Any i) {
-      for (auto v : NoCopyBackList) {
-        if (llvm::any_cast<unsigned int>(&v) &&
-            llvm::any_cast<unsigned int>(&i) &&
-            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
-          return true;
-        else if (llvm::any_cast<const void *>(&v) &&
-                 llvm::any_cast<const void *>(&i) &&
-                 llvm::any_cast<const void *>(v) ==
-                     llvm::any_cast<const void *>(i))
-          return true;
-        else if (llvm::any_cast<const ParmVarDecl*>(&v) &&
-                 llvm::any_cast<const ParmVarDecl*>(&i) &&
-                 llvm::any_cast<const ParmVarDecl*>(v) ==
-                 llvm::any_cast<const ParmVarDecl*>(i))
-          return true;
-        
-      }
-      return false;
-    };
 
     CallStackFrame *OrigFrame = To.CurrentCall;
     CallStackFrame *PrimaryCopyFrame = From.CurrentCall;
@@ -6398,7 +6399,7 @@ public:
     // the frame it was allocated
     // TODO: Need to implement a skip for this as well...
     for (auto &HA : From.HeapAllocs) {
-      //          if (skip(HA.first))
+      //          if (CopySkip(HA.first, NoCopyBackList))
       //            continue;
 
       auto It = To.HeapAllocs.find(HA.first);
@@ -6425,7 +6426,8 @@ public:
         // TODO: Need to learn how to skip things outside of the current
         // frame, it's means recording the frame index as well, but really
         // isn't a problem at the moment as we have no application for it.
-        if ((To.CurrentCall == OrigFrame) && skip(OrigTemp.first.first))
+        if ((To.CurrentCall == OrigFrame) &&
+             CopySkip(OrigTemp.first.first, NoCopyBackList))
           continue;
         OrigTemp.second =
             PrimaryCopyFrame->Temporaries.find(OrigTemp.first)->second;
@@ -6603,33 +6605,14 @@ public:
 
   // This is a special case for arrays currently, that I'm not a huge fan of
   void DefaultArrayCopyback(EvalInfo &To) {
-    auto skip = [this](llvm::Any i) {
-      for (auto v : NoCopyBackList) {
-        if (llvm::any_cast<unsigned int>(&v) &&
-            llvm::any_cast<unsigned int>(&i) &&
-            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
-          return true;
-        else if (llvm::any_cast<const void *>(&v) &&
-                 llvm::any_cast<const void *>(&i) &&
-                 llvm::any_cast<const void *>(v) ==
-                     llvm::any_cast<const void *>(i))
-          return true;
-        else if (llvm::any_cast<const ParmVarDecl*>(&v) &&
-                 llvm::any_cast<const ParmVarDecl*>(&i) &&
-                 llvm::any_cast<const ParmVarDecl*>(v) ==
-                 llvm::any_cast<const ParmVarDecl*>(i))
-          return true;
-      }
-      return false;
-    };
 
     std::vector<APValue*> ThreadAPVs;
-    for (unsigned int i = 0; i < To.CurrentCall->Callee->getNumParams(); ++i) {
-      if (skip(i))
+    for (unsigned i = 0; i < To.CurrentCall->Callee->getNumParams(); ++i) {
+      if (CopySkip(i, NoCopyBackList))
         continue;
 
       ThreadAPVs.clear();
-      for (unsigned int j = 0; j < GetThreadUtilisation(); ++j)
+      for (unsigned j = 0; j < GetThreadUtilisation(); ++j)
         ThreadAPVs.push_back(
           GetArgOrTemp(To.CurrentCall->Callee->getParamDecl(i), ThreadInfo[j]));
 
@@ -6639,38 +6622,19 @@ public:
   }
 
   void RestrictedCopyFromThreadArguments(EvalInfo &To, EvalInfo &From) {
-    auto skip = [this](llvm::Any i) {
-      for (auto v : NoCopyBackList) {
-        if (llvm::any_cast<unsigned int>(&v) &&
-            llvm::any_cast<unsigned int>(&i) &&
-            llvm::any_cast<unsigned int>(v) == llvm::any_cast<unsigned int>(i))
-          return true;
-        else if (llvm::any_cast<const void *>(&v) &&
-                 llvm::any_cast<const void *>(&i) &&
-                 llvm::any_cast<const void *>(v) ==
-                     llvm::any_cast<const void *>(i))
-          return true;
-        else if (llvm::any_cast<const ParmVarDecl*>(&v) &&
-                 llvm::any_cast<const ParmVarDecl*>(&i) &&
-                 llvm::any_cast<const ParmVarDecl*>(v) ==
-                 llvm::any_cast<const ParmVarDecl*>(i))
-          return true;
 
-      }
-      return false;
-    };
-
-      To.CurrentCall->Arguments = From.CurrentCall->Arguments;
-      for (unsigned int i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
-        if (skip(From.CurrentCall->Callee->getParamDecl(i)))
+    To.CurrentCall->Arguments = From.CurrentCall->Arguments;
+    for (unsigned i = 0; i < From.CurrentCall->Callee->getNumParams(); ++i) {
+        if (CopySkip(From.CurrentCall->Callee->getParamDecl(i),
+                       NoCopyBackList))
           continue;
-        
+
         auto ToAPV = To.getParamSlot(To.CurrentCall->Arguments,
                         To.CurrentCall->Callee->getParamDecl(i));
         auto FromAPV = From.getParamSlot(From.CurrentCall->Arguments, 
                           From.CurrentCall->Callee->getParamDecl(i));
-        *ToAPV = *FromAPV; 
-      }
+        *ToAPV = *FromAPV;
+    }
   }
 };
 
