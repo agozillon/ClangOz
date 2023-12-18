@@ -5359,6 +5359,9 @@ APValue *FindSubobjectAPVal(APValue &APV, EvalInfo &Info) {
   if (APV.isNullPointer())
     return &APV;
 
+  if (APV.isStruct())
+    APV = APV.getStructField(0);
+
   QualType Type = getType(APV.getLValueBase());
   ArrayRef<APValue::LValuePathEntry> Path = APV.getLValuePath();
 
@@ -6088,14 +6091,27 @@ public:
     llvm::Any ArgOrTemp;
     int64_t TySz;
 
+    const Expr *ExprArgZero = E->getArg(0);
+    if (auto CE = dyn_cast<CXXConstructExpr>(E->getArg(0)))
+      ExprArgZero = CE->getArg(0);
+
     // Parameter: T Var
     // FIXME/TODO: Make this a function, so we can reuse it in the other
     // 2 calls and more in the future, its a common idiom at this point
-    if (auto ICE = dyn_cast<ImplicitCastExpr>(E->getArg(0)))
+    if (auto ICE = dyn_cast<ImplicitCastExpr>(ExprArgZero))
       if (auto DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr())) {
         if (auto PVD = dyn_cast<const ParmVarDecl>(DRE->getDecl())) {
           ArgOrTemp = PVD;
           QualType QTy = PVD->getType();
+
+          // NOTE: This will only work for std::vector, or containers with a
+          // single member (or the first member of the container) that happens
+          // to be the data we are working on
+          if (QTy->isRecordType()) {
+              auto RD= QTy->getAsRecordDecl();
+              QTy = RD->field_begin()->getType();
+          }
+
           TySz = QTy->isPointerType() || QTy->isReferenceType()
                      ? Info.Ctx.getTypeSizeInChars(QTy->getPointeeType())
                            .getQuantity()
@@ -6103,6 +6119,15 @@ public:
         } else if (auto VD = dyn_cast<VarDecl>(DRE->getDecl())) {
           ArgOrTemp = static_cast<const void *>(VD);
           QualType QTy = VD->getType();
+
+          // NOTE: This will only work for std::vector, or containers with a
+          // single member (or the first member of the container) that happens
+          // to be the data we are working on
+          if (QTy->isRecordType()) {
+              auto RD= QTy->getAsRecordDecl();
+              QTy = RD->field_begin()->getType();
+          }
+          
           TySz = QTy->isPointerType() || QTy->isReferenceType()
                      ? Info.Ctx.getTypeSizeInChars(QTy->getPointeeType())
                            .getQuantity()
@@ -6122,7 +6147,7 @@ public:
 
     if (OpInt < 0 || AccumInt < 0)
       return false;
-      
+
     // A reduction should be excluded from the normal copy back interaction
     // as it's a special case handling of copying back some data from
     // threads
@@ -6131,7 +6156,6 @@ public:
 
     RedList.push_back(std::tuple<int, int, llvm::Any, int64_t, APValue>(
         AccumInt, OpInt, ArgOrTemp, TySz, CopyAPValue(ArgOrTemp)));
-
     return true;
   }
 
@@ -6698,7 +6722,7 @@ void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
   // the below code wont work for everything
   APValue *SubObjAPVal = GetArgOrTemp(ArgOrTemp, Info);
   APValue *CompleteObjAPV = FindSubobjectAPVal(*SubObjAPVal, Info);
-
+ 
   if (CompleteObjAPV->isArray()) {
     // NOTE: In certain cases (like std::array) you can use
     // getTypeSizeInChars on the ParentQt QualType to get the correct
@@ -6744,6 +6768,7 @@ void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
       }
     } else {
       int64_t PrevEndIndex = 0;
+
       for (int i = 0; i < Lwg.GetThreadUtilisation(); ++i) {
         APValue *ThreadSubObjAPVal =
             GetArgOrTemp(ArgOrTemp, ThreadInfo[i]);
@@ -6753,11 +6778,13 @@ void OrderedAssign(EvalInfo &Info, std::vector<EvalInfo> &ThreadInfo,
         // In byte offset, not an index
         int64_t IteratorEndPoint =
             ThreadSubObjAPVal->getLValueOffset().getQuantity();
+
         int64_t ThreadEndIndex = IteratorEndPoint / TySz;
+        
         // TODO/FIXME: This has to take into account overflow still
         //          int64_t ThreadStartIndex = (ThreadPartitionSize * i) / TySz;
         int64_t ThreadStartIndex = (Partitioned) ? PrevEndIndex : 0;
-
+            
         for (int j = ThreadStartIndex; j < ThreadEndIndex; ++j) {
           CompleteObjAPV->getArrayInitializedElt(ArrStartIndex)
               .swap(ThreadObjAPV->getArrayInitializedElt(j));
