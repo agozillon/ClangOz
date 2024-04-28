@@ -10124,6 +10124,9 @@ public:
         second_stamp = Time::now();
  
       // currently will double print/always print once
+      // PGK: The double print bug happens when static_assert is used
+      //      rather than a constexpr declaration. So use:
+      //      `constexpr bool x = ce();` rather than `static_assert(ce())`
       if (Definition->getNameAsString() == "__PrintTimeStamp") {
           fsec fs = second_stamp - first_stamp;
 //          ms d = std::chrono::duration_cast<ms>(fs);
