@@ -150,11 +150,18 @@ C++20 Feature Support
 
 C++23 Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
-- Implemented `P0847R7: Deducing this <https://wg21.link/P0847R7>`_. Some related core issues were also
-  implemented (`CWG2553 <https://wg21.link/CWG2553>`_, `CWG2554 <https://wg21.link/CWG2554>`_,
-  `CWG2653 <https://wg21.link/CWG2653>`_, `CWG2687 <https://wg21.link/CWG2687>`_). Because the
-  support for this feature is still experimental, the feature test macro ``__cpp_explicit_this_parameter``
-  was not set in this version.
+
+- Implemented `P2718R0: Lifetime extension in range-based for loops <https://wg21.link/P2718R0>`_. Also
+  materialize temporary object which is a prvalue in discarded-value expression.
+- Implemented `P1774R8: Portable assumptions <https://wg21.link/P1774R8>`_.
+
+- Implemented `P2448R2: Relaxing some constexpr restrictions <https://wg21.link/P2448R2>`_.
+  Note, the ``-Winvalid-constexpr`` diagnostic is now disabled in C++23 mode,
+  but can be explicitly specified to retain the old diagnostic checking
+  behavior.
+
+- Added a ``__reference_converts_from_temporary`` builtin, completing the necessary compiler support for
+  `P2255R2: Type trait to determine if a reference binds to a temporary <https://wg21.link/P2255R2>`_.
 
 C++2c Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
@@ -217,6 +224,17 @@ Non-comprehensive list of changes in this release
   (e.g., ``uint16x8_t``), this returns the constant number of elements at compile-time.
   For scalable vectors, e.g., SVE or RISC-V V, the number of elements is not known at compile-time and is
   determined at runtime.
+
+- When compiling a constexpr function, Clang will check to see whether the
+  function can *never* be used in a constant expression context and issues a
+  diagnostic under the ``-Winvalid-constexpr`` diagostic flag (which defaults
+  to an error). This check can be expensive because the mere presence of a
+  function marked ``constexpr`` will cause us to undergo constant expression
+  evaluation, even if the function is not called within the translation unit
+  being compiled. Due to the expense, Clang no longer checks constexpr function
+  bodies when the function is defined in a system header file or when
+  ``-Winvalid-constexpr`` is not enabled for the function definition, which
+  should result in mild compile-time performance improvements.
 
 New Compiler Flags
 ------------------
