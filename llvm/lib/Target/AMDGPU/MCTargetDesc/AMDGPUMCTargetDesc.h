@@ -16,6 +16,7 @@
 #define LLVM_LIB_TARGET_AMDGPU_MCTARGETDESC_AMDGPUMCTARGETDESC_H
 
 #include <memory>
+#include <cstdint>
 
 namespace llvm {
 class Target;

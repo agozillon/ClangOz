@@ -15,6 +15,7 @@
 
 #include <cassert>
 #include <memory>
+#include <cstdint>
 #include <string>
 #include <type_traits>
 

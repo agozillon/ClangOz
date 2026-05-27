@@ -14,6 +14,7 @@
 #define LLVM_LIB_TARGET_X86_MCTARGETDESC_X86MCTARGETDESC_H
 
 #include <memory>
+#include <cstdint>
 #include <string>
 
 namespace llvm {
