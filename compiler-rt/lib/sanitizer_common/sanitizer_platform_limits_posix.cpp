@@ -479,6 +479,15 @@ unsigned struct_ElfW_Phdr_sz = sizeof(Elf_Phdr);
   unsigned struct_input_id_sz = sizeof(struct input_id);
   unsigned struct_mtpos_sz = sizeof(struct mtpos);
   unsigned struct_rtentry_sz = sizeof(struct rtentry);
+#if SANITIZER_GLIBC || SANITIZER_ANDROID
+  // struct termio conflicts with <termios.h> via <asm/termios.h>; reproduce its
+  // stable kernel ABI (NCC==8 universally) to get the size without the include.
+  struct termio_abi {
+    unsigned short c_iflag, c_oflag, c_cflag, c_lflag;
+    unsigned char c_line, c_cc[8];
+  };
+  unsigned struct_termio_sz = sizeof(termio_abi);
+#endif
   unsigned struct_vt_consize_sz = sizeof(struct vt_consize);
   unsigned struct_vt_sizes_sz = sizeof(struct vt_sizes);
   unsigned struct_vt_stat_sz = sizeof(struct vt_stat);
